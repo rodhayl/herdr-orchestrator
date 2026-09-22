@@ -1,0 +1,28 @@
+{
+  "task_id": "wave2_review",
+  "worker_id": "agy6",
+  "worker_command": "/root/.local/bin/agy6",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-231244/wave2_review",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-231244/wave2_review",
+  "workspace_id": "w1F",
+  "pane_id": "w1F:p1",
+  "start_time": "2026-09-22T23:16:37.275060+00:00",
+  "end_time": "2026-09-22T23:17:05.284808+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 51937,
+    "output_tokens": 3752,
+    "thinking_tokens": 3361,
+    "cache_read_tokens": 12200,
+    "total_tokens": 55689
+  },
+  "subagents_observed": true,
+  "state": "FAILED",
+  "status": "FAILED"
+}

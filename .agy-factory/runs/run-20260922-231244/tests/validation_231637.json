@@ -1,0 +1,40 @@
+{
+  "compilation": {
+    "command": [
+      "python3",
+      "-m",
+      "compileall",
+      "examples/minilinks/app",
+      "examples/minilinks/tests"
+    ],
+    "returncode": 0,
+    "stdout": "Listing 'examples/minilinks/app'...\nCan't list 'examples/minilinks/app'\nListing 'examples/minilinks/tests'...\nCan't list 'examples/minilinks/tests'\n",
+    "stderr": "",
+    "passed": true
+  },
+  "unittest": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "examples/minilinks/tests",
+      "-v"
+    ],
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/usr/lib/python3.12/unittest/__main__.py\", line 18, in <module>\n    main(module=None)\n  File \"/usr/lib/python3.12/unittest/main.py\", line 104, in __init__\n    self.parseArgs(argv)\n  File \"/usr/lib/python3.12/unittest/main.py\", line 130, in parseArgs\n    self._do_discovery(argv[2:])\n  File \"/usr/lib/python3.12/unittest/main.py\", line 253, in _do_discovery\n    self.createTests(from_discovery=True, Loader=Loader)\n  File \"/usr/lib/python3.12/unittest/main.py\", line 160, in createTests\n    self.test = loader.discover(self.start, self.pattern, self.top)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/unittest/loader.py\", line 307, in discover\n    raise ImportError('Start directory is not importable: %r' % start_dir)\nImportError: Start directory is not importable: 'examples/minilinks/tests'\n",
+    "passed": false
+  },
+  "smoke_test": {
+    "command": [
+      "python3",
+      "examples/minilinks/scripts/smoke_test.py"
+    ],
+    "returncode": 2,
+    "stdout": "",
+    "stderr": "python3: can't open file '/root/agy-herdr-factory-poc/examples/minilinks/scripts/smoke_test.py': [Errno 2] No such file or directory\n",
+    "passed": false
+  }
+}

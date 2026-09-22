@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewResult",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Identifier of the review task"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["APPROVED", "CHANGES_REQUESTED", "FAILED"],
+      "description": "Overall review status"
+    },
+    "summary": {
+      "type": "string",
+      "description": "High-level summary of review findings"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "MAJOR", "MINOR", "INFO"]
+          },
+          "area": {
+            "type": "string",
+            "description": "Subsystem or component affected (e.g. backend, frontend, tests, security)"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete code snippet, behavior, or file reference supporting the finding"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "Suggested fix or improvement"
+          }
+        },
+        "required": ["severity", "area", "evidence", "recommendation"]
+      },
+      "description": "List of findings identified during review"
+    }
+  },
+  "required": ["task_id", "status", "summary", "findings"]
+}

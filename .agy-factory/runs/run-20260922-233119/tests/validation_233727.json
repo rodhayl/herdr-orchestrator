@@ -1,0 +1,40 @@
+{
+  "compilation": {
+    "command": [
+      "python3",
+      "-m",
+      "compileall",
+      "examples/minilinks/app",
+      "examples/minilinks/tests"
+    ],
+    "returncode": 0,
+    "stdout": "Listing 'examples/minilinks/app'...\nCompiling 'examples/minilinks/app/database.py'...\nCompiling 'examples/minilinks/app/server.py'...\nListing 'examples/minilinks/tests'...\n",
+    "stderr": "",
+    "passed": true
+  },
+  "unittest": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "examples/minilinks/tests",
+      "-v"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": "test_cors_options (test_api.TestMiniLinksAPI.test_cors_options)\nVerifies OPTIONS preflight request returns 204 with CORS headers. ... ok\ntest_create_bookmark_default_notes (test_api.TestMiniLinksAPI.test_create_bookmark_default_notes)\nVerifies POST /api/bookmarks handles omitted or None notes with empty string default. ... ok\ntest_create_bookmark_invalid_notes_or_payload (test_api.TestMiniLinksAPI.test_create_bookmark_invalid_notes_or_payload)\nVerifies POST /api/bookmarks returns 400 when notes is non-string or payload is malformed. ... ok\ntest_create_bookmark_missing_or_invalid_title (test_api.TestMiniLinksAPI.test_create_bookmark_missing_or_invalid_title)\nVerifies POST /api/bookmarks returns 400 when title is missing, empty, or non-string. ... ok\ntest_create_bookmark_missing_or_invalid_url (test_api.TestMiniLinksAPI.test_create_bookmark_missing_or_invalid_url)\nVerifies POST /api/bookmarks returns 400 when url is missing, empty, invalid scheme, or non-string. ... ok\ntest_create_bookmark_valid (test_api.TestMiniLinksAPI.test_create_bookmark_valid)\nVerifies POST /api/bookmarks creates a bookmark and returns 201 with populated fields. ... ok\ntest_delete_bookmark_success_and_subsequent_404 (test_api.TestMiniLinksAPI.test_delete_bookmark_success_and_subsequent_404)\nVerifies DELETE /api/bookmarks/<id> deletes a bookmark and subsequent calls return 404. ... ok\ntest_delete_bookmark_validation_errors (test_api.TestMiniLinksAPI.test_delete_bookmark_validation_errors)\nVerifies DELETE /api/bookmarks/<id> returns 404 for missing ID and 400 for invalid ID. ... ok\ntest_directory_traversal_protection (test_api.TestMiniLinksAPI.test_directory_traversal_protection)\nVerifies path traversal attempts are rejected with 403 or 404. ... ok\ntest_get_bookmark_by_id (test_api.TestMiniLinksAPI.test_get_bookmark_by_id)\nVerifies GET /api/bookmarks/<id> returns 200, 404 for missing, and 400 for invalid ID. ... ok\ntest_health_check (test_api.TestMiniLinksAPI.test_health_check)\nVerifies GET /health returns 200 OK and status ok payload. ... ok\ntest_initial_bookmarks_empty (test_api.TestMiniLinksAPI.test_initial_bookmarks_empty)\nVerifies GET /api/bookmarks returns 200 and an empty list initially. ... ok\ntest_search_filtering (test_api.TestMiniLinksAPI.test_search_filtering)\nVerifies GET /api/bookmarks?q= matches title, url, or notes case-insensitively. ... ok\ntest_static_file_serving (test_api.TestMiniLinksAPI.test_static_file_serving)\nVerifies static assets (HTML, CSS, JS) are served with correct MIME types. ... ok\ntest_unknown_endpoints (test_api.TestMiniLinksAPI.test_unknown_endpoints)\nVerifies unknown API endpoints return 404 JSON error. ... ok\ntest_update_bookmark_valid (test_api.TestMiniLinksAPI.test_update_bookmark_valid)\nVerifies PATCH /api/bookmarks/<id> updates fields and refreshes updated_at timestamp. ... ok\ntest_update_bookmark_validation_errors (test_api.TestMiniLinksAPI.test_update_bookmark_validation_errors)\nVerifies PATCH /api/bookmarks/<id> rejects invalid payloads and non-existent IDs. ... ok\ntest_concurrent_read_requests (test_persistence.TestMiniLinksPersistence.test_concurrent_read_requests)\nVerifies concurrent threads reading the SQLite database through the server do not deadlock. ... ok\ntest_deletion_and_addition_persistence_across_multiple_restarts (test_persistence.TestMiniLinksPersistence.test_deletion_and_addition_persistence_across_multiple_restarts)\nVerifies additions and deletions persist across multiple server restart cycles. ... ok\ntest_persistence_across_server_restart (test_persistence.TestMiniLinksPersistence.test_persistence_across_server_restart)\nValidates SQLite persistence across server lifecycle restarts: ... ok\ntest_preexisting_sqlite_database_loading (test_persistence.TestMiniLinksPersistence.test_preexisting_sqlite_database_loading)\nVerifies server initializes properly when given a pre-existing SQLite database. ... ok\n\n----------------------------------------------------------------------\nRan 21 tests in 25.447s\n\nOK\n",
+    "passed": true
+  },
+  "smoke_test": {
+    "command": [
+      "python3",
+      "examples/minilinks/scripts/smoke_test.py"
+    ],
+    "returncode": 0,
+    "stdout": "======================================================================\nMiniLinks 12-Step Smoke Test Verification Suite\n======================================================================\n[Step 1/12] Server Bootstrap: starting server on ephemeral port...\n  --> PASS: Server listening at http://127.0.0.1:42871 (db: /tmp/tmp8saq8pgw/smoke_test.db)\n[Step 2/12] Health Check: GET /health...\n  --> PASS: Health check returned HTTP 200: {'status': 'ok'}\n[Step 3/12] Initial Empty State: GET /api/bookmarks...\n  --> PASS: Initial bookmarks list is empty []\n[Step 4/12] Create Bookmark (Valid): POST /api/bookmarks...\n  --> PASS: Created bookmark with ID 1 at 2026-09-22T23:37:25Z\n[Step 5/12] Create Bookmark Validation Error: POST /api/bookmarks with invalid payload...\n  --> PASS: Rejected invalid creation payload with HTTP 400: Both 'title' and 'url' are required non-empty strings\n[Step 6/12] Verify Bookmark Listing: GET /api/bookmarks...\n  --> PASS: Listing returned exactly 1 bookmark matching ID 1\n[Step 7/12] Search Filtering: GET /api/bookmarks?q=Python and ?q=NonExistentTerm...\n  --> PASS: Search correctly filtered matching and non-matching queries\n[Step 8/12] Update Bookmark: PATCH /api/bookmarks/<id>...\n  --> PASS: Updated bookmark notes; updated_at refreshed to 2026-09-22T23:37:26Z\n[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...\n  --> PASS: Non-existent PATCH returned HTTP 404: Bookmark not found\n[Step 10/12] Delete Bookmark: DELETE /api/bookmarks/1...\n  --> PASS: Successfully deleted bookmark 1\n[Step 11/12] Delete Non-Existent Bookmark: DELETE /api/bookmarks/99999...\n  --> PASS: Non-existent DELETE returned HTTP 404: Bookmark not found\n[Step 12/12] Verify Static Asset Delivery: GET /, /style.css, /app.js...\n  --> PASS: All static assets (/, /style.css, /app.js) served with HTTP 200\n======================================================================\nSUCCESS: All 12 deterministic smoke test steps passed!\n======================================================================\nCleaning up server and temporary test directory...\nCleanup completed.\n",
+    "stderr": "",
+    "passed": true
+  }
+}

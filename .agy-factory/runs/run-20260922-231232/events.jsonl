@@ -1,0 +1,2 @@
+{"timestamp": "2026-09-22T23:12:32.426323+00:00", "event": "RUN_STARTED", "payload": {"run_id": "run-20260922-231232", "plan": "MiniLinks Bookmark Manager Software Factory Orchestration Plan"}}
+{"timestamp": "2026-09-22T23:12:32.430985+00:00", "event": "WAVE_STARTED", "payload": {"wave": "Product Specification", "wave_index": 0, "parallel": false}}

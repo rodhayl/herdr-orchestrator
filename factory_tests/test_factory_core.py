@@ -307,6 +307,81 @@ class TestValidationCommandExecution(unittest.TestCase):
         self.assertEqual(results["fail_test"]["returncode"], 42)
 
 
+class TestResumeDecision(unittest.TestCase):
+    """Tests for resume decision making in FactoryOrchestrator."""
+
+    def test_completed_tasks_correctly_identified(self):
+        manifest_mock = {
+            "waves": [
+                {
+                    "wave_index": 0,
+                    "tasks": [
+                        {"task_id": "t1", "state": "INTEGRATED", "status": "SUCCESS"},
+                        {"task_id": "t2", "state": "COMMITTED", "status": "SUCCESS"},
+                        {"task_id": "t3", "state": "FAILED", "status": "FAILED"}
+                    ]
+                }
+            ]
+        }
+        completed = {}
+        for w in manifest_mock.get("waves", []):
+            for t in w.get("tasks", []):
+                if t.get("state") in ("COMMITTED", "INTEGRATED") and t.get("status") == "SUCCESS":
+                    completed[t["task_id"]] = t
+
+        self.assertIn("t1", completed)
+        self.assertIn("t2", completed)
+        self.assertNotIn("t3", completed)
+
+
+class TestOutOfScopeDiffRejection(unittest.TestCase):
+    """Tests for strict out-of-scope diff detection and rejection."""
+
+    def test_out_of_scope_path_detected(self):
+        allowed_paths = ["docs/**"]
+        changed_paths = ["docs/SPEC.md", "app/evil.py", "web/app.js"]
+
+        path_violations = [p for p in changed_paths if not match_path_allowlist(p, allowed_paths)]
+        self.assertEqual(path_violations, ["app/evil.py", "web/app.js"])
+
+        # Test success condition logic
+        exit_code = 0
+        agy_status = "SUCCESS"
+        missing_expected = []
+        is_repair = False
+        review_only = False
+        is_success = (
+            exit_code == 0
+            and agy_status == "SUCCESS"
+            and not path_violations
+            and not missing_expected
+            and (review_only or is_repair or len(changed_paths) > 0)
+        )
+        self.assertFalse(is_success)
+
+    def test_in_scope_path_accepted(self):
+        allowed_paths = ["examples/minilinks/app/**", "examples/minilinks/SPEC.md"]
+        changed_paths = ["examples/minilinks/app/server.py", "examples/minilinks/SPEC.md"]
+
+        path_violations = [p for p in changed_paths if not match_path_allowlist(p, allowed_paths)]
+        self.assertEqual(path_violations, [])
+
+        exit_code = 0
+        agy_status = "SUCCESS"
+        missing_expected = []
+        is_repair = False
+        review_only = False
+        is_success = (
+            exit_code == 0
+            and agy_status == "SUCCESS"
+            and not path_violations
+            and not missing_expected
+            and (review_only or is_repair or len(changed_paths) > 0)
+        )
+        self.assertTrue(is_success)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

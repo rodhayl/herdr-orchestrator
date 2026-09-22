@@ -1,0 +1,40 @@
+{
+  "compilation": {
+    "command": [
+      "python3",
+      "-m",
+      "compileall",
+      "examples/minilinks/app",
+      "examples/minilinks/tests"
+    ],
+    "returncode": 0,
+    "stdout": "Listing 'examples/minilinks/app'...\nListing 'examples/minilinks/tests'...\n",
+    "stderr": "",
+    "passed": true
+  },
+  "unittest": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "examples/minilinks/tests",
+      "-v"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": "test_create_bookmark_default_notes (test_api.TestMiniLinksAPI.test_create_bookmark_default_notes)\nPOST /api/bookmarks without notes defaults notes to empty string. ... ok\ntest_create_bookmark_empty_body (test_api.TestMiniLinksAPI.test_create_bookmark_empty_body)\nPOST /api/bookmarks with empty body must return 400. ... ok\ntest_create_bookmark_empty_title (test_api.TestMiniLinksAPI.test_create_bookmark_empty_title)\nPOST /api/bookmarks with empty or whitespace-only title must return 400. ... ok\ntest_create_bookmark_empty_url (test_api.TestMiniLinksAPI.test_create_bookmark_empty_url)\nPOST /api/bookmarks with empty or whitespace-only url must return 400. ... ok\ntest_create_bookmark_malformed_json (test_api.TestMiniLinksAPI.test_create_bookmark_malformed_json)\nPOST /api/bookmarks with malformed JSON body must return 400. ... ok\ntest_create_bookmark_missing_title (test_api.TestMiniLinksAPI.test_create_bookmark_missing_title)\nPOST /api/bookmarks missing title must return 400 Bad Request. ... ok\ntest_create_bookmark_missing_url (test_api.TestMiniLinksAPI.test_create_bookmark_missing_url)\nPOST /api/bookmarks missing url must return 400 Bad Request. ... ok\ntest_create_bookmark_non_string_types (test_api.TestMiniLinksAPI.test_create_bookmark_non_string_types)\nPOST /api/bookmarks with non-string fields must return 400. ... ok\ntest_create_bookmark_valid (test_api.TestMiniLinksAPI.test_create_bookmark_valid)\nPOST /api/bookmarks creates bookmark and returns 201 Created with full object. ... ok\ntest_create_bookmark_whitespace_stripping (test_api.TestMiniLinksAPI.test_create_bookmark_whitespace_stripping)\nPOST /api/bookmarks with whitespace in title/url strips them properly. ... ok\ntest_delete_bookmark_invalid_id (test_api.TestMiniLinksAPI.test_delete_bookmark_invalid_id)\nDELETE /api/bookmarks/<id> with non-integer ID returns 400 Bad Request. ... ok\ntest_delete_bookmark_not_found (test_api.TestMiniLinksAPI.test_delete_bookmark_not_found)\nDELETE /api/bookmarks/<id> with non-existent ID returns 404 Not Found. ... ok\ntest_delete_bookmark_repeated_deletion (test_api.TestMiniLinksAPI.test_delete_bookmark_repeated_deletion)\nSecond DELETE on same ID returns 404 Not Found. ... ok\ntest_delete_bookmark_success (test_api.TestMiniLinksAPI.test_delete_bookmark_success)\nDELETE /api/bookmarks/<id> returns 200 OK and deletes the record. ... ok\ntest_directory_traversal_protection (test_api.TestMiniLinksAPI.test_directory_traversal_protection)\nRequests with path traversal sequences must be rejected with 403 or 404. ... ok\ntest_health_check (test_api.TestMiniLinksAPI.test_health_check)\nGET /health must return 200 OK and {\"status\": \"ok\"}. ... ok\ntest_initial_bookmarks_empty (test_api.TestMiniLinksAPI.test_initial_bookmarks_empty)\nGET /api/bookmarks on clean DB must return 200 OK and empty array []. ... ok\ntest_patch_bookmark_empty_payload (test_api.TestMiniLinksAPI.test_patch_bookmark_empty_payload)\nPATCH /api/bookmarks/<id> with empty payload returns 400 Bad Request. ... ok\ntest_patch_bookmark_fields (test_api.TestMiniLinksAPI.test_patch_bookmark_fields)\nPATCH /api/bookmarks/<id> updates title, url, notes individually or together. ... ok\ntest_patch_bookmark_invalid_field_values (test_api.TestMiniLinksAPI.test_patch_bookmark_invalid_field_values)\nPATCH /api/bookmarks/<id> with empty or non-string values returns 400 Bad Request. ... ok\ntest_patch_bookmark_invalid_id (test_api.TestMiniLinksAPI.test_patch_bookmark_invalid_id)\nPATCH /api/bookmarks/<id> with non-integer ID returns 400 Bad Request. ... ok\ntest_patch_bookmark_malformed_json (test_api.TestMiniLinksAPI.test_patch_bookmark_malformed_json)\nPATCH /api/bookmarks/<id> with malformed JSON returns 400 Bad Request. ... ok\ntest_patch_bookmark_not_found (test_api.TestMiniLinksAPI.test_patch_bookmark_not_found)\nPATCH /api/bookmarks/<id> with non-existent ID returns 404 Not Found. ... ok\ntest_search_filtering (test_api.TestMiniLinksAPI.test_search_filtering)\nGET /api/bookmarks?q=<term> filters by title, url, or notes (case-insensitive). ... ok\ntest_static_file_not_found (test_api.TestMiniLinksAPI.test_static_file_not_found)\nGET for non-existent static file returns 404 Not Found. ... ok\ntest_static_files_delivery (test_api.TestMiniLinksAPI.test_static_files_delivery)\nVerifies delivery of index.html, style.css, and app.js with appropriate MIME types. ... ok\ntest_deletion_persistence_across_restart (test_persistence.TestDatabasePersistence.test_deletion_persistence_across_restart)\nValidates that bookmark deletions persist across server restarts. ... ok\ntest_persistence_across_server_restart (test_persistence.TestDatabasePersistence.test_persistence_across_server_restart)\nValidates the complete 7-step persistence scenario from SPEC.md 7.1.2: ... ok\ntest_sqlite_schema_definition (test_persistence.TestDatabasePersistence.test_sqlite_schema_definition)\nVerifies the table schema, column definitions, and NOT NULL constraints in SQLite. ... ok\n\n----------------------------------------------------------------------\nRan 29 tests in 26.507s\n\nOK\n",
+    "passed": true
+  },
+  "smoke_test": {
+    "command": [
+      "python3",
+      "examples/minilinks/scripts/smoke_test.py"
+    ],
+    "returncode": 1,
+    "stdout": "==================================================\nStarting MiniLinks 12-Step Standalone Smoke Test\n==================================================\n[Cleanup] Cleaning up background server and temporary resources...\n[Cleanup] Done.\n",
+    "stderr": "\n[FAILURE] Unexpected error occurred: 'tuple' object has no attribute 'server_address'\n[Cleanup] Error shutting down server: 'tuple' object has no attribute 'shutdown'\n",
+    "passed": false
+  }
+}
