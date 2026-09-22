@@ -18,7 +18,7 @@ def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     parent = Path(db_path).parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn = sqlite3.connect(db_path, check_same_thread=False, timeout=15.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -226,7 +226,25 @@ def update_bookmark(
                 f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?",
                 params,
             )
-        return get_bookmark_by_id(target_id, db_path=db_path)
+            cursor.execute(
+                """
+                SELECT id, title, url, notes, created_at, updated_at
+                FROM bookmarks
+                WHERE id = ?
+                """,
+                (target_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row["id"],
+                "title": row["title"],
+                "url": row["url"],
+                "notes": row["notes"] if row["notes"] is not None else "",
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
     finally:
         conn.close()
 
