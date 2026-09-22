@@ -102,6 +102,9 @@ class TestApiEndpoints(unittest.TestCase):
     def delete(self, path: str, headers: Optional[dict] = None) -> ApiResponse:
         return self.request("DELETE", path, headers=headers)
 
+    def options(self, path: str, headers: Optional[dict] = None) -> ApiResponse:
+        return self.request("OPTIONS", path, headers=headers)
+
     # -------------------------------------------------------------------------
     # 1. Health Endpoint Tests
     # -------------------------------------------------------------------------
@@ -393,6 +396,53 @@ class TestApiEndpoints(unittest.TestCase):
                 (403, 404),
                 f"Expected 403 or 404 for traversal path={attack_path}, got {res.status}",
             )
+
+    # -------------------------------------------------------------------------
+    # 8. Single Task Retrieval (GET /api/tasks/<id>) & Route Edge Cases
+    # -------------------------------------------------------------------------
+
+    def test_get_single_task_success(self):
+        """GET /api/tasks/<id> retrieves an existing task by ID."""
+        created = self.post("/api/tasks", {"title": "Single Task", "status": "DOING"}).json()
+        task_id = created["id"]
+
+        res = self.get(f"/api/tasks/{task_id}")
+        self.assertEqual(res.status, 200)
+        data = res.json()
+        self.assertEqual(data["id"], task_id)
+        self.assertEqual(data["title"], "Single Task")
+        self.assertEqual(data["status"], "DOING")
+
+    def test_get_single_task_not_found(self):
+        """GET /api/tasks/<id> with non-existent ID returns 404 Not Found."""
+        res = self.get("/api/tasks/99999")
+        self.assertEqual(res.status, 404)
+        self.assertIn("error", res.json())
+
+    def test_get_single_task_invalid_id(self):
+        """GET /api/tasks/<id> with non-integer or non-positive ID returns 400 Bad Request."""
+        for invalid_path in ("/api/tasks/abc", "/api/tasks/-1", "/api/tasks/0"):
+            res = self.get(invalid_path)
+            self.assertEqual(res.status, 400, f"Expected 400 for path={invalid_path}")
+            self.assertIn("error", res.json())
+
+    def test_unknown_api_endpoints_return_404_json(self):
+        """Unknown /api endpoints must return 404 with JSON error payload."""
+        for unknown_path in ("/api", "/api/", "/api/unknown", "/api/v1/tasks"):
+            res = self.get(unknown_path)
+            self.assertEqual(res.status, 404, f"Expected 404 for path={unknown_path}")
+            self.assertIn("application/json", res.headers.get("Content-Type", ""))
+            self.assertIn("error", res.json())
+
+    def test_cors_options_preflight(self):
+        """OPTIONS request returns 204 No Content with CORS allow headers."""
+        res = self.options("/api/tasks")
+        self.assertEqual(res.status, 204)
+        self.assertEqual(res.headers.get("Access-Control-Allow-Origin"), "*")
+        self.assertIn("GET", res.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertIn("POST", res.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertIn("PATCH", res.headers.get("Access-Control-Allow-Methods", ""))
+        self.assertIn("DELETE", res.headers.get("Access-Control-Allow-Methods", ""))
 
 
 if __name__ == "__main__":

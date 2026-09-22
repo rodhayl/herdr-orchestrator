@@ -240,13 +240,19 @@
       }
 
       // Sync with server updated data
-      state.tasks[taskIndex] = data;
+      const currentIdx = state.tasks.findIndex(t => t.id === Number(id));
+      if (currentIdx !== -1) {
+        state.tasks[currentIdx] = data;
+      }
       updateConnectionStatus(true);
       showNotification(`Task moved to ${newStatus}`, 'success');
       render();
     } catch (err) {
       // Revert optimistic update
-      task.status = previousStatus;
+      const currentIdx = state.tasks.findIndex(t => t.id === Number(id));
+      if (currentIdx !== -1) {
+        state.tasks[currentIdx].status = previousStatus;
+      }
       render();
       showNotification(`Status update failed: ${err.message}`, 'error');
     }
@@ -288,12 +294,18 @@
         throw new Error(data.error || `Failed to update title (Status ${res.status})`);
       }
 
-      state.tasks[taskIndex] = data;
+      const currentIdx = state.tasks.findIndex(t => t.id === Number(id));
+      if (currentIdx !== -1) {
+        state.tasks[currentIdx] = data;
+      }
       updateConnectionStatus(true);
       showNotification('Task title updated', 'success');
       render();
     } catch (err) {
-      task.title = previousTitle;
+      const currentIdx = state.tasks.findIndex(t => t.id === Number(id));
+      if (currentIdx !== -1) {
+        state.tasks[currentIdx].title = previousTitle;
+      }
       render();
       showNotification(`Title update failed: ${err.message}`, 'error');
     }
@@ -449,7 +461,11 @@
     
     const timeDisplay = formatTimestamp(task.updated_at || task.created_at);
     const timeLabel = task.updated_at && task.updated_at !== task.created_at ? 'Updated' : 'Created';
-    meta.innerHTML = `<span class="meta-item" title="${timeLabel}: ${task.updated_at || task.created_at}">⏱ ${timeDisplay}</span>`;
+    const metaItem = document.createElement('span');
+    metaItem.className = 'meta-item';
+    metaItem.title = `${timeLabel}: ${task.updated_at || task.created_at}`;
+    metaItem.textContent = `⏱ ${timeDisplay}`;
+    meta.appendChild(metaItem);
     card.appendChild(meta);
 
     // Action Controls (Status Transitions & Edit / Delete)
