@@ -1,0 +1,604 @@
+/**
+ * MiniLinks - Frontend Client Application
+ * Standard-compliant Vanilla JavaScript communicating with /api/bookmarks
+ */
+
+(() => {
+  'use strict';
+
+  // State
+  let bookmarksState = [];
+  let currentSearchQuery = '';
+  let activeEditingId = null;
+  let activeDeletingId = null;
+  let searchDebounceTimer = null;
+  let notificationTimer = null;
+
+  // DOM Elements
+  const notificationBanner = document.getElementById('notification-banner');
+  const notificationMessage = document.getElementById('notification-message');
+  const notificationIcon = document.getElementById('notification-icon');
+  const notificationCloseBtn = document.getElementById('notification-close');
+
+  const searchInput = document.getElementById('search-input');
+  const searchClearBtn = document.getElementById('search-clear-btn');
+  const bookmarksCount = document.getElementById('bookmarks-count');
+  const bookmarksList = document.getElementById('bookmarks-list');
+
+  const bookmarkForm = document.getElementById('bookmark-form');
+  const bookmarkTitleInput = document.getElementById('bookmark-title');
+  const bookmarkUrlInput = document.getElementById('bookmark-url');
+  const bookmarkNotesInput = document.getElementById('bookmark-notes');
+  const bookmarkSubmitBtn = document.getElementById('bookmark-submit-btn');
+
+  // Edit Modal Elements
+  const editModal = document.getElementById('edit-modal');
+  const editModalClose = document.getElementById('edit-modal-close');
+  const editBookmarkForm = document.getElementById('edit-bookmark-form');
+  const editBookmarkId = document.getElementById('edit-bookmark-id');
+  const editTitleInput = document.getElementById('edit-title');
+  const editUrlInput = document.getElementById('edit-url');
+  const editNotesInput = document.getElementById('edit-notes');
+  const editCancelBtn = document.getElementById('edit-cancel-btn');
+  const editSaveBtn = document.getElementById('edit-save-btn');
+
+  // Delete Modal Elements
+  const deleteModal = document.getElementById('delete-modal');
+  const deleteModalClose = document.getElementById('delete-modal-close');
+  const deleteBookmarkTitle = document.getElementById('delete-bookmark-title');
+  const deleteCancelBtn = document.getElementById('delete-cancel-btn');
+  const deleteConfirmBtn = document.getElementById('delete-confirm-btn');
+
+  // Initialize
+  document.addEventListener('DOMContentLoaded', () => {
+    initEventListeners();
+    fetchBookmarks();
+  });
+
+  /**
+   * Initialize all UI event listeners
+   */
+  function initEventListeners() {
+    // Search input with debounced querying
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value;
+      searchClearBtn.classList.toggle('hidden', !query);
+
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        currentSearchQuery = query.trim();
+        fetchBookmarks(currentSearchQuery);
+      }, 250);
+    });
+
+    searchClearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      searchClearBtn.classList.add('hidden');
+      currentSearchQuery = '';
+      fetchBookmarks('');
+      searchInput.focus();
+    });
+
+    // Create bookmark form submission
+    bookmarkForm.addEventListener('submit', handleCreateBookmark);
+
+    // Edit bookmark form submission & modal controls
+    editBookmarkForm.addEventListener('submit', handleSaveEdit);
+    editCancelBtn.addEventListener('click', closeEditModal);
+    editModalClose.addEventListener('click', closeEditModal);
+    editModal.addEventListener('click', (e) => {
+      if (e.target === editModal) closeEditModal();
+    });
+
+    // Delete bookmark confirmation & modal controls
+    deleteConfirmBtn.addEventListener('click', handleConfirmDelete);
+    deleteCancelBtn.addEventListener('click', closeDeleteModal);
+    deleteModalClose.addEventListener('click', closeDeleteModal);
+    deleteModal.addEventListener('click', (e) => {
+      if (e.target === deleteModal) closeDeleteModal();
+    });
+
+    // Notification close button
+    notificationCloseBtn.addEventListener('click', hideNotification);
+
+    // Global keyboard shortcuts (Escape closes modals)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!editModal.classList.contains('hidden')) {
+          closeEditModal();
+        }
+        if (!deleteModal.classList.contains('hidden')) {
+          closeDeleteModal();
+        }
+      }
+    });
+  }
+
+  /**
+   * Fetch bookmarks from REST API with optional search query
+   */
+  async function fetchBookmarks(query = '') {
+    setLoadingState(true);
+    try {
+      const endpoint = query
+        ? `/api/bookmarks?q=${encodeURIComponent(query)}`
+        : '/api/bookmarks';
+
+      const response = await fetch(endpoint, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load bookmarks (HTTP ${response.status})`);
+      }
+
+      const bookmarks = await response.json();
+      bookmarksState = Array.isArray(bookmarks) ? bookmarks : [];
+      renderBookmarks(bookmarksState, query);
+    } catch (err) {
+      console.error('Error fetching bookmarks:', err);
+      showNotification(err.message || 'Unable to load bookmarks', 'error');
+      renderErrorState(err.message);
+    } finally {
+      setLoadingState(false);
+    }
+  }
+
+  /**
+   * Create a new bookmark
+   */
+  async function handleCreateBookmark(e) {
+    e.preventDefault();
+
+    const title = bookmarkTitleInput.value.trim();
+    const url = bookmarkUrlInput.value.trim();
+    const notes = bookmarkNotesInput.value.trim();
+
+    if (!title) {
+      showNotification('Title is required', 'error');
+      bookmarkTitleInput.focus();
+      return;
+    }
+
+    if (!url) {
+      showNotification('URL is required', 'error');
+      bookmarkUrlInput.focus();
+      return;
+    }
+
+    bookmarkSubmitBtn.disabled = true;
+
+    try {
+      const response = await fetch('/api/bookmarks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ title, url, notes }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `Error creating bookmark (HTTP ${response.status})`);
+      }
+
+      // Reset form on success
+      bookmarkForm.reset();
+      showNotification('Bookmark added successfully', 'success');
+
+      // Refresh listing
+      await fetchBookmarks(currentSearchQuery);
+    } catch (err) {
+      console.error('Error creating bookmark:', err);
+      showNotification(err.message || 'Failed to create bookmark', 'error');
+    } finally {
+      bookmarkSubmitBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Open edit modal prefilled with bookmark data
+   */
+  function openEditModal(bookmark) {
+    activeEditingId = bookmark.id;
+    editBookmarkId.value = bookmark.id;
+    editTitleInput.value = bookmark.title;
+    editUrlInput.value = bookmark.url;
+    editNotesInput.value = bookmark.notes || '';
+
+    editModal.classList.remove('hidden');
+    editTitleInput.focus();
+  }
+
+  /**
+   * Close edit modal
+   */
+  function closeEditModal() {
+    editModal.classList.add('hidden');
+    activeEditingId = null;
+    editBookmarkForm.reset();
+  }
+
+  /**
+   * Save edited bookmark via PATCH /api/bookmarks/:id
+   */
+  async function handleSaveEdit(e) {
+    e.preventDefault();
+
+    const id = activeEditingId;
+    if (!id) return;
+
+    const title = editTitleInput.value.trim();
+    const url = editUrlInput.value.trim();
+    const notes = editNotesInput.value.trim();
+
+    if (!title) {
+      showNotification('Title is required', 'error');
+      editTitleInput.focus();
+      return;
+    }
+
+    if (!url) {
+      showNotification('URL is required', 'error');
+      editUrlInput.focus();
+      return;
+    }
+
+    editSaveBtn.disabled = true;
+
+    try {
+      const response = await fetch(`/api/bookmarks/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ title, url, notes }),
+      });
+
+      const updatedBookmark = await response.json();
+
+      if (!response.ok) {
+        throw new Error(updatedBookmark.error || `Failed to update bookmark (HTTP ${response.status})`);
+      }
+
+      showNotification('Bookmark updated successfully', 'success');
+      closeEditModal();
+
+      // Refresh list to keep timestamps & filtering consistent
+      await fetchBookmarks(currentSearchQuery);
+    } catch (err) {
+      console.error('Error updating bookmark:', err);
+      showNotification(err.message || 'Failed to update bookmark', 'error');
+    } finally {
+      editSaveBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Open delete confirmation modal
+   */
+  function openDeleteModal(bookmark) {
+    activeDeletingId = bookmark.id;
+    deleteBookmarkTitle.textContent = bookmark.title;
+    deleteModal.classList.remove('hidden');
+    deleteConfirmBtn.focus();
+  }
+
+  /**
+   * Close delete modal
+   */
+  function closeDeleteModal() {
+    deleteModal.classList.add('hidden');
+    activeDeletingId = null;
+    deleteBookmarkTitle.textContent = '';
+  }
+
+  /**
+   * Confirm deletion via DELETE /api/bookmarks/:id
+   */
+  async function handleConfirmDelete() {
+    const id = activeDeletingId;
+    if (!id) return;
+
+    deleteConfirmBtn.disabled = true;
+
+    try {
+      const response = await fetch(`/api/bookmarks/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || `Failed to delete bookmark (HTTP ${response.status})`);
+      }
+
+      closeDeleteModal();
+      showNotification('Bookmark deleted successfully', 'success');
+
+      // Immediately remove card element from DOM
+      const cardEl = bookmarksList.querySelector(`[data-id="${id}"]`);
+      if (cardEl) {
+        cardEl.remove();
+      }
+
+      // Update in-memory state and count
+      bookmarksState = bookmarksState.filter(bm => bm.id !== id);
+      updateBookmarksCount(bookmarksState.length, currentSearchQuery);
+
+      if (bookmarksState.length === 0) {
+        renderEmptyState(currentSearchQuery);
+      }
+    } catch (err) {
+      console.error('Error deleting bookmark:', err);
+      showNotification(err.message || 'Failed to delete bookmark', 'error');
+    } finally {
+      deleteConfirmBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Render bookmarks into container
+   */
+  function renderBookmarks(bookmarks, query = '') {
+    bookmarksList.innerHTML = '';
+    updateBookmarksCount(bookmarks.length, query);
+
+    if (bookmarks.length === 0) {
+      renderEmptyState(query);
+      return;
+    }
+
+    bookmarks.forEach(bookmark => {
+      const card = createBookmarkCard(bookmark);
+      bookmarksList.appendChild(card);
+    });
+  }
+
+  /**
+   * Construct DOM elements for a bookmark card safely without XSS risk
+   */
+  function createBookmarkCard(bookmark) {
+    const article = document.createElement('article');
+    article.className = 'bookmark-card';
+    article.setAttribute('data-id', bookmark.id);
+
+    // Card Header
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'card-header';
+
+    const titleH3 = document.createElement('h3');
+    titleH3.className = 'card-title';
+
+    const titleLink = document.createElement('a');
+    titleLink.className = 'card-title-link';
+    titleLink.href = bookmark.url;
+    titleLink.target = '_blank';
+    titleLink.rel = 'noopener noreferrer';
+    titleLink.textContent = bookmark.title;
+
+    titleH3.appendChild(titleLink);
+    cardHeader.appendChild(titleH3);
+
+    // URL Link
+    const urlLink = document.createElement('a');
+    urlLink.className = 'card-url-link';
+    urlLink.href = bookmark.url;
+    urlLink.target = '_blank';
+    urlLink.rel = 'noopener noreferrer';
+    urlLink.title = bookmark.url;
+    urlLink.textContent = bookmark.url;
+    cardHeader.appendChild(urlLink);
+
+    article.appendChild(cardHeader);
+
+    // Notes block (if present)
+    if (bookmark.notes && bookmark.notes.trim()) {
+      const notesBlock = document.createElement('div');
+      notesBlock.className = 'card-notes';
+      notesBlock.textContent = bookmark.notes;
+      article.appendChild(notesBlock);
+    }
+
+    // Timestamps
+    const metaBlock = document.createElement('div');
+    metaBlock.className = 'card-meta';
+
+    const createdSpan = document.createElement('span');
+    createdSpan.textContent = `Created: ${formatTimestamp(bookmark.created_at)}`;
+    metaBlock.appendChild(createdSpan);
+
+    if (bookmark.updated_at && bookmark.updated_at !== bookmark.created_at) {
+      const updatedSpan = document.createElement('span');
+      updatedSpan.textContent = `Updated: ${formatTimestamp(bookmark.updated_at)}`;
+      metaBlock.appendChild(updatedSpan);
+    }
+
+    article.appendChild(metaBlock);
+
+    // Card Footer with Actions
+    const cardFooter = document.createElement('div');
+    cardFooter.className = 'card-footer';
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn btn-secondary btn-sm btn-edit';
+    editBtn.innerHTML = `
+      <svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+      Edit
+    `;
+    editBtn.addEventListener('click', () => openEditModal(bookmark));
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-danger btn-sm btn-delete';
+    deleteBtn.innerHTML = `
+      <svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+      </svg>
+      Delete
+    `;
+    deleteBtn.addEventListener('click', () => openDeleteModal(bookmark));
+
+    cardFooter.appendChild(editBtn);
+    cardFooter.appendChild(deleteBtn);
+    article.appendChild(cardFooter);
+
+    return article;
+  }
+
+  /**
+   * Render empty state message
+   */
+  function renderEmptyState(query = '') {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+
+    if (query) {
+      emptyState.innerHTML = `
+        <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <h3 class="empty-state-title">No bookmarks found</h3>
+        <p class="empty-state-text">No bookmarks matched your search for "<strong>${escapeHtml(query)}</strong>". Try checking for spelling errors or searching for a different keyword.</p>
+      `;
+    } else {
+      emptyState.innerHTML = `
+        <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <h3 class="empty-state-title">No bookmarks saved yet</h3>
+        <p class="empty-state-text">Start building your collection by adding your first bookmark in the form above.</p>
+      `;
+    }
+
+    bookmarksList.appendChild(emptyState);
+  }
+
+  /**
+   * Render error state message
+   */
+  function renderErrorState(errorMessage) {
+    bookmarksList.innerHTML = `
+      <div class="empty-state">
+        <h3 class="empty-state-title" style="color: var(--danger);">Failed to load bookmarks</h3>
+        <p class="empty-state-text">${escapeHtml(errorMessage || 'Server error occurred')}</p>
+      </div>
+    `;
+    bookmarksCount.textContent = 'Error';
+  }
+
+  /**
+   * Update bookmarks count indicator
+   */
+  function updateBookmarksCount(count, query = '') {
+    if (query) {
+      bookmarksCount.textContent = `${count} ${count === 1 ? 'match' : 'matches'}`;
+    } else {
+      bookmarksCount.textContent = `${count} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
+    }
+  }
+
+  /**
+   * Show status/notification feedback banner
+   */
+  function showNotification(message, type = 'info', duration = 3500) {
+    clearTimeout(notificationTimer);
+
+    notificationBanner.className = `notification-banner notification-${type}`;
+    notificationMessage.textContent = message;
+
+    if (type === 'success') {
+      notificationIcon.innerHTML = `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      `;
+    } else if (type === 'error') {
+      notificationIcon.innerHTML = `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      `;
+    } else {
+      notificationIcon.innerHTML = `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+      `;
+    }
+
+    notificationBanner.classList.remove('hidden');
+
+    if (duration > 0) {
+      notificationTimer = setTimeout(hideNotification, duration);
+    }
+  }
+
+  /**
+   * Hide notification banner
+   */
+  function hideNotification() {
+    clearTimeout(notificationTimer);
+    notificationBanner.classList.add('hidden');
+  }
+
+  /**
+   * Toggle loading visual state
+   */
+  function setLoadingState(isLoading) {
+    bookmarksList.setAttribute('aria-busy', String(isLoading));
+    if (isLoading && bookmarksState.length === 0) {
+      bookmarksCount.textContent = 'Loading...';
+    }
+  }
+
+  /**
+   * Format ISO 8601 timestamp for display
+   */
+  function formatTimestamp(isoStr) {
+    if (!isoStr) return '';
+    try {
+      const date = new Date(isoStr);
+      if (isNaN(date.getTime())) return isoStr;
+
+      return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoStr;
+    }
+  }
+
+  /**
+   * Escape HTML entities to prevent injection in innerHTML strings
+   */
+  function escapeHtml(str) {
+    if (!str) return '';
+    const span = document.createElement('span');
+    span.textContent = String(str);
+    return span.innerHTML;
+  }
+})();
