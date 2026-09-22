@@ -10,8 +10,11 @@ import urllib.parse
 
 try:
     from . import database
-except ImportError:
-    import database
+except (ImportError, ValueError):
+    try:
+        import database
+    except ImportError:
+        from app import database
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
