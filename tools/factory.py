@@ -454,6 +454,7 @@ class TaskExecutor:
                  herdr: HerdrClient, res_mgr: ResourceManager, factory_config: dict):
         self.run_id = run_id
         self.task = plan_task
+        self.task_plan = plan_task
         self.task_id = plan_task["task_id"]
         self.worker_id = plan_task["worker_id"]
         self.run_dir = run_dir
