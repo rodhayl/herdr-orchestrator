@@ -44,7 +44,12 @@ def is_valid_url(url: Any) -> bool:
         return False
     try:
         parsed = urllib.parse.urlparse(stripped)
-        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return False
+        netloc = parsed.netloc.split("@")[-1].split(":")[0]
+        if not netloc or " " in netloc:
+            return False
+        return True
     except Exception:
         return False
 

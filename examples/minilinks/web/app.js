@@ -64,11 +64,12 @@
   function normalizeUrl(rawUrl) {
     const trimmed = (rawUrl || '').trim();
     if (!trimmed) return '';
-    // If no URI scheme is provided (e.g. "docs.python.org"), default to https://
-    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) && !trimmed.startsWith('/')) {
-      return `https://${trimmed}`;
+    // If already has a scheme with :// (e.g. "https://...", "http://...", "ftp://..."), preserve it
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//i.test(trimmed)) {
+      return trimmed;
     }
-    return trimmed;
+    // Otherwise default to https:// (handles "docs.python.org", "localhost:8000", "127.0.0.1:8080", etc.)
+    return `https://${trimmed}`;
   }
 
   /**
@@ -611,7 +612,7 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
           <line x1="12" y1="8" x2="12" y2="12"></line>
-          <line x1="12" y1="16" x2="12.01" y2="8"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
       `;
     }
