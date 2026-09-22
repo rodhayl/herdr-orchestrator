@@ -149,6 +149,8 @@ def create_bookmark(
     Creates a new bookmark with title, url, and optional notes.
     Sets created_at and updated_at to the current UTC timestamp.
     """
+    clean_title = title.strip() if isinstance(title, str) else title
+    clean_url = url.strip() if isinstance(url, str) else url
     now_iso = get_utc_now()
     notes_val = notes if notes is not None else ""
 
@@ -161,14 +163,14 @@ def create_bookmark(
                 INSERT INTO bookmarks (title, url, notes, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (title, url, notes_val, now_iso, now_iso),
+                (clean_title, clean_url, notes_val, now_iso, now_iso),
             )
             created_id = cursor.lastrowid
 
         return {
             "id": created_id,
-            "title": title,
-            "url": url,
+            "title": clean_title,
+            "url": clean_url,
             "notes": notes_val,
             "created_at": now_iso,
             "updated_at": now_iso,
@@ -210,11 +212,13 @@ def update_bookmark(
     params: List[Any] = []
 
     if title is not None:
+        clean_title = title.strip() if isinstance(title, str) else title
         updates.append("title = ?")
-        params.append(title)
+        params.append(clean_title)
     if url is not None:
+        clean_url = url.strip() if isinstance(url, str) else url
         updates.append("url = ?")
-        params.append(url)
+        params.append(clean_url)
     if notes is not None:
         updates.append("notes = ?")
         params.append(notes)

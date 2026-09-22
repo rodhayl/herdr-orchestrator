@@ -8,7 +8,7 @@ from .database import (
     init_db,
     update_bookmark,
 )
-from .server import create_server
+from .server import MiniLinksServer, create_server
 
 __all__ = [
     "init_db",
@@ -18,4 +18,5 @@ __all__ = [
     "update_bookmark",
     "delete_bookmark",
     "create_server",
+    "MiniLinksServer",
 ]
