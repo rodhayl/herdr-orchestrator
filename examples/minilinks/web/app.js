@@ -252,8 +252,15 @@
       bookmarkForm.reset();
       showNotification('Bookmark added successfully', 'success');
 
+      // Clear search query so the new bookmark is immediately visible
+      if (currentSearchQuery) {
+        searchInput.value = '';
+        searchClearBtn.classList.add('hidden');
+        currentSearchQuery = '';
+      }
+
       // Refresh listing
-      await fetchBookmarks(currentSearchQuery);
+      await fetchBookmarks('');
     } catch (err) {
       console.error('Error creating bookmark:', err);
       showNotification(err.message || 'Failed to create bookmark', 'error');
@@ -534,6 +541,7 @@
    * Render empty state message
    */
   function renderEmptyState(query = '') {
+    bookmarksList.innerHTML = '';
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
 
@@ -611,8 +619,8 @@
       notificationIcon.innerHTML = `
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="8" x2="12" y2="12"></line>
-          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
         </svg>
       `;
     }

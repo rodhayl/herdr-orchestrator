@@ -345,12 +345,17 @@ body {
   line-height: 1.25;
 }
 
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .btn-primary {
   background-color: var(--primary);
   color: #ffffff;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background-color: var(--primary-hover);
 }
 
@@ -360,7 +365,7 @@ body {
   border-color: var(--border);
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
   background-color: var(--surface-alt);
 }
 
@@ -369,7 +374,7 @@ body {
   color: #ffffff;
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   background-color: var(--danger-hover);
 }
 
