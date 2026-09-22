@@ -22,8 +22,10 @@ Exits with status code 0 on total success, or non-zero on any failure.
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.error
@@ -57,11 +59,11 @@ def http_request(
     payload: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, Any, bytes]:
     """
-    Sends an HTTP request using urllib.
+    Sends an HTTP request using urllib with Connection: close.
     Returns (status_code, parsed_json_or_none, raw_body_bytes).
     """
     url = f"{base_url}{path}"
-    headers = {}
+    headers = {"Connection": "close"}
     data_bytes: Optional[bytes] = None
     if payload is not None:
         data_bytes = json.dumps(payload).encode("utf-8")
@@ -102,6 +104,9 @@ def run_smoke_test() -> None:
         server = create_server(host="127.0.0.1", port=0, db_path=temp_db)
         bound_port = server.server_port
         assert bound_port > 0, f"Expected positive port number, got {bound_port}"
+        assert any(t.is_alive() and t.daemon for t in threading.enumerate()), (
+            "Expected daemon server thread"
+        )
         base_url = f"http://127.0.0.1:{bound_port}"
         print(f"  --> PASS: Server listening at {base_url} (db: {temp_db})")
 
@@ -148,6 +153,18 @@ def run_smoke_test() -> None:
         updated_at = payload.get("updated_at")
         assert created_at and isinstance(created_at, str), f"Missing created_at: {created_at}"
         assert updated_at and isinstance(updated_at, str), f"Missing updated_at: {updated_at}"
+
+        # Verify sqlite3 persistence directly
+        conn = sqlite3.connect(temp_db)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, title, url FROM bookmarks WHERE id = ?", (bm_id,))
+            row = cursor.fetchone()
+            assert row is not None, f"Bookmark {bm_id} not found in sqlite3 database"
+            assert row[1] == "Python Docs"
+        finally:
+            conn.close()
+
         print(f"  --> PASS: Created bookmark with ID {bm_id} at {created_at}")
 
         # Step 5: Create Bookmark Validation Error
