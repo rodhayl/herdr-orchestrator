@@ -442,25 +442,43 @@ echo $? > "{status_file_path}"
         exit_code = int(status_file_path.read_text().strip())
 
         # Parse AGY output
-        agy_data = {}
         raw_output = ""
         if output_json_path.exists():
             raw_output = output_json_path.read_text(encoding="utf-8")
+
+        def _parse_output(content: str) -> dict:
+            content = content.strip()
             try:
-                # Find JSON block in output
-                match = re.search(r'(\{[\s\S]*\})', raw_output)
-                if match:
-                    agy_data = json.loads(match.group(1))
+                return json.loads(content)
             except Exception:
                 pass
+            for line in reversed(content.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        d = json.loads(line)
+                        if "status" in d or "conversation_id" in d:
+                            return d
+                    except Exception:
+                        pass
+            for m in re.finditer(r"(\{[\s\S]*?\n\})", content):
+                try:
+                    d = json.loads(m.group(1))
+                    if "status" in d or "conversation_id" in d:
+                        return d
+                except Exception:
+                    pass
+            m = re.search(r"(\{[\s\S]*\})", content)
+            if m:
+                try:
+                    return json.loads(m.group(1))
+                except Exception:
+                    pass
+            return {}
+
+        agy_data = _parse_output(raw_output)
 
         # Validate git diff
-        diff_res = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=str(self.worktree_path),
-            capture_output=True,
-            text=True
-        )
         untracked_res = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=str(self.worktree_path),
@@ -485,18 +503,32 @@ echo $? > "{status_file_path}"
                 if not allowed:
                     path_violations.append(p)
 
+        # Check expected files
+        missing_expected = []
+        if not self.review_only and "expected_files" in self.task:
+            for exp_file in self.task["expected_files"]:
+                if not (self.worktree_path / exp_file).exists():
+                    missing_expected.append(exp_file)
+
         structured_output = agy_data.get("structured_output", {})
         if not structured_output and "response" in agy_data:
-            # Fallback parse response string for JSON
             try:
-                match = re.search(r'(\{[\s\S]*\})', agy_data["response"])
-                if match:
-                    structured_output = json.loads(match.group(1))
+                m = re.search(r"(\{[\s\S]*\})", agy_data["response"])
+                if m:
+                    structured_output = json.loads(m.group(1))
             except Exception:
                 pass
 
         # Check for subagents
         subagents_observed = "subagent" in raw_output.lower() or "invoke_subagent" in raw_output
+
+        is_success = (
+            exit_code == 0
+            and agy_data.get("status") == "SUCCESS"
+            and not path_violations
+            and not missing_expected
+            and (self.review_only or len(changed_paths) > 0)
+        )
 
         execution_record = {
             "task_id": self.task_id,
@@ -513,10 +545,11 @@ echo $? > "{status_file_path}"
             "agy_status": agy_data.get("status", "UNKNOWN"),
             "changed_paths": changed_paths,
             "path_violations": path_violations,
+            "missing_expected": missing_expected,
             "structured_output": structured_output,
             "usage": agy_data.get("usage", {}),
             "subagents_observed": subagents_observed,
-            "status": "SUCCESS" if (exit_code == 0 and not path_violations) else "FAILED"
+            "status": "SUCCESS" if is_success else "FAILED"
         }
 
         with open(self.task_dir / "execution_record.json", "w", encoding="utf-8") as f:
