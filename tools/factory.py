@@ -346,6 +346,10 @@ class TaskExecutor:
         if res.returncode != 0:
             raise RuntimeError(f"Failed to create worktree: {res.stderr}")
 
+        # Pre-create directory layout so worker never needs to invoke shell mkdir
+        for d in ["docs", "app", "web", "tests", "scripts"]:
+            (self.worktree_path / d).mkdir(parents=True, exist_ok=True)
+
         self.res_mgr.record_worktree(str(self.worktree_path), self.branch_name)
 
     def prepare_workspace(self):
@@ -362,6 +366,11 @@ class TaskExecutor:
         spec_content = ""
         if spec_file.exists():
             spec_content = f"\n\n## Committed Product Specification (docs/SPECIFICATION.md)\n```markdown\n{spec_file.read_text(encoding='utf-8')}\n```\n"
+
+        target_files_guidance = ""
+        if "expected_files" in self.task and self.task["expected_files"]:
+            targets = "\n".join(f"- `{self.worktree_path / f}`" for f in self.task["expected_files"])
+            target_files_guidance = f"### Required TargetFile Paths to Create via write_to_file:\n{targets}\n"
 
         if self.review_only:
             template_path = PROJECT_ROOT / "prompts" / "reviewer-base.md"
@@ -381,6 +390,7 @@ class TaskExecutor:
                 worktree_path=str(self.worktree_path),
                 allowed_patterns=patterns_str,
                 task_description=self.task["description"] + spec_content,
+                target_files_guidance=target_files_guidance,
                 task_id=self.task_id
             )
 

@@ -11,11 +11,16 @@ Modifying any out-of-scope files will result in an immediate rejection of your w
 3. **No Package Installation**: DO NOT install any packages or dependencies. Do NOT run `pip`, `npm`, `apt`, `brew`, or any other package manager.
 4. **No Environment Mutation**: DO NOT alter or create `.venv`, do NOT modify `.agy-factory`, do NOT touch Herdr settings or sessions, and do NOT alter user/global configuration or authentication.
 5. **No Version Control Manipulation**: DO NOT run `git commit`, `git push`, `git branch`, `git merge`, or `git worktree`. Git lifecycle, integration, and commits are owned exclusively by the factory orchestrator.
-6. **Tool Usage**: Use `write_to_file` and `replace_file_content` to edit code. Avoid unnecessary shell command execution.
+6. **Tool Usage — STRICTLY NO SHELL EXECUTION**:
+   - You MUST use the `write_to_file` and `replace_file_content` tools to create and edit code.
+   - When calling `write_to_file`, `TargetFile` MUST be the full absolute path: `{worktree_path}/<relative_path>`.
+   - DO NOT call the `run_command` tool. Shell command execution is prohibited and will be denied automatically.
 7. **Implementation Quality**: Follow the committed specification and API contract strictly. Ensure standard library compliance only (Python 3 stdlib, SQLite, vanilla HTML/CSS/JS).
 
 ## Task Description
 {task_description}
+
+{target_files_guidance}
 
 ## Required Structured Output
 You must return a valid JSON object matching the worker result schema:
