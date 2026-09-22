@@ -498,9 +498,13 @@ class TaskExecutor:
 
         # Dynamically pre-create directory paths for allowed paths and expected files
         for p in self.allowed_paths:
-            norm_p = p.replace("/**", "").replace("/*", "")
-            if "/" in norm_p:
-                (self.worktree_path / norm_p).mkdir(parents=True, exist_ok=True)
+            norm_p = p.replace("/**", "").replace("/*", "").rstrip("/")
+            if norm_p:
+                target = self.worktree_path / norm_p
+                if target.suffix:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.mkdir(parents=True, exist_ok=True)
         for ef in self.expected_files:
             (self.worktree_path / pathlib.Path(ef).parent).mkdir(parents=True, exist_ok=True)
 
