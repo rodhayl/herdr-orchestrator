@@ -516,7 +516,10 @@
       </svg>
       Edit
     `;
-    editBtn.addEventListener('click', () => openEditModal(bookmark));
+    editBtn.addEventListener('click', () => {
+      const currentBm = bookmarksState.find(b => b.id === bookmark.id) || bookmark;
+      openEditModal(currentBm);
+    });
 
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -528,7 +531,10 @@
       </svg>
       Delete
     `;
-    deleteBtn.addEventListener('click', () => openDeleteModal(bookmark));
+    deleteBtn.addEventListener('click', () => {
+      const currentBm = bookmarksState.find(b => b.id === bookmark.id) || bookmark;
+      openDeleteModal(currentBm);
+    });
 
     cardFooter.appendChild(editBtn);
     cardFooter.appendChild(deleteBtn);
@@ -619,8 +625,8 @@
       notificationIcon.innerHTML = `
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="16" x2="12" y2="12"></line>
-          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
       `;
     }
