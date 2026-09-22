@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 DEFAULT_DB_PATH = "minilinks.db"
 
@@ -13,17 +13,18 @@ def get_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def get_connection(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Creates and returns a SQLite connection with Row factory."""
-    parent = Path(db_path).parent
+    db_path_str = str(db_path)
+    parent = Path(db_path_str).parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False, timeout=15.0)
+    conn = sqlite3.connect(db_path_str, check_same_thread=False, timeout=15.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
+def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
     """
     Initializes the SQLite database at `db_path`, creating the bookmarks table
     and ensuring any parent directories exist.
@@ -47,7 +48,7 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
 
 def get_bookmarks(
     q: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH,
+    db_path: Union[str, Path] = DEFAULT_DB_PATH,
 ) -> List[Dict[str, Any]]:
     """
     Retrieves all bookmarks, optionally filtered by search term `q` across
@@ -59,22 +60,16 @@ def get_bookmarks(
         cursor = conn.cursor()
         if q is not None and q.strip() != "":
             query_str = q.strip().lower()
-            escaped = (
-                query_str.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
-            )
-            pattern = f"%{escaped}%"
             cursor.execute(
                 """
                 SELECT id, title, url, notes, created_at, updated_at
                 FROM bookmarks
-                WHERE LOWER(COALESCE(title, '')) LIKE ? ESCAPE '\\'
-                   OR LOWER(COALESCE(url, '')) LIKE ? ESCAPE '\\'
-                   OR LOWER(COALESCE(notes, '')) LIKE ? ESCAPE '\\'
+                WHERE instr(LOWER(COALESCE(title, '')), ?) > 0
+                   OR instr(LOWER(COALESCE(url, '')), ?) > 0
+                   OR instr(LOWER(COALESCE(notes, '')), ?) > 0
                 ORDER BY id ASC
                 """,
-                (pattern, pattern, pattern),
+                (query_str, query_str, query_str),
             )
         else:
             cursor.execute(
@@ -101,14 +96,21 @@ def get_bookmarks(
 
 
 def get_bookmark_by_id(
-    id: Optional[int] = None,
-    db_path: str = DEFAULT_DB_PATH,
+    id: Optional[Union[int, str]] = None,
+    db_path: Union[str, Path] = DEFAULT_DB_PATH,
     *,
-    bookmark_id: Optional[int] = None,
+    bookmark_id: Optional[Union[int, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a single bookmark by ID, or None if not found."""
-    target_id = id if id is not None else bookmark_id
-    if target_id is None:
+    raw_id = id if id is not None else bookmark_id
+    if raw_id is None:
+        return None
+
+    try:
+        target_id = int(raw_id)
+        if target_id <= 0:
+            return None
+    except (ValueError, TypeError):
         return None
 
     conn = get_connection(db_path)
@@ -141,7 +143,7 @@ def create_bookmark(
     title: str,
     url: str,
     notes: Optional[str] = "",
-    db_path: str = DEFAULT_DB_PATH,
+    db_path: Union[str, Path] = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
     """
     Creates a new bookmark with title, url, and optional notes.
@@ -176,28 +178,35 @@ def create_bookmark(
 
 
 def update_bookmark(
-    id: Optional[int] = None,
+    id: Optional[Union[int, str]] = None,
     title: Optional[str] = None,
     url: Optional[str] = None,
     notes: Optional[str] = None,
-    db_path: str = DEFAULT_DB_PATH,
+    db_path: Union[str, Path] = DEFAULT_DB_PATH,
     *,
-    bookmark_id: Optional[int] = None,
+    bookmark_id: Optional[Union[int, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Updates an existing bookmark's title, url, and/or notes.
     Updates the updated_at timestamp to current UTC time.
     Returns the complete updated bookmark record, or None if not found.
     """
-    target_id = id if id is not None else bookmark_id
-    if target_id is None:
+    raw_id = id if id is not None else bookmark_id
+    if raw_id is None:
+        return None
+
+    try:
+        target_id = int(raw_id)
+        if target_id <= 0:
+            return None
+    except (ValueError, TypeError):
         return None
 
     existing = get_bookmark_by_id(target_id, db_path=db_path)
     if existing is None:
         return None
 
-    updates = []
+    updates: List[str] = []
     params: List[Any] = []
 
     if title is not None:
@@ -250,14 +259,21 @@ def update_bookmark(
 
 
 def delete_bookmark(
-    id: Optional[int] = None,
-    db_path: str = DEFAULT_DB_PATH,
+    id: Optional[Union[int, str]] = None,
+    db_path: Union[str, Path] = DEFAULT_DB_PATH,
     *,
-    bookmark_id: Optional[int] = None,
+    bookmark_id: Optional[Union[int, str]] = None,
 ) -> bool:
     """Deletes a bookmark by ID. Returns True if deleted, False if not found."""
-    target_id = id if id is not None else bookmark_id
-    if target_id is None:
+    raw_id = id if id is not None else bookmark_id
+    if raw_id is None:
+        return False
+
+    try:
+        target_id = int(raw_id)
+        if target_id <= 0:
+            return False
+    except (ValueError, TypeError):
         return False
 
     conn = get_connection(db_path)

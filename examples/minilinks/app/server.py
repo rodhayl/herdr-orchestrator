@@ -44,30 +44,33 @@ def is_valid_url(url: Any) -> bool:
         return False
     try:
         parsed = urllib.parse.urlparse(stripped)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        if parsed.scheme not in ("http", "https"):
             return False
-        netloc = parsed.netloc.split("@")[-1].split(":")[0]
-        if not netloc or " " in netloc:
+        if not parsed.netloc:
+            return False
+        hostname = parsed.hostname
+        if not hostname or " " in hostname:
             return False
         return True
     except Exception:
         return False
 
 
-class MiniLinksServer(http.server.HTTPServer):
+class MiniLinksServer(http.server.ThreadingHTTPServer):
     """Custom HTTPServer maintaining database path and web directory configuration."""
 
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 64
 
     def __init__(
         self,
         server_address: Tuple[str, int],
         RequestHandlerClass: type,
-        db_path: str = database.DEFAULT_DB_PATH,
+        db_path: Union[str, Path] = database.DEFAULT_DB_PATH,
         web_dir: Optional[Union[str, Path]] = None,
     ):
-        self.db_path = db_path
+        self.db_path = str(db_path)
         if web_dir is not None:
             self.web_dir = Path(web_dir).resolve()
         else:
@@ -413,7 +416,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
 def create_server(
     host: str = "127.0.0.1",
     port: int = 0,
-    db_path: str = database.DEFAULT_DB_PATH,
+    db_path: Union[str, Path] = database.DEFAULT_DB_PATH,
     web_dir: Optional[Union[str, Path]] = None,
 ) -> MiniLinksServer:
     """
@@ -423,7 +426,7 @@ def create_server(
     Parameters:
         host (str): Hostname or IP to bind (default: '127.0.0.1').
         port (int): Port number (default: 0 for OS-assigned ephemeral port).
-        db_path (str): File system path to the SQLite database.
+        db_path (str | Path): File system path to the SQLite database.
         web_dir (str | Path, optional): Custom path to static web assets.
 
     Returns:
