@@ -319,6 +319,10 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             notes=clean_notes,
             db_path=self.server.db_path,
         )
+        if updated is None:
+            self.send_json_error(404, "Bookmark not found")
+            return
+
         self.send_json(200, updated)
 
     def do_DELETE(self) -> None:
