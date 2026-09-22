@@ -24,7 +24,7 @@
           "task_id": "wave0_spec",
           "worker_id": "agy2",
           "allowed_paths": ["docs/**"],
-          "description": "Create the complete MiniBoard product specification in docs/SPECIFICATION.md. Include full API contract (request/response schemas, status codes), SQLite database schema (tasks table with id, title, status, created_at, updated_at), frontend-backend boundary, and acceptance criteria.",
+          "description": "Create the complete MiniBoard product specification in docs/SPECIFICATION.md using write_to_file. Document the exact SQLite schema for table 'tasks' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('TODO','DOING','DONE')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL). Document the exact REST API contract: GET /health (returns 200 {'status': 'ok'}), GET /api/tasks (returns 200 array of tasks), POST /api/tasks (accepts {'title': '...', 'status': 'TODO'}, returns 201 created task, 400 on error), PATCH /api/tasks/<id> (accepts {'title': '...'} or {'status': '...'}, returns 200 updated task, 404 if not found), DELETE /api/tasks/<id> (returns 200 {'status': 'deleted', 'id': id}, 404 if not found), and static file serving for web/ (index.html, style.css, app.js). Document the Python backend interface: create_server(host='127.0.0.1', port=0, db_path='miniboard.db') returning an HTTPServer running in a daemon thread. Document the testing requirements: unittest suites in tests/ and a 12-step standalone smoke test script in scripts/smoke_test.py. Document frontend requirements: vanilla HTML/CSS/JS Kanban board with TODO, DOING, DONE columns.",
           "expected_files": ["docs/SPECIFICATION.md"]
         }
       ]
