@@ -1,0 +1,30 @@
+{
+  "task_id": "wave1_backend",
+  "worker_id": "agy3",
+  "worker_command": "/root/.local/bin/agy3",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-223803/wave1_backend",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_backend",
+  "workspace_id": "wY",
+  "pane_id": "wY:p1",
+  "start_time": "2026-09-22T22:38:11.636308+00:00",
+  "end_time": "2026-09-22T22:38:19.644908+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [
+    "app/server.py",
+    "app/database.py"
+  ],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 12852,
+    "output_tokens": 423,
+    "thinking_tokens": 289,
+    "cache_read_tokens": 0,
+    "total_tokens": 13275
+  },
+  "subagents_observed": false,
+  "status": "FAILED"
+}

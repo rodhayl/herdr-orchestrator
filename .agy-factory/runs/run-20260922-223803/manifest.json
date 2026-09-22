@@ -1,0 +1,283 @@
+{
+  "run_id": "run-20260922-223803",
+  "plan_name": "MiniBoard Software Factory End-to-End Orchestration Plan",
+  "plan_id": "demo",
+  "control_plane": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc"
+  },
+  "start_time": "2026-09-22T22:38:03.358397+00:00",
+  "status": "RUNNING",
+  "waves": [
+    {
+      "wave_index": 0,
+      "name": "Product Specification",
+      "parallel": false,
+      "tasks": [
+        {
+          "task_id": "wave0_spec",
+          "worker_id": "agy2",
+          "worker_command": "/root/.local/bin/agy2",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave0_spec",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave0_spec",
+          "workspace_id": "wX",
+          "pane_id": "wX:p1",
+          "start_time": "2026-09-22T22:38:03.386520+00:00",
+          "end_time": "2026-09-22T22:38:11.394863+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [
+            "docs/SPECIFICATION.md"
+          ],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 13056,
+            "output_tokens": 955,
+            "thinking_tokens": 862,
+            "cache_read_tokens": 0,
+            "total_tokens": 14011
+          },
+          "subagents_observed": false,
+          "status": "FAILED"
+        }
+      ]
+    },
+    {
+      "wave_index": 1,
+      "name": "True Parallel Implementation",
+      "parallel": true,
+      "tasks": [
+        {
+          "task_id": "wave1_backend",
+          "worker_id": "agy3",
+          "worker_command": "/root/.local/bin/agy3",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave1_backend",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_backend",
+          "workspace_id": "wY",
+          "pane_id": "wY:p1",
+          "start_time": "2026-09-22T22:38:11.636308+00:00",
+          "end_time": "2026-09-22T22:38:19.644908+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [
+            "app/server.py",
+            "app/database.py"
+          ],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 12852,
+            "output_tokens": 423,
+            "thinking_tokens": 289,
+            "cache_read_tokens": 0,
+            "total_tokens": 13275
+          },
+          "subagents_observed": false,
+          "status": "FAILED"
+        },
+        {
+          "task_id": "wave1_frontend",
+          "worker_id": "agy4",
+          "worker_command": "/root/.local/bin/agy4",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave1_frontend",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_frontend",
+          "workspace_id": "wZ",
+          "pane_id": "wZ:p1",
+          "start_time": "2026-09-22T22:38:11.636744+00:00",
+          "end_time": "2026-09-22T22:38:21.648045+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [
+            "web/index.html",
+            "web/style.css",
+            "web/app.js"
+          ],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 12988,
+            "output_tokens": 666,
+            "thinking_tokens": 574,
+            "cache_read_tokens": 0,
+            "total_tokens": 13654
+          },
+          "subagents_observed": false,
+          "status": "FAILED"
+        },
+        {
+          "task_id": "wave1_tests",
+          "worker_id": "agy5",
+          "worker_command": "/root/.local/bin/agy5",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave1_tests",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_tests",
+          "workspace_id": "w0",
+          "pane_id": "w0:p1",
+          "start_time": "2026-09-22T22:38:11.637942+00:00",
+          "end_time": "2026-09-22T22:38:20.644920+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [
+            "tests/test_api.py",
+            "tests/test_persistence.py",
+            "scripts/smoke_test.py"
+          ],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 12805,
+            "output_tokens": 563,
+            "thinking_tokens": 458,
+            "cache_read_tokens": 0,
+            "total_tokens": 13368
+          },
+          "subagents_observed": false,
+          "status": "FAILED"
+        }
+      ]
+    },
+    {
+      "wave_index": 2,
+      "name": "Integration Quality & Repair Gate",
+      "parallel": false,
+      "tasks": [
+        {
+          "task_id": "wave2_review",
+          "worker_id": "agy6",
+          "worker_command": "/root/.local/bin/agy6",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave2_review",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave2_review",
+          "workspace_id": "w11",
+          "pane_id": "w11:p1",
+          "start_time": "2026-09-22T22:38:21.835872+00:00",
+          "end_time": "2026-09-22T22:38:29.844435+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 12842,
+            "output_tokens": 685,
+            "thinking_tokens": 592,
+            "cache_read_tokens": 0,
+            "total_tokens": 13527
+          },
+          "subagents_observed": false,
+          "status": "FAILED"
+        }
+      ]
+    },
+    {
+      "wave_index": 3,
+      "name": "Independent Final Audit",
+      "parallel": false,
+      "tasks": [
+        {
+          "task_id": "wave3_audit",
+          "worker_id": "agy7",
+          "worker_command": "/root/.local/bin/agy7",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260922-223803/wave3_audit",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave3_audit",
+          "workspace_id": "w12",
+          "pane_id": "w12:p1",
+          "start_time": "2026-09-22T22:38:30.000776+00:00",
+          "end_time": "2026-09-22T22:38:38.007245+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {},
+          "usage": {
+            "input_tokens": 26625,
+            "output_tokens": 882,
+            "thinking_tokens": 688,
+            "cache_read_tokens": 0,
+            "total_tokens": 27507
+          },
+          "subagents_observed": false,
+          "status": "SUCCESS"
+        }
+      ]
+    }
+  ],
+  "deterministic_validation": {
+    "compileall": {
+      "returncode": 0,
+      "stdout": "Listing 'app'...\nListing 'tests'...\n",
+      "stderr": "",
+      "passed": true
+    },
+    "unittest": {
+      "returncode": 5,
+      "stdout": "",
+      "stderr": "\n----------------------------------------------------------------------\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n",
+      "passed": false
+    },
+    "smoke_test": {
+      "returncode": -1,
+      "error": "smoke_test.py not found",
+      "passed": false
+    }
+  },
+  "final_audit": {},
+  "final_status": "COMPLETED",
+  "deterministic_validation_post_wave2": {
+    "compileall": {
+      "returncode": 0,
+      "stdout": "Listing 'app'...\nListing 'tests'...\n",
+      "stderr": "",
+      "passed": true
+    },
+    "unittest": {
+      "returncode": 5,
+      "stdout": "",
+      "stderr": "\n----------------------------------------------------------------------\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n",
+      "passed": false
+    },
+    "smoke_test": {
+      "returncode": -1,
+      "error": "smoke_test.py not found",
+      "passed": false
+    }
+  },
+  "concurrency_evidence": {
+    "tasks": [
+      {
+        "task_id": "wave1_backend",
+        "worker_id": "agy3",
+        "start": "2026-09-22T22:38:11.636308+00:00",
+        "end": "2026-09-22T22:38:19.644908+00:00"
+      },
+      {
+        "task_id": "wave1_frontend",
+        "worker_id": "agy4",
+        "start": "2026-09-22T22:38:11.636744+00:00",
+        "end": "2026-09-22T22:38:21.648045+00:00"
+      },
+      {
+        "task_id": "wave1_tests",
+        "worker_id": "agy5",
+        "start": "2026-09-22T22:38:11.637942+00:00",
+        "end": "2026-09-22T22:38:20.644920+00:00"
+      }
+    ],
+    "parallel_group": true,
+    "verified_overlap": true
+  },
+  "end_time": "2026-09-22T22:38:38.012990+00:00"
+}

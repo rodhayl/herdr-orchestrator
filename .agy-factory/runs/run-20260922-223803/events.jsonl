@@ -1,0 +1,14 @@
+{"timestamp": "2026-09-22T22:38:03.358409+00:00", "event": "RUN_STARTED", "payload": {"run_id": "run-20260922-223803", "plan": "MiniBoard Software Factory End-to-End Orchestration Plan"}}
+{"timestamp": "2026-09-22T22:38:03.361293+00:00", "event": "WAVE_STARTED", "payload": {"wave": "Product Specification", "parallel": false}}
+{"timestamp": "2026-09-22T22:38:11.400324+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave0_spec", "status": "FAILED"}}
+{"timestamp": "2026-09-22T22:38:11.403088+00:00", "event": "WAVE_STARTED", "payload": {"wave": "True Parallel Implementation", "parallel": true}}
+{"timestamp": "2026-09-22T22:38:11.634704+00:00", "event": "PARALLEL_DISPATCH", "payload": {"tasks": ["wave1_backend", "wave1_frontend", "wave1_tests"]}}
+{"timestamp": "2026-09-22T22:38:19.650277+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave1_backend", "status": "FAILED"}}
+{"timestamp": "2026-09-22T22:38:20.650100+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave1_tests", "status": "FAILED"}}
+{"timestamp": "2026-09-22T22:38:21.653344+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave1_frontend", "status": "FAILED"}}
+{"timestamp": "2026-09-22T22:38:21.656761+00:00", "event": "DETERMINISTIC_GATE_EVALUATING", "payload": {}}
+{"timestamp": "2026-09-22T22:38:21.793745+00:00", "event": "DETERMINISTIC_GATE_RESULT", "payload": {"all_passed": false, "checks": {"compileall": {"returncode": 0, "stdout": "Listing 'app'...\nListing 'tests'...\n", "stderr": "", "passed": true}, "unittest": {"returncode": 5, "stdout": "", "stderr": "\n----------------------------------------------------------------------\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n", "passed": false}, "smoke_test": {"returncode": -1, "error": "smoke_test.py not found", "passed": false}}}}
+{"timestamp": "2026-09-22T22:38:21.793826+00:00", "event": "WAVE_STARTED", "payload": {"wave": "Integration Quality & Repair Gate", "parallel": false}}
+{"timestamp": "2026-09-22T22:38:29.848794+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave2_review", "status": "FAILED"}}
+{"timestamp": "2026-09-22T22:38:29.969758+00:00", "event": "WAVE_STARTED", "payload": {"wave": "Independent Final Audit", "parallel": false}}
+{"timestamp": "2026-09-22T22:38:38.012914+00:00", "event": "TASK_COMPLETED", "payload": {"task_id": "wave3_audit", "status": "SUCCESS"}}

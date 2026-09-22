@@ -1,0 +1,22 @@
+{
+  "plan_id": "audit",
+  "name": "Independent Final Audit",
+  "version": "1.0.0",
+  "waves": [
+    {
+      "wave_index": 3,
+      "name": "Independent Final Audit",
+      "parallel": false,
+      "tasks": [
+        {
+          "task_id": "wave3_audit",
+          "worker_id": "agy7",
+          "review_only": true,
+          "allowed_paths": [],
+          "description": "Conduct an objective, independent audit of the completed MiniBoard repository against docs/SPECIFICATION.md using view_file. Evaluate feature completeness, API contract compliance, SQLite persistence, frontend/backend integration, and test quality. Provide structured findings with severity, area, evidence, and recommendations. Do NOT modify any code.",
+          "expected_files": []
+        }
+      ]
+    }
+  ]
+}

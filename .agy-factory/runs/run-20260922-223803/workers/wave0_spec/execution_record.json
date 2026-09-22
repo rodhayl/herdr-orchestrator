@@ -1,0 +1,29 @@
+{
+  "task_id": "wave0_spec",
+  "worker_id": "agy2",
+  "worker_command": "/root/.local/bin/agy2",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-223803/wave0_spec",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave0_spec",
+  "workspace_id": "wX",
+  "pane_id": "wX:p1",
+  "start_time": "2026-09-22T22:38:03.386520+00:00",
+  "end_time": "2026-09-22T22:38:11.394863+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [
+    "docs/SPECIFICATION.md"
+  ],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 13056,
+    "output_tokens": 955,
+    "thinking_tokens": 862,
+    "cache_read_tokens": 0,
+    "total_tokens": 14011
+  },
+  "subagents_observed": false,
+  "status": "FAILED"
+}

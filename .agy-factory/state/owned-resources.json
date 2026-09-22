@@ -9,7 +9,21 @@
   "owned": {
     "workspace_ids": [],
     "pane_ids": [],
-    "branches": [],
+    "branches": [
+      "factory/run-20260922-223803/wave0_spec",
+      "factory/run-20260922-223803/wave1_backend",
+      "factory/run-20260922-223803/wave1_frontend",
+      "factory/run-20260922-223803/wave1_tests",
+      "factory/run-20260922-223803/wave2_review",
+      "factory/run-20260922-223803/wave3_audit",
+      "factory/run-20260922-223926/wave0_spec",
+      "factory/run-20260922-223926/wave1_backend",
+      "factory/run-20260922-223926/wave1_frontend",
+      "factory/run-20260922-223926/wave1_tests",
+      "factory/run-20260922-223926/wave2_review",
+      "factory/run-20260922-223926/wave3_audit",
+      "factory/run-20260922-224738/wave3_audit"
+    ],
     "worktrees": []
   }
 }

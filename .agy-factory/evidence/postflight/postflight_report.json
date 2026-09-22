@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-09-22T22:49:06.520314+00:00",
+  "python_stdlib_only": true,
+  "venv_created": false,
+  "sudo_used": false,
+  "os_packages_installed": false,
+  "pip_packages_installed": false,
+  "global_npm_packages_installed": false,
+  "system_services_created": false,
+  "shell_profiles_changed": false,
+  "config_comparison": [
+    {
+      "path": "/root/.config/herdr/config.toml",
+      "preflight_sha256": "dcd6d6ddcd8ae55b5b54da04cd38068e52e0e97e0905c8f37f4037324b609245",
+      "postflight_sha256": "dcd6d6ddcd8ae55b5b54da04cd38068e52e0e97e0905c8f37f4037324b609245",
+      "unchanged": true
+    },
+    {
+      "path": "/root/.gemini/antigravity-cli/settings.json",
+      "preflight_sha256": "8d653cd76cb013d6c425fc080c132043b77cde3481f6cb2ebb2e1d07fdedcf29",
+      "postflight_sha256": "8d653cd76cb013d6c425fc080c132043b77cde3481f6cb2ebb2e1d07fdedcf29",
+      "unchanged": true
+    },
+    {
+      "path": "/root/.agy7_home/.gemini/antigravity-cli/settings.json",
+      "preflight_sha256": "cadea1138b4af2ba0aed788e9297cba10b412f4e3ee5241d77c3204ae7010547",
+      "postflight_sha256": "cadea1138b4af2ba0aed788e9297cba10b412f4e3ee5241d77c3204ae7010547",
+      "unchanged": true
+    },
+    {
+      "path": "/root/.config/agy7/herdr/config.toml",
+      "preflight_sha256": null,
+      "postflight_sha256": null,
+      "unchanged": true
+    }
+  ],
+  "herdr_workspaces_count": 11,
+  "herdr_workspaces_baseline_count": 11,
+  "workspaces_count_match": true,
+  "control_plane": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc"
+  },
+  "unavoidable_runtime_writes": [
+    "/root/.gemini/antigravity-cli/conversation_summaries.db (normal AGY conversation indexing)",
+    "/root/.gemini/antigravity-cli/history.jsonl (normal AGY command history append)",
+    "/root/.agy*_home/.gemini/antigravity-cli/log/ (normal CLI stdout/stderr debug logs)"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "task_id": "wave3_audit",
+  "worker_id": "agy7",
+  "worker_command": "/root/.local/bin/agy7",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-223803/wave3_audit",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave3_audit",
+  "workspace_id": "w12",
+  "pane_id": "w12:p1",
+  "start_time": "2026-09-22T22:38:30.000776+00:00",
+  "end_time": "2026-09-22T22:38:38.007245+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 26625,
+    "output_tokens": 882,
+    "thinking_tokens": 688,
+    "cache_read_tokens": 0,
+    "total_tokens": 27507
+  },
+  "subagents_observed": false,
+  "status": "SUCCESS"
+}

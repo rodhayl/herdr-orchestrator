@@ -1,0 +1,31 @@
+{
+  "task_id": "wave1_tests",
+  "worker_id": "agy5",
+  "worker_command": "/root/.local/bin/agy5",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-223803/wave1_tests",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_tests",
+  "workspace_id": "w0",
+  "pane_id": "w0:p1",
+  "start_time": "2026-09-22T22:38:11.637942+00:00",
+  "end_time": "2026-09-22T22:38:20.644920+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [
+    "tests/test_api.py",
+    "tests/test_persistence.py",
+    "scripts/smoke_test.py"
+  ],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 12805,
+    "output_tokens": 563,
+    "thinking_tokens": 458,
+    "cache_read_tokens": 0,
+    "total_tokens": 13368
+  },
+  "subagents_observed": false,
+  "status": "FAILED"
+}

@@ -1,0 +1,19 @@
+{
+  "compileall": {
+    "returncode": 0,
+    "stdout": "Listing 'app'...\nListing 'tests'...\n",
+    "stderr": "",
+    "passed": true
+  },
+  "unittest": {
+    "returncode": 5,
+    "stdout": "",
+    "stderr": "\n----------------------------------------------------------------------\nRan 0 tests in 0.000s\n\nNO TESTS RAN\n",
+    "passed": false
+  },
+  "smoke_test": {
+    "returncode": -1,
+    "error": "smoke_test.py not found",
+    "passed": false
+  }
+}

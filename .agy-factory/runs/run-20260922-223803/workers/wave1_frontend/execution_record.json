@@ -1,0 +1,31 @@
+{
+  "task_id": "wave1_frontend",
+  "worker_id": "agy4",
+  "worker_command": "/root/.local/bin/agy4",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260922-223803/wave1_frontend",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260922-223803/wave1_frontend",
+  "workspace_id": "wZ",
+  "pane_id": "wZ:p1",
+  "start_time": "2026-09-22T22:38:11.636744+00:00",
+  "end_time": "2026-09-22T22:38:21.648045+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [],
+  "path_violations": [],
+  "missing_expected": [
+    "web/index.html",
+    "web/style.css",
+    "web/app.js"
+  ],
+  "structured_output": {},
+  "usage": {
+    "input_tokens": 12988,
+    "output_tokens": 666,
+    "thinking_tokens": 574,
+    "cache_read_tokens": 0,
+    "total_tokens": 13654
+  },
+  "subagents_observed": false,
+  "status": "FAILED"
+}
