@@ -1,239 +1,290 @@
 #!/usr/bin/env python3
 """
-MiniLinks Standalone 12-Step Smoke Test Script.
+Standalone 12-Step Deterministic Smoke Test for MiniLinks.
 
-Executes an end-to-end verification scenario against an ephemeral server instance,
-printing deterministic progress logs for each step and exiting with code 0 on success.
+Executes an end-to-end verification scenario against an ephemeral server instance:
+  Step 1  - Server Bootstrap
+  Step 2  - Health Check
+  Step 3  - Initial Empty State
+  Step 4  - Create Bookmark (Valid)
+  Step 5  - Create Bookmark Validation Error
+  Step 6  - Verify Bookmark Listing
+  Step 7  - Search Filtering
+  Step 8  - Update Bookmark
+  Step 9  - Update Non-Existent Bookmark
+  Step 10 - Delete Bookmark
+  Step 11 - Delete Non-Existent Bookmark
+  Step 12 - Verify Static Asset Delivery
+
+Exits with status code 0 on total success, or non-zero on any failure.
 """
 
 import json
 import os
-import shutil
+from pathlib import Path
 import sys
 import tempfile
 import time
+import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
-from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
-# Ensure examples/minilinks and repository root are on sys.path
-_current_file = Path(__file__).resolve()
-_minilinks_dir = _current_file.parent.parent if _current_file.parent.name in ("tests", "scripts") else _current_file.parent
-_repo_root = _minilinks_dir.parent.parent if _minilinks_dir.name == "minilinks" else _minilinks_dir.parent
+# Ensure examples/minilinks is in sys.path so 'app' can be imported
+_current_dir = Path(__file__).resolve().parent
+_minilinks_dir = _current_dir.parent
+if str(_minilinks_dir) not in sys.path:
+    sys.path.insert(0, str(_minilinks_dir))
 
-for _p in (str(_minilinks_dir), str(_repo_root)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-try:
-    from app.server import create_server
-except ImportError:
-    try:
-        from examples.minilinks.app.server import create_server
-    except ImportError as _err:
-        print(f"FATAL: Could not import create_server. sys.path={sys.path}", file=sys.stderr)
-        raise _err
+from app.server import MiniLinksServer, create_server
 
 
-def http_request(base_url: str, method: str, path: str, data=None):
+def http_request(
+    base_url: str,
+    method: str,
+    path: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, Any, bytes]:
     """
-    Sends an HTTP request using urllib and returns (status, headers, json_body, raw_body).
-    Handles HTTPError gracefully to inspect 4xx/5xx responses.
+    Sends an HTTP request using urllib.
+    Returns (status_code, parsed_json_or_none, raw_body_bytes).
     """
     url = f"{base_url}{path}"
     headers = {}
-    body = None
+    data_bytes: Optional[bytes] = None
+    if payload is not None:
+        data_bytes = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
 
-    if data is not None:
-        if isinstance(data, (dict, list)):
-            body = json.dumps(data).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        elif isinstance(data, str):
-            body = data.encode("utf-8")
-        elif isinstance(data, bytes):
-            body = data
-
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            resp_body = resp.read()
-            json_data = None
-            if resp_body:
-                try:
-                    json_data = json.loads(resp_body.decode("utf-8"))
-                except Exception:
-                    pass
-            return resp.status, resp.headers, json_data, resp_body
-    except urllib.error.HTTPError as err:
-        err_body = err.read()
-        json_data = None
-        if err_body:
-            try:
-                json_data = json.loads(err_body.decode("utf-8"))
-            except Exception:
-                pass
-        return err.code, err.headers, json_data, err_body
+        with urllib.request.urlopen(req) as resp:
+            status = resp.status
+            body = resp.read()
+    except urllib.error.HTTPError as e:
+        status = e.code
+        body = e.read()
+
+    parsed_json = None
+    if body:
+        try:
+            parsed_json = json.loads(body.decode("utf-8"))
+        except Exception:
+            parsed_json = None
+
+    return status, parsed_json, body
 
 
-def main() -> int:
-    """Runs the 12 deterministic smoke test steps."""
-    server = None
-    temp_dir = None
+def run_smoke_test() -> None:
+    """Executes the 12 deterministic smoke test steps."""
+    print("=" * 70)
+    print("MiniLinks 12-Step Smoke Test Verification Suite")
+    print("=" * 70)
 
-    print("==================================================")
-    print("Starting MiniLinks 12-Step Standalone Smoke Test")
-    print("==================================================")
+    temp_dir = tempfile.TemporaryDirectory()
+    server: Optional[MiniLinksServer] = None
 
     try:
-        # Step 1 - Server Bootstrap
-        temp_dir = tempfile.mkdtemp(prefix="minilinks_smoke_")
-        db_path = os.path.join(temp_dir, "smoke.db")
-        server = create_server(host="127.0.0.1", port=0, db_path=db_path)
-        port = getattr(server, "server_port", None) or server.server_address[1]
-        base_url = f"http://127.0.0.1:{port}"
-        print(f"[Step 1/12] Server Bootstrap: Bound to ephemeral port {port}, DB at {db_path}")
+        # Step 1: Server Bootstrap
+        print("[Step 1/12] Server Bootstrap: starting server on ephemeral port...")
+        temp_db = os.path.join(temp_dir.name, "smoke_test.db")
+        server = create_server(host="127.0.0.1", port=0, db_path=temp_db)
+        bound_port = server.server_port
+        assert bound_port > 0, f"Expected positive port number, got {bound_port}"
+        base_url = f"http://127.0.0.1:{bound_port}"
+        print(f"  --> PASS: Server listening at {base_url} (db: {temp_db})")
 
-        # Step 2 - Health Check
-        status, _, data, _ = http_request(base_url, "GET", "/health")
-        assert status == 200, f"Step 2 failed: expected HTTP 200, got {status}"
-        assert isinstance(data, dict) and data.get("status") == "ok", (
-            f"Step 2 failed: expected {{'status': 'ok'}}, got {data}"
+        # Step 2: Health Check
+        print("[Step 2/12] Health Check: GET /health...")
+        status, payload, _ = http_request(base_url, "GET", "/health")
+        assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
+        assert payload == {"status": "ok"}, f"Expected {{'status': 'ok'}}, got {payload}"
+        print(f"  --> PASS: Health check returned HTTP 200: {payload}")
+
+        # Step 3: Initial Empty State
+        print("[Step 3/12] Initial Empty State: GET /api/bookmarks...")
+        status, payload, _ = http_request(base_url, "GET", "/api/bookmarks")
+        assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
+        assert isinstance(payload, list) and len(payload) == 0, (
+            f"Expected empty list [], got {payload}"
         )
-        print("[Step 2/12] Health Check: GET /health returned 200 OK and {'status': 'ok'}")
+        print("  --> PASS: Initial bookmarks list is empty []")
 
-        # Step 3 - Initial Empty State
-        status, _, data, _ = http_request(base_url, "GET", "/api/bookmarks")
-        assert status == 200, f"Step 3 failed: expected HTTP 200, got {status}"
-        assert isinstance(data, list) and len(data) == 0, (
-            f"Step 3 failed: expected empty list [], got {data}"
-        )
-        print("[Step 3/12] Initial Empty State: GET /api/bookmarks returned 200 OK with empty list []")
-
-        # Step 4 - Create Bookmark (Valid)
-        payload = {
+        # Step 4: Create Bookmark (Valid)
+        print("[Step 4/12] Create Bookmark (Valid): POST /api/bookmarks...")
+        create_payload = {
             "title": "Python Docs",
             "url": "https://docs.python.org",
             "notes": "Official Docs",
         }
-        status, _, data, _ = http_request(base_url, "POST", "/api/bookmarks", data=payload)
-        assert status == 201, f"Step 4 failed: expected HTTP 201, got {status}"
-        assert isinstance(data, dict), f"Step 4 failed: expected JSON dict, got {type(data)}"
-        created_id = data.get("id")
-        assert isinstance(created_id, int) and created_id > 0, (
-            f"Step 4 failed: invalid bookmark id: {created_id}"
+        status, payload, _ = http_request(
+            base_url, "POST", "/api/bookmarks", payload=create_payload
         )
-        assert data.get("title") == "Python Docs", f"Step 4 failed: title mismatch: {data.get('title')}"
-        assert data.get("url") == "https://docs.python.org", f"Step 4 failed: url mismatch: {data.get('url')}"
-        assert data.get("notes") == "Official Docs", f"Step 4 failed: notes mismatch: {data.get('notes')}"
-        assert bool(data.get("created_at")), "Step 4 failed: missing created_at"
-        assert bool(data.get("updated_at")), "Step 4 failed: missing updated_at"
-        print(f"[Step 4/12] Create Bookmark (Valid): POST /api/bookmarks returned 201 Created (ID: {created_id})")
-
-        # Step 5 - Create Bookmark Validation Error
-        status, _, data, _ = http_request(base_url, "POST", "/api/bookmarks", data={"title": ""})
-        assert status == 400, f"Step 5 failed: expected HTTP 400 for empty title, got {status}"
-        print("[Step 5/12] Create Bookmark Validation Error: POST /api/bookmarks with invalid payload returned 400 Bad Request")
-
-        # Step 6 - Verify Bookmark Listing
-        status, _, data, _ = http_request(base_url, "GET", "/api/bookmarks")
-        assert status == 200, f"Step 6 failed: expected HTTP 200, got {status}"
-        assert isinstance(data, list) and len(data) == 1, (
-            f"Step 6 failed: expected exactly 1 bookmark in list, got {len(data) if isinstance(data, list) else data}"
+        assert status == 201, f"Expected HTTP 201, got {status} ({payload})"
+        assert isinstance(payload, dict), f"Expected dict response, got {type(payload)}"
+        bm_id = payload.get("id")
+        assert isinstance(bm_id, int) and bm_id > 0, (
+            f"Expected positive integer 'id', got {bm_id}"
         )
-        bm = data[0]
-        assert bm.get("id") == created_id, f"Step 6 failed: bookmark ID mismatch: {bm.get('id')}"
-        assert bm.get("title") == "Python Docs", f"Step 6 failed: title mismatch: {bm.get('title')}"
-        assert bm.get("url") == "https://docs.python.org", f"Step 6 failed: url mismatch: {bm.get('url')}"
-        assert bm.get("notes") == "Official Docs", f"Step 6 failed: notes mismatch: {bm.get('notes')}"
-        print("[Step 6/12] Verify Bookmark Listing: GET /api/bookmarks returned 200 OK with 1 matching bookmark")
-
-        # Step 7 - Search Filtering
-        status, _, data_match, _ = http_request(base_url, "GET", "/api/bookmarks?q=Python")
-        assert status == 200, f"Step 7 failed: expected HTTP 200 for search, got {status}"
-        assert isinstance(data_match, list) and len(data_match) == 1, (
-            f"Step 7 failed: expected 1 match for 'Python', got {len(data_match) if isinstance(data_match, list) else data_match}"
+        assert payload.get("title") == "Python Docs", f"Unexpected title: {payload.get('title')}"
+        assert payload.get("url") == "https://docs.python.org", (
+            f"Unexpected url: {payload.get('url')}"
         )
-        assert data_match[0]["id"] == created_id
-
-        status, _, data_nomatch, _ = http_request(base_url, "GET", "/api/bookmarks?q=NonExistentTerm")
-        assert status == 200, f"Step 7 failed: expected HTTP 200 for non-matching search, got {status}"
-        assert isinstance(data_nomatch, list) and len(data_nomatch) == 0, (
-            f"Step 7 failed: expected 0 matches for 'NonExistentTerm', got {len(data_nomatch) if isinstance(data_nomatch, list) else data_nomatch}"
+        assert payload.get("notes") == "Official Docs", (
+            f"Unexpected notes: {payload.get('notes')}"
         )
-        print("[Step 7/12] Search Filtering: GET /api/bookmarks?q=Python returned 1 match; q=NonExistentTerm returned 0")
+        created_at = payload.get("created_at")
+        updated_at = payload.get("updated_at")
+        assert created_at and isinstance(created_at, str), f"Missing created_at: {created_at}"
+        assert updated_at and isinstance(updated_at, str), f"Missing updated_at: {updated_at}"
+        print(f"  --> PASS: Created bookmark with ID {bm_id} at {created_at}")
 
-        # Step 8 - Update Bookmark
-        time.sleep(0.05)
-        status, _, data, _ = http_request(
-            base_url,
-            "PATCH",
-            f"/api/bookmarks/{created_id}",
-            data={"notes": "Updated Documentation Notes"},
+        # Step 5: Create Bookmark Validation Error
+        print("[Step 5/12] Create Bookmark Validation Error: POST /api/bookmarks with invalid payload...")
+        status, payload, _ = http_request(
+            base_url, "POST", "/api/bookmarks", payload={"title": ""}
         )
-        assert status == 200, f"Step 8 failed: expected HTTP 200, got {status}"
-        assert data.get("notes") == "Updated Documentation Notes", (
-            f"Step 8 failed: notes mismatch after update: {data.get('notes')}"
+        assert status == 400, f"Expected HTTP 400, got {status} ({payload})"
+        assert isinstance(payload, dict) and "error" in payload, (
+            f"Expected error payload, got {payload}"
         )
-        assert bool(data.get("updated_at")), "Step 8 failed: missing updated_at after patch"
-        print(f"[Step 8/12] Update Bookmark: PATCH /api/bookmarks/{created_id} returned 200 OK, notes updated")
+        print(f"  --> PASS: Rejected invalid creation payload with HTTP 400: {payload.get('error')}")
 
-        # Step 9 - Update Non-Existent Bookmark
-        status, _, data, _ = http_request(
-            base_url,
-            "PATCH",
-            "/api/bookmarks/99999",
-            data={"notes": "Ghost"},
+        # Step 6: Verify Bookmark Listing
+        print("[Step 6/12] Verify Bookmark Listing: GET /api/bookmarks...")
+        status, payload, _ = http_request(base_url, "GET", "/api/bookmarks")
+        assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
+        assert isinstance(payload, list) and len(payload) == 1, (
+            f"Expected list with 1 item, got {len(payload)}"
         )
-        assert status == 404, f"Step 9 failed: expected HTTP 404 for non-existent bookmark, got {status}"
-        print("[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999 returned 404 Not Found")
+        item = payload[0]
+        assert item.get("id") == bm_id, f"Expected id {bm_id}, got {item.get('id')}"
+        assert item.get("title") == "Python Docs", f"Unexpected title: {item.get('title')}"
+        assert item.get("url") == "https://docs.python.org", f"Unexpected url: {item.get('url')}"
+        assert item.get("notes") == "Official Docs", f"Unexpected notes: {item.get('notes')}"
+        print(f"  --> PASS: Listing returned exactly 1 bookmark matching ID {bm_id}")
 
-        # Step 10 - Delete Bookmark
-        status, _, data, _ = http_request(base_url, "DELETE", f"/api/bookmarks/{created_id}")
-        assert status == 200, f"Step 10 failed: expected HTTP 200, got {status}"
-        assert isinstance(data, dict), f"Step 10 failed: expected dict, got {type(data)}"
-        assert data.get("status") == "deleted", f"Step 10 failed: expected status 'deleted', got {data.get('status')}"
-        assert data.get("id") == created_id, f"Step 10 failed: expected id {created_id}, got {data.get('id')}"
-        print(f"[Step 10/12] Delete Bookmark: DELETE /api/bookmarks/{created_id} returned 200 OK (status: deleted)")
+        # Step 7: Search Filtering
+        print("[Step 7/12] Search Filtering: GET /api/bookmarks?q=Python and ?q=NonExistentTerm...")
+        status, payload, _ = http_request(base_url, "GET", "/api/bookmarks?q=Python")
+        assert status == 200, f"Expected HTTP 200, got {status}"
+        assert isinstance(payload, list) and len(payload) == 1, (
+            f"Expected 1 matching result for 'Python', got {len(payload)}"
+        )
+        assert payload[0].get("id") == bm_id
 
-        # Step 11 - Delete Non-Existent Bookmark
-        status, _, data, _ = http_request(base_url, "DELETE", "/api/bookmarks/99999")
-        assert status == 404, f"Step 11 failed: expected HTTP 404 for non-existent delete, got {status}"
-        print("[Step 11/12] Delete Non-Existent Bookmark: DELETE /api/bookmarks/99999 returned 404 Not Found")
+        status, payload_empty, _ = http_request(
+            base_url, "GET", "/api/bookmarks?q=NonExistentTerm"
+        )
+        assert status == 200, f"Expected HTTP 200, got {status}"
+        assert isinstance(payload_empty, list) and len(payload_empty) == 0, (
+            f"Expected 0 results for non-matching term, got {len(payload_empty)}"
+        )
+        print("  --> PASS: Search correctly filtered matching and non-matching queries")
 
-        # Step 12 - Verify Static Asset Delivery
-        static_endpoints = ["/", "/style.css", "/app.js"]
-        for path in static_endpoints:
-            status, _, _, body = http_request(base_url, "GET", path)
-            assert status == 200, f"Step 12 failed: expected HTTP 200 for {path}, got {status}"
-            assert len(body) > 0, f"Step 12 failed: expected non-empty content for {path}, got 0 bytes"
-        print("[Step 12/12] Verify Static Asset Delivery: GET /, /style.css, and /app.js returned 200 OK with non-empty content")
+        # Step 8: Update Bookmark
+        print("[Step 8/12] Update Bookmark: PATCH /api/bookmarks/<id>...")
+        # Brief pause to ensure updated_at timestamp increments past current second
+        time.sleep(1.05)
+        patch_payload = {"notes": "Updated Documentation Notes"}
+        status, payload, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload=patch_payload
+        )
+        assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
+        assert isinstance(payload, dict), f"Expected dict response, got {type(payload)}"
+        assert payload.get("notes") == "Updated Documentation Notes", (
+            f"Expected updated notes, got {payload.get('notes')}"
+        )
+        new_updated_at = payload.get("updated_at")
+        assert new_updated_at and new_updated_at != updated_at, (
+            f"Expected refreshed updated_at ({new_updated_at} != {updated_at})"
+        )
+        print(f"  --> PASS: Updated bookmark notes; updated_at refreshed to {new_updated_at}")
 
-        print("==================================================")
-        print("ALL 12 SMOKE TEST STEPS COMPLETED SUCCESSFULLY!")
-        print("==================================================")
-        return 0
+        # Step 9: Update Non-Existent Bookmark
+        print("[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...")
+        status, payload, _ = http_request(
+            base_url, "PATCH", "/api/bookmarks/99999", payload={"notes": "Ghost"}
+        )
+        assert status == 404, f"Expected HTTP 404, got {status} ({payload})"
+        assert isinstance(payload, dict) and "error" in payload, (
+            f"Expected error field in 404 response, got {payload}"
+        )
+        print(f"  --> PASS: Non-existent PATCH returned HTTP 404: {payload.get('error')}")
 
-    except AssertionError as assert_err:
-        print(f"\n[FAILURE] Assertion failed: {assert_err}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"\n[FAILURE] Unexpected error occurred: {exc}", file=sys.stderr)
-        return 1
+        # Step 10: Delete Bookmark
+        print(f"[Step 10/12] Delete Bookmark: DELETE /api/bookmarks/{bm_id}...")
+        status, payload, _ = http_request(
+            base_url, "DELETE", f"/api/bookmarks/{bm_id}"
+        )
+        assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
+        assert payload == {"status": "deleted", "id": bm_id}, (
+            f"Expected {{'status': 'deleted', 'id': {bm_id}}}, got {payload}"
+        )
+        print(f"  --> PASS: Successfully deleted bookmark {bm_id}")
+
+        # Step 11: Delete Non-Existent Bookmark
+        print("[Step 11/12] Delete Non-Existent Bookmark: DELETE /api/bookmarks/99999...")
+        status, payload, _ = http_request(base_url, "DELETE", "/api/bookmarks/99999")
+        assert status == 404, f"Expected HTTP 404, got {status} ({payload})"
+        assert isinstance(payload, dict) and "error" in payload, (
+            f"Expected error field in 404 response, got {payload}"
+        )
+        print(f"  --> PASS: Non-existent DELETE returned HTTP 404: {payload.get('error')}")
+
+        # Step 12: Verify Static Asset Delivery
+        print("[Step 12/12] Verify Static Asset Delivery: GET /, /style.css, /app.js...")
+        # Root index
+        status_root, _, body_root = http_request(base_url, "GET", "/")
+        assert status_root == 200, f"Expected HTTP 200 for /, got {status_root}"
+        assert len(body_root) > 0, "Expected non-empty response body for /"
+        assert b"MiniLinks" in body_root, "Expected 'MiniLinks' in root index response"
+
+        # CSS stylesheet
+        status_css, _, body_css = http_request(base_url, "GET", "/style.css")
+        assert status_css == 200, f"Expected HTTP 200 for /style.css, got {status_css}"
+        assert len(body_css) > 0, "Expected non-empty response body for /style.css"
+
+        # JS client script
+        status_js, _, body_js = http_request(base_url, "GET", "/app.js")
+        assert status_js == 200, f"Expected HTTP 200 for /app.js, got {status_js}"
+        assert len(body_js) > 0, "Expected non-empty response body for /app.js"
+        print("  --> PASS: All static assets (/, /style.css, /app.js) served with HTTP 200")
+
+        print("=" * 70)
+        print("SUCCESS: All 12 deterministic smoke test steps passed!")
+        print("=" * 70)
+
     finally:
-        # Cleanup
-        print("[Cleanup] Cleaning up background server and temporary resources...")
+        # Cleanup server and temporary database
+        print("Cleaning up server and temporary test directory...")
         if server is not None:
             try:
                 server.shutdown()
                 server.server_close()
             except Exception as e:
-                print(f"[Cleanup] Error shutting down server: {e}", file=sys.stderr)
-        if temp_dir is not None and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                print(f"[Cleanup] Error removing temporary dir: {e}", file=sys.stderr)
-        print("[Cleanup] Done.")
+                print(f"Warning during server shutdown: {e}")
+        try:
+            temp_dir.cleanup()
+        except Exception as e:
+            print(f"Warning during temp directory cleanup: {e}")
+        print("Cleanup completed.")
+
+
+def main() -> int:
+    """Entry point for standalone execution."""
+    try:
+        run_smoke_test()
+        return 0
+    except AssertionError as e:
+        print(f"\nASSERTION FAILED: {e}", file=sys.stderr)
+        traceback.print_exc()
+        return 1
+    except Exception as e:
+        print(f"\nUNEXPECTED ERROR: {e}", file=sys.stderr)
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
