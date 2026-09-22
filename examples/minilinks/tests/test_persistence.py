@@ -43,8 +43,8 @@ def send_http_request(
     path: str,
     data: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, Any]:
-    """Sends an HTTP request and returns (status_code, parsed_json_response)."""
-    headers = {}
+    """Sends an HTTP request with Connection: close and returns (status_code, parsed_json_response)."""
+    headers = {"Connection": "close"}
     encoded_data = None
     if data is not None:
         encoded_data = json.dumps(data).encode("utf-8")

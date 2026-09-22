@@ -4,8 +4,10 @@ import http.client
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -37,7 +39,7 @@ except (ImportError, AttributeError):
 
 
 class TestMiniLinksAPI(unittest.TestCase):
-    """Test suite verifying all REST API endpoints and static file serving."""
+    """Test suite verifying all REST API endpoints, static file serving, and concurrency."""
 
     def setUp(self) -> None:
         """Starts an isolated MiniLinks server instance with a temporary database."""
@@ -76,7 +78,9 @@ class TestMiniLinksAPI(unittest.TestCase):
         Sends an HTTP request to the running server.
         Returns (status_code, parsed_json_or_none, response_headers, raw_body).
         """
-        req_headers = dict(headers) if headers else {}
+        req_headers = {"Connection": "close"}
+        if headers:
+            req_headers.update(headers)
         body_bytes: Optional[bytes] = None
 
         if data is not None:
@@ -121,8 +125,11 @@ class TestMiniLinksAPI(unittest.TestCase):
     ) -> Tuple[int, Dict[str, str], bytes]:
         """Sends a raw HTTP request without urllib path normalization."""
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        req_headers = {"Connection": "close"}
+        if headers:
+            req_headers.update(headers)
         try:
-            conn.request(method, raw_path, body=body, headers=headers or {})
+            conn.request(method, raw_path, body=body, headers=req_headers)
             resp = conn.getresponse()
             status = resp.status
             resp_headers = {k.lower(): v for k, v in resp.headers.items()}
@@ -148,9 +155,9 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertIsInstance(payload, list)
         self.assertEqual(len(payload), 0)
 
-    # 3. Create bookmark (valid)
+    # 3. Create bookmark (valid) and direct SQLite verification
     def test_create_bookmark_valid(self) -> None:
-        """Verifies POST /api/bookmarks creates a bookmark and returns 201 with populated fields."""
+        """Verifies POST /api/bookmarks creates a bookmark, returns 201, and writes to SQLite."""
         data = {
             "title": "Python Documentation",
             "url": "https://docs.python.org/3/",
@@ -172,6 +179,23 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertTrue(payload.get("updated_at"))
         self.assertEqual(payload["created_at"], payload["updated_at"])
         self.assertIn("application/json", headers.get("content-type", ""))
+
+        # Direct database inspection using sqlite3 module
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, title, url, notes FROM bookmarks WHERE id = ?",
+                (payload["id"],),
+            )
+            row = cursor.fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row[0], payload["id"])
+            self.assertEqual(row[1], "Python Documentation")
+            self.assertEqual(row[2], "https://docs.python.org/3/")
+            self.assertEqual(row[3], "Official standard library reference")
+        finally:
+            conn.close()
 
     def test_create_bookmark_default_notes(self) -> None:
         """Verifies POST /api/bookmarks handles omitted or None notes with empty string default."""
@@ -650,6 +674,28 @@ class TestMiniLinksAPI(unittest.TestCase):
         status, err, _, _ = self.make_request("POST", "/api/unknown_route", data={})
         self.assertEqual(status, 404)
         self.assertIn("error", err)
+
+    # 12. Concurrency verification using threading
+    def test_concurrent_api_requests(self) -> None:
+        """Verifies multiple threads can query the API concurrently without deadlocks."""
+        errors: list = []
+
+        def worker() -> None:
+            try:
+                for _ in range(5):
+                    status, payload, _, _ = self.make_request("GET", "/health")
+                    if status != 200 or payload.get("status") != "ok":
+                        errors.append(f"Unexpected health check response: {status}, {payload}")
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(errors), 0, f"Concurrent request errors: {errors}")
 
 
 if __name__ == "__main__":
