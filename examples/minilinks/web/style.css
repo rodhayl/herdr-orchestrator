@@ -425,6 +425,7 @@ body {
   flex-direction: column;
   transition: var(--transition);
   position: relative;
+  min-width: 0; /* Prevents long text from blowing out CSS grid cells */
 }
 
 .bookmark-card:hover {
