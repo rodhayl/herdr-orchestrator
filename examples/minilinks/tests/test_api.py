@@ -1,13 +1,9 @@
-"""
-MiniLinks REST API and Static Asset Delivery Test Suite.
-
-Validates all HTTP API endpoints against a live server running on an ephemeral port
-with an isolated temporary SQLite database, strictly using the Python standard library.
-"""
+"""Unit and integration test suite for MiniLinks REST API and static asset serving."""
 
 import http.client
 import json
 import os
+from pathlib import Path
 import sys
 import tempfile
 import time
@@ -15,487 +11,623 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
-# Ensure examples/minilinks and repository root are on sys.path
-_current_file = Path(__file__).resolve()
-_minilinks_dir = _current_file.parent.parent if _current_file.parent.name in ("tests", "scripts") else _current_file.parent
-_repo_root = _minilinks_dir.parent.parent if _minilinks_dir.name == "minilinks" else _minilinks_dir.parent
+# Ensure examples/minilinks is in sys.path for direct imports
+_current_dir = Path(__file__).resolve().parent
+_minilinks_dir = _current_dir.parent
+if str(_minilinks_dir) not in sys.path:
+    sys.path.insert(0, str(_minilinks_dir))
 
-for _p in (str(_minilinks_dir), str(_repo_root)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-try:
-    from app.server import create_server
-except ImportError:
-    try:
-        from examples.minilinks.app.server import create_server
-    except ImportError as _err:
-        raise ImportError(
-            "Could not import 'create_server' from 'app.server' or 'examples.minilinks.app.server'. "
-            f"sys.path={sys.path}"
-        ) from _err
+from app import database
+from app.server import MiniLinksServer, create_server
 
 
 class TestMiniLinksAPI(unittest.TestCase):
-    """Integration test suite covering MiniLinks REST API and static asset delivery."""
+    """Test suite verifying all REST API endpoints and static file serving."""
 
-    def setUp(self):
-        """Set up an ephemeral SQLite database and start the background HTTPServer."""
+    def setUp(self) -> None:
+        """Starts an isolated MiniLinks server instance with a temporary database."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self.temp_dir.name, "test_api.db")
-        self.server = create_server(host="127.0.0.1", port=0, db_path=self.db_path)
-        self.host = getattr(self.server, "server_name", None) or self.server.server_address[0]
-        if self.host == "0.0.0.0":
-            self.host = "127.0.0.1"
-        self.port = getattr(self.server, "server_port", None) or self.server.server_address[1]
-        self.base_url = f"http://{self.host}:{self.port}"
+        self.db_path = os.path.join(self.temp_dir.name, "test_minilinks.db")
+        self.server: MiniLinksServer = create_server(
+            host="127.0.0.1",
+            port=0,
+            db_path=self.db_path,
+        )
+        self.port: int = self.server.server_port
+        self.base_url: str = f"http://127.0.0.1:{self.port}"
 
-    def tearDown(self):
-        """Cleanly shut down the server and remove temporary directory."""
-        try:
-            self.server.shutdown()
-            self.server.server_close()
-        except Exception:
-            pass
-        finally:
-            self.temp_dir.cleanup()
+    def tearDown(self) -> None:
+        """Shuts down the server and cleans up temporary database files."""
+        if hasattr(self, "server") and self.server:
+            try:
+                self.server.shutdown()
+                self.server.server_close()
+            except Exception:
+                pass
+        if hasattr(self, "temp_dir") and self.temp_dir:
+            try:
+                self.temp_dir.cleanup()
+            except Exception:
+                pass
 
-    def _request(self, method: str, path: str, data=None, headers=None):
-        """Helper to send an HTTP request using urllib.request and return (status, headers, body_bytes)."""
-        url = f"{self.base_url}{path}"
-        req_headers = headers.copy() if headers else {}
-        body = None
+    def make_request(
+        self,
+        method: str,
+        path: str,
+        data: Optional[Any] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Tuple[int, Any, Dict[str, str], bytes]:
+        """
+        Sends an HTTP request to the running server.
+        Returns (status_code, parsed_json_or_none, response_headers, raw_body).
+        """
+        req_headers = dict(headers) if headers else {}
+        body_bytes: Optional[bytes] = None
 
         if data is not None:
             if isinstance(data, (dict, list)):
-                body = json.dumps(data).encode("utf-8")
-                if "Content-Type" not in req_headers:
-                    req_headers["Content-Type"] = "application/json"
+                body_bytes = json.dumps(data).encode("utf-8")
+                req_headers.setdefault("Content-Type", "application/json")
             elif isinstance(data, str):
-                body = data.encode("utf-8")
+                body_bytes = data.encode("utf-8")
             elif isinstance(data, bytes):
-                body = data
+                body_bytes = data
 
-        req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
+        url = f"{self.base_url}{path}"
+        req = urllib.request.Request(
+            url, data=body_bytes, headers=req_headers, method=method
+        )
+
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                return resp.status, resp.headers, resp.read()
-        except urllib.error.HTTPError as err:
-            return err.code, err.headers, err.read()
+            with urllib.request.urlopen(req) as resp:
+                status = resp.status
+                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+                body = resp.read()
+        except urllib.error.HTTPError as e:
+            status = e.code
+            resp_headers = {k.lower(): v for k, v in e.headers.items()}
+            body = e.read()
 
-    def _request_json(self, method: str, path: str, data=None, headers=None):
-        """Helper to send request and decode JSON response if available."""
-        status, resp_headers, body = self._request(method, path, data=data, headers=headers)
-        json_data = None
+        parsed_json = None
         if body:
             try:
-                json_data = json.loads(body.decode("utf-8"))
+                parsed_json = json.loads(body.decode("utf-8"))
             except Exception:
-                json_data = None
-        return status, json_data, resp_headers
+                parsed_json = None
 
-    # 1. Health check
-    def test_health_check(self):
-        """GET /health must return 200 OK and {"status": "ok"}."""
-        status, data, _ = self._request_json("GET", "/health")
+        return status, parsed_json, resp_headers, body
+
+    def raw_request(
+        self,
+        method: str,
+        raw_path: str,
+        headers: Optional[Dict[str, str]] = None,
+        body: Optional[bytes] = None,
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """Sends a raw HTTP request without urllib path normalization."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request(method, raw_path, body=body, headers=headers or {})
+            resp = conn.getresponse()
+            status = resp.status
+            resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+            resp_body = resp.read()
+            return status, resp_headers, resp_body
+        finally:
+            conn.close()
+
+    # 1. Health endpoint
+    def test_health_check(self) -> None:
+        """Verifies GET /health returns 200 OK and status ok payload."""
+        status, payload, headers, _ = self.make_request("GET", "/health")
         self.assertEqual(status, 200)
-        self.assertIsInstance(data, dict)
-        self.assertEqual(data.get("status"), "ok")
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload.get("status"), "ok")
+        self.assertIn("application/json", headers.get("content-type", ""))
 
-    # 2. Initial bookmark listing
-    def test_initial_bookmarks_empty(self):
-        """GET /api/bookmarks on clean DB must return 200 OK and empty array []."""
-        status, data, _ = self._request_json("GET", "/api/bookmarks")
+    # 2. Initial empty bookmark listing
+    def test_initial_bookmarks_empty(self) -> None:
+        """Verifies GET /api/bookmarks returns 200 and an empty list initially."""
+        status, payload, _, _ = self.make_request("GET", "/api/bookmarks")
         self.assertEqual(status, 200)
-        self.assertIsInstance(data, list)
-        self.assertEqual(len(data), 0)
+        self.assertIsInstance(payload, list)
+        self.assertEqual(len(payload), 0)
 
-    # 3. Create bookmark valid
-    def test_create_bookmark_valid(self):
-        """POST /api/bookmarks creates bookmark and returns 201 Created with full object."""
-        payload = {
+    # 3. Create bookmark (valid)
+    def test_create_bookmark_valid(self) -> None:
+        """Verifies POST /api/bookmarks creates a bookmark and returns 201 with populated fields."""
+        data = {
+            "title": "Python Documentation",
+            "url": "https://docs.python.org/3/",
+            "notes": "Official standard library reference",
+        }
+        status, payload, headers, _ = self.make_request(
+            "POST", "/api/bookmarks", data=data
+        )
+        self.assertEqual(status, 201)
+        self.assertIsInstance(payload, dict)
+        self.assertIsInstance(payload.get("id"), int)
+        self.assertGreater(payload["id"], 0)
+        self.assertEqual(payload.get("title"), "Python Documentation")
+        self.assertEqual(payload.get("url"), "https://docs.python.org/3/")
+        self.assertEqual(
+            payload.get("notes"), "Official standard library reference"
+        )
+        self.assertTrue(payload.get("created_at"))
+        self.assertTrue(payload.get("updated_at"))
+        self.assertEqual(payload["created_at"], payload["updated_at"])
+        self.assertIn("application/json", headers.get("content-type", ""))
+
+    def test_create_bookmark_default_notes(self) -> None:
+        """Verifies POST /api/bookmarks handles omitted or None notes with empty string default."""
+        data1 = {
             "title": "MDN Web Docs",
             "url": "https://developer.mozilla.org/",
-            "notes": "Web standards and guides",
         }
-        status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-        self.assertEqual(status, 201)
-        self.assertIsInstance(data, dict)
-        self.assertIn("id", data)
-        self.assertIsInstance(data["id"], int)
-        self.assertGreater(data["id"], 0)
-        self.assertEqual(data["title"], "MDN Web Docs")
-        self.assertEqual(data["url"], "https://developer.mozilla.org/")
-        self.assertEqual(data["notes"], "Web standards and guides")
-        self.assertIn("created_at", data)
-        self.assertIn("updated_at", data)
-        self.assertTrue(len(data["created_at"]) > 0)
-        self.assertTrue(len(data["updated_at"]) > 0)
+        status1, payload1, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data=data1
+        )
+        self.assertEqual(status1, 201)
+        self.assertEqual(payload1.get("notes"), "")
 
-    def test_create_bookmark_default_notes(self):
-        """POST /api/bookmarks without notes defaults notes to empty string."""
-        payload = {
-            "title": "Python Docs",
-            "url": "https://docs.python.org/3/",
+        data2 = {
+            "title": "SQLite Tutorial",
+            "url": "https://www.sqlite.org/",
+            "notes": None,
         }
-        status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-        self.assertEqual(status, 201)
-        self.assertIsInstance(data, dict)
-        self.assertEqual(data.get("notes"), "")
-        self.assertEqual(data["title"], "Python Docs")
-        self.assertEqual(data["url"], "https://docs.python.org/3/")
+        status2, payload2, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data=data2
+        )
+        self.assertEqual(status2, 201)
+        self.assertEqual(payload2.get("notes"), "")
 
-    def test_create_bookmark_whitespace_stripping(self):
-        """POST /api/bookmarks with whitespace in title/url strips them properly."""
-        payload = {
-            "title": "  Python Documentation  ",
-            "url": "  https://docs.python.org/3/  ",
-            "notes": "  Some notes  ",
-        }
-        status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-        self.assertEqual(status, 201)
-        self.assertEqual(data["title"], "Python Documentation")
-        self.assertEqual(data["url"], "https://docs.python.org/3/")
-
-    # 4. Create bookmark validation errors
-    def test_create_bookmark_missing_title(self):
-        """POST /api/bookmarks missing title must return 400 Bad Request."""
-        payload = {"url": "https://docs.python.org/"}
-        status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-        self.assertEqual(status, 400)
-        self.assertIn("error", data)
-
-    def test_create_bookmark_empty_title(self):
-        """POST /api/bookmarks with empty or whitespace-only title must return 400."""
-        for empty_val in ("", "   ", "\t\n"):
-            payload = {"title": empty_val, "url": "https://docs.python.org/"}
-            status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-            self.assertEqual(status, 400, f"Expected 400 for title={empty_val!r}")
-            self.assertIn("error", data)
-
-    def test_create_bookmark_missing_url(self):
-        """POST /api/bookmarks missing url must return 400 Bad Request."""
-        payload = {"title": "Python Docs"}
-        status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-        self.assertEqual(status, 400)
-        self.assertIn("error", data)
-
-    def test_create_bookmark_empty_url(self):
-        """POST /api/bookmarks with empty or whitespace-only url must return 400."""
-        for empty_val in ("", "   ", "\t\n"):
-            payload = {"title": "Python Docs", "url": empty_val}
-            status, data, _ = self._request_json("POST", "/api/bookmarks", data=payload)
-            self.assertEqual(status, 400, f"Expected 400 for url={empty_val!r}")
-            self.assertIn("error", data)
-
-    def test_create_bookmark_non_string_types(self):
-        """POST /api/bookmarks with non-string fields must return 400."""
-        invalid_payloads = [
-            {"title": 12345, "url": "https://example.com"},
-            {"title": "Valid", "url": 12345},
-            {"title": "Valid", "url": "https://example.com", "notes": 12345},
-            {"title": None, "url": "https://example.com"},
-            {"title": "Valid", "url": None},
-        ]
-        for p in invalid_payloads:
-            status, data, _ = self._request_json("POST", "/api/bookmarks", data=p)
-            self.assertEqual(status, 400, f"Expected 400 for payload={p}")
-            self.assertIn("error", data)
-
-    def test_create_bookmark_malformed_json(self):
-        """POST /api/bookmarks with malformed JSON body must return 400."""
-        status, data, _ = self._request_json(
-            "POST",
-            "/api/bookmarks",
-            data="{invalid_json: true}",
-            headers={"Content-Type": "application/json"},
+    # 4. Create bookmark validation failures
+    def test_create_bookmark_missing_or_invalid_title(self) -> None:
+        """Verifies POST /api/bookmarks returns 400 when title is missing, empty, or non-string."""
+        # Missing title
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"url": "https://example.com"}
         )
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", payload)
 
-    def test_create_bookmark_empty_body(self):
-        """POST /api/bookmarks with empty body must return 400."""
-        status, data, _ = self._request_json(
+        # Empty title
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": "", "url": "https://example.com"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Whitespace-only title
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "   \t\n  ", "url": "https://example.com"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Non-string title
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": 12345, "url": "https://example.com"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+    def test_create_bookmark_missing_or_invalid_url(self) -> None:
+        """Verifies POST /api/bookmarks returns 400 when url is missing, empty, invalid scheme, or non-string."""
+        # Missing url
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": "Test Title"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Empty url
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": "Test Title", "url": ""}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Whitespace-only url
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": "Test Title", "url": "   "}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Non-string url
+        status, payload, _, _ = self.make_request(
+            "POST", "/api/bookmarks", data={"title": "Test Title", "url": ["https://example.com"]}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Invalid URL scheme (ftp instead of http/https)
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Test Title", "url": "ftp://example.com/file"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # URL without host
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Test Title", "url": "http://"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+    def test_create_bookmark_invalid_notes_or_payload(self) -> None:
+        """Verifies POST /api/bookmarks returns 400 when notes is non-string or payload is malformed."""
+        # Non-string notes
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Title", "url": "https://example.com", "notes": 999},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Empty body
+        status, payload, _, _ = self.make_request(
             "POST",
             "/api/bookmarks",
             data="",
+            headers={"Content-Length": "0"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
+
+        # Malformed JSON syntax
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data="{invalid_json:",
             headers={"Content-Type": "application/json"},
         )
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", payload)
+
+        # JSON array instead of dictionary object
+        status, payload, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data=[{"title": "Title", "url": "https://example.com"}],
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", payload)
 
     # 5. Search filtering
-    def test_search_filtering(self):
-        """GET /api/bookmarks?q=<term> filters by title, url, or notes (case-insensitive)."""
-        # Create 3 bookmarks
-        self._request_json("POST", "/api/bookmarks", data={
-            "title": "Python Documentation",
+    def test_search_filtering(self) -> None:
+        """Verifies GET /api/bookmarks?q= matches title, url, or notes case-insensitively."""
+        bm1 = {
+            "title": "Python Language Reference",
             "url": "https://docs.python.org/3/",
-            "notes": "Official reference guide",
-        })
-        self._request_json("POST", "/api/bookmarks", data={
-            "title": "SQLite Tutorial",
+            "notes": "Core stdlib and syntax",
+        }
+        bm2 = {
+            "title": "SQLite Embedded Engine",
             "url": "https://www.sqlite.org/",
-            "notes": "Lightweight embedded database engine",
-        })
-        self._request_json("POST", "/api/bookmarks", data={
-            "title": "MDN Web Docs",
+            "notes": "C-tree structured database",
+        }
+        bm3 = {
+            "title": "MDN Web Standards",
             "url": "https://developer.mozilla.org/",
-            "notes": "HTML, CSS, and JavaScript standards",
-        })
+            "notes": "JavaScript and CSS documentation",
+        }
+        self.make_request("POST", "/api/bookmarks", data=bm1)
+        self.make_request("POST", "/api/bookmarks", data=bm2)
+        self.make_request("POST", "/api/bookmarks", data=bm3)
 
-        # Match title
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=python")
+        # All bookmarks when q is omitted
+        status, all_bms, _, _ = self.make_request("GET", "/api/bookmarks")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["title"], "Python Documentation")
+        self.assertEqual(len(all_bms), 3)
 
-        # Case insensitivity
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=pYtHoN")
+        # Search matching title (case-insensitive)
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=pYtHoN")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["title"], "Python Documentation")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Python Language Reference")
 
-        # Match url
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=sqlite.org")
+        # Search matching URL
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=sqlite.org")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["title"], "SQLite Tutorial")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "SQLite Embedded Engine")
 
-        # Match notes
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=embedded")
+        # Search matching notes
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=documentation")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["title"], "SQLite Tutorial")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "MDN Web Standards")
 
-        # Match multiple across title / notes
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=docs")
+        # Search matching multiple entries
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=reference")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 2)  # Python Docs and MDN Web Docs
+        self.assertEqual(len(results), 1)
 
-        # Non-matching query
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=nonexistenttermXYZ")
+        # Non-matching search query returns empty array
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=RustLangNonExistent")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 0)
+        self.assertEqual(results, [])
 
-        # Empty q returns all
-        status, data, _ = self._request_json("GET", "/api/bookmarks?q=")
+        # Empty or whitespace search query returns all
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data), 3)
+        self.assertEqual(len(results), 3)
 
-    # 6. Update bookmark (PATCH)
-    def test_patch_bookmark_fields(self):
-        """PATCH /api/bookmarks/<id> updates title, url, notes individually or together."""
-        # Create bookmark
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "Initial Title",
-            "url": "https://initial.org/",
-            "notes": "Initial Notes",
-        })
+        status, results, _, _ = self.make_request("GET", "/api/bookmarks?q=%20%20")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(results), 3)
+
+    # 6. Retrieve single bookmark by ID
+    def test_get_bookmark_by_id(self) -> None:
+        """Verifies GET /api/bookmarks/<id> returns 200, 404 for missing, and 400 for invalid ID."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Test", "url": "https://test.com", "notes": "Notes"},
+        )
         bm_id = created["id"]
-        original_created_at = created["created_at"]
 
-        # Small sleep to allow updated_at to increment if time precision is coarse
-        time.sleep(0.05)
-
-        # Update title only
-        status, data, _ = self._request_json("PATCH", f"/api/bookmarks/{bm_id}", data={
-            "title": "Updated Title",
-        })
+        # Valid ID
+        status, bm, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
         self.assertEqual(status, 200)
-        self.assertEqual(data["title"], "Updated Title")
-        self.assertEqual(data["url"], "https://initial.org/")
-        self.assertEqual(data["notes"], "Initial Notes")
-        self.assertEqual(data["created_at"], original_created_at)
+        self.assertEqual(bm["id"], bm_id)
+        self.assertEqual(bm["title"], "Test")
 
-        # Update url and notes together
-        status, data, _ = self._request_json("PATCH", f"/api/bookmarks/{bm_id}", data={
-            "url": "https://updated.org/",
-            "notes": "Updated Notes",
-        })
-        self.assertEqual(status, 200)
-        self.assertEqual(data["title"], "Updated Title")
-        self.assertEqual(data["url"], "https://updated.org/")
-        self.assertEqual(data["notes"], "Updated Notes")
-
-        # Verify through GET
-        status, all_bms, _ = self._request_json("GET", "/api/bookmarks")
-        self.assertEqual(status, 200)
-        self.assertEqual(len(all_bms), 1)
-        self.assertEqual(all_bms[0]["title"], "Updated Title")
-        self.assertEqual(all_bms[0]["url"], "https://updated.org/")
-        self.assertEqual(all_bms[0]["notes"], "Updated Notes")
-
-    # 7. Update errors (404 and 400)
-    def test_patch_bookmark_not_found(self):
-        """PATCH /api/bookmarks/<id> with non-existent ID returns 404 Not Found."""
-        status, data, _ = self._request_json("PATCH", "/api/bookmarks/99999", data={
-            "title": "Ghost",
-        })
+        # Non-existent ID
+        status, err, _, _ = self.make_request("GET", "/api/bookmarks/99999")
         self.assertEqual(status, 404)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
-    def test_patch_bookmark_invalid_id(self):
-        """PATCH /api/bookmarks/<id> with non-integer ID returns 400 Bad Request."""
-        status, data, _ = self._request_json("PATCH", "/api/bookmarks/notanint", data={
-            "title": "Invalid ID",
-        })
+        # Non-integer ID
+        status, err, _, _ = self.make_request("GET", "/api/bookmarks/invalid_id")
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
-    def test_patch_bookmark_empty_payload(self):
-        """PATCH /api/bookmarks/<id> with empty payload returns 400 Bad Request."""
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "Some Title",
-            "url": "https://example.com/",
-        })
-        bm_id = created["id"]
-
-        status, data, _ = self._request_json("PATCH", f"/api/bookmarks/{bm_id}", data={})
+        # Non-positive integer ID
+        status, err, _, _ = self.make_request("GET", "/api/bookmarks/-5")
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
-    def test_patch_bookmark_invalid_field_values(self):
-        """PATCH /api/bookmarks/<id> with empty or non-string values returns 400 Bad Request."""
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "Some Title",
-            "url": "https://example.com/",
-        })
+    # 7. Update bookmark (PATCH)
+    def test_update_bookmark_valid(self) -> None:
+        """Verifies PATCH /api/bookmarks/<id> updates fields and refreshes updated_at timestamp."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={
+                "title": "Original Title",
+                "url": "https://original.com",
+                "notes": "Original Notes",
+            },
+        )
         bm_id = created["id"]
+        created_at = created["created_at"]
+        orig_updated_at = created["updated_at"]
 
-        invalid_patches = [
-            {"title": ""},
-            {"title": "   "},
-            {"url": ""},
-            {"url": "   "},
-            {"title": 123},
-            {"url": 123},
-            {"notes": 123},
-            {"title": None},
-            {"url": None},
-        ]
-        for p in invalid_patches:
-            status, data, _ = self._request_json("PATCH", f"/api/bookmarks/{bm_id}", data=p)
-            self.assertEqual(status, 400, f"Expected 400 for PATCH payload={p}")
-            self.assertIn("error", data)
+        # Sleep briefly to ensure updated_at timestamp advances past the second boundary
+        time.sleep(1.05)
 
-    def test_patch_bookmark_malformed_json(self):
-        """PATCH /api/bookmarks/<id> with malformed JSON returns 400 Bad Request."""
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "Some Title",
-            "url": "https://example.com/",
-        })
-        bm_id = created["id"]
-
-        status, data, _ = self._request_json(
+        # Update notes only
+        status, updated, _, _ = self.make_request(
             "PATCH",
             f"/api/bookmarks/{bm_id}",
-            data="{not_valid_json",
+            data={"notes": "Updated Notes Content"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["id"], bm_id)
+        self.assertEqual(updated["title"], "Original Title")
+        self.assertEqual(updated["url"], "https://original.com")
+        self.assertEqual(updated["notes"], "Updated Notes Content")
+        self.assertEqual(updated["created_at"], created_at)
+        self.assertNotEqual(updated["updated_at"], orig_updated_at)
+
+        # Update title and url
+        status, updated2, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={
+                "title": "New Title",
+                "url": "https://new.example.com/docs",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated2["title"], "New Title")
+        self.assertEqual(updated2["url"], "https://new.example.com/docs")
+        self.assertEqual(updated2["notes"], "Updated Notes Content")
+
+    def test_update_bookmark_validation_errors(self) -> None:
+        """Verifies PATCH /api/bookmarks/<id> rejects invalid payloads and non-existent IDs."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Valid", "url": "https://valid.com"},
+        )
+        bm_id = created["id"]
+
+        # Non-existent bookmark
+        status, err, _, _ = self.make_request(
+            "PATCH", "/api/bookmarks/99999", data={"notes": "Ghost notes"}
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("error", err)
+
+        # Non-integer ID
+        status, err, _, _ = self.make_request(
+            "PATCH", "/api/bookmarks/abc", data={"title": "New"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Empty update payload
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm_id}", data={}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Payload with no updatable fields
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm_id}", data={"unknown_key": "val"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Empty / whitespace title
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm_id}", data={"title": "   "}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Invalid URL
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm_id}", data={"url": "not_a_valid_url"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Non-string notes
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm_id}", data={"notes": 12345}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Malformed JSON
+        status, err, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data="{malformed_json",
             headers={"Content-Type": "application/json"},
         )
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
     # 8. Delete bookmark
-    def test_delete_bookmark_success(self):
-        """DELETE /api/bookmarks/<id> returns 200 OK and deletes the record."""
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "To Delete",
-            "url": "https://example.com/delete",
-        })
+    def test_delete_bookmark_success_and_subsequent_404(self) -> None:
+        """Verifies DELETE /api/bookmarks/<id> deletes a bookmark and subsequent calls return 404."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Delete Me", "url": "https://deleteme.com"},
+        )
         bm_id = created["id"]
 
-        status, data, _ = self._request_json("DELETE", f"/api/bookmarks/{bm_id}")
+        # Successful deletion
+        status, payload, _, _ = self.make_request(
+            "DELETE", f"/api/bookmarks/{bm_id}"
+        )
         self.assertEqual(status, 200)
-        self.assertEqual(data.get("status"), "deleted")
-        self.assertEqual(data.get("id"), bm_id)
+        self.assertEqual(payload.get("status"), "deleted")
+        self.assertEqual(payload.get("id"), bm_id)
 
-        # Verify listing is now empty
-        status, all_bms, _ = self._request_json("GET", "/api/bookmarks")
-        self.assertEqual(status, 200)
-        self.assertEqual(len(all_bms), 0)
-
-    def test_delete_bookmark_not_found(self):
-        """DELETE /api/bookmarks/<id> with non-existent ID returns 404 Not Found."""
-        status, data, _ = self._request_json("DELETE", "/api/bookmarks/99999")
+        # Subsequent DELETE on same ID returns 404
+        status, err, _, _ = self.make_request(
+            "DELETE", f"/api/bookmarks/{bm_id}"
+        )
         self.assertEqual(status, 404)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
-    def test_delete_bookmark_repeated_deletion(self):
-        """Second DELETE on same ID returns 404 Not Found."""
-        _, created, _ = self._request_json("POST", "/api/bookmarks", data={
-            "title": "To Delete Twice",
-            "url": "https://example.com/delete2",
-        })
-        bm_id = created["id"]
-
-        # First deletion succeeds
-        status, _, _ = self._request_json("DELETE", f"/api/bookmarks/{bm_id}")
-        self.assertEqual(status, 200)
-
-        # Second deletion returns 404
-        status, data, _ = self._request_json("DELETE", f"/api/bookmarks/{bm_id}")
+        # Subsequent GET on same ID returns 404
+        status, err, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
         self.assertEqual(status, 404)
-        self.assertIn("error", data)
 
-    def test_delete_bookmark_invalid_id(self):
-        """DELETE /api/bookmarks/<id> with non-integer ID returns 400 Bad Request."""
-        status, data, _ = self._request_json("DELETE", "/api/bookmarks/invalid_id")
+        # Verify bookmark is not in list
+        status, bms, _, _ = self.make_request("GET", "/api/bookmarks")
+        self.assertEqual(status, 200)
+        self.assertNotIn(bm_id, [b["id"] for b in bms])
+
+    def test_delete_bookmark_validation_errors(self) -> None:
+        """Verifies DELETE /api/bookmarks/<id> returns 404 for missing ID and 400 for invalid ID."""
+        # Non-existent ID
+        status, err, _, _ = self.make_request("DELETE", "/api/bookmarks/99999")
+        self.assertEqual(status, 404)
+        self.assertIn("error", err)
+
+        # Non-integer ID
+        status, err, _, _ = self.make_request("DELETE", "/api/bookmarks/abc")
         self.assertEqual(status, 400)
-        self.assertIn("error", data)
+        self.assertIn("error", err)
 
     # 9. Static file delivery
-    def test_static_files_delivery(self):
-        """Verifies delivery of index.html, style.css, and app.js with appropriate MIME types."""
-        endpoints = [
-            ("/", ("text/html",)),
-            ("/index.html", ("text/html",)),
-            ("/style.css", ("text/css",)),
-            ("/app.js", ("application/javascript", "text/javascript")),
-        ]
-        for path, expected_content_types in endpoints:
-            status, headers, body = self._request("GET", path)
-            self.assertEqual(status, 200, f"Expected 200 for static path {path}")
-            self.assertGreater(len(body), 0, f"Expected non-empty body for static path {path}")
-            content_type = headers.get("Content-Type", "")
-            matches = any(ct in content_type for ct in expected_content_types)
-            self.assertTrue(
-                matches,
-                f"Expected one of {expected_content_types} in Content-Type: {content_type} for {path}",
-            )
+    def test_static_file_serving(self) -> None:
+        """Verifies static assets (HTML, CSS, JS) are served with correct MIME types."""
+        # Root path /
+        status, _, headers, body = self.make_request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers.get("content-type", ""))
+        self.assertIn("MiniLinks", body.decode("utf-8"))
 
-    def test_static_file_not_found(self):
-        """GET for non-existent static file returns 404 Not Found."""
-        status, _, _ = self._request("GET", "/non_existent_asset_xyz.txt")
+        # Explicit /index.html
+        status, _, headers, body = self.make_request("GET", "/index.html")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers.get("content-type", ""))
+        self.assertIn("<!DOCTYPE html>", body.decode("utf-8"))
+
+        # /style.css
+        status, _, headers, body = self.make_request("GET", "/style.css")
+        self.assertEqual(status, 200)
+        self.assertIn("text/css", headers.get("content-type", ""))
+        self.assertGreater(len(body), 0)
+
+        # /app.js
+        status, _, headers, body = self.make_request("GET", "/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn("application/javascript", headers.get("content-type", ""))
+        self.assertGreater(len(body), 0)
+
+        # Non-existent static file returns 404
+        status, _, _, _ = self.make_request("GET", "/missing_asset.txt")
         self.assertEqual(status, 404)
 
     # 10. Directory traversal protection
-    def test_directory_traversal_protection(self):
-        """Requests with path traversal sequences must be rejected with 403 or 404."""
-        traversal_paths = [
-            "/../SPEC.md",
-            "/..%2F..%2FSPEC.md",
-            "/..%2f..%2fetc%2fpasswd",
-            "/web/../../SPEC.md",
-            "/%2e%2e/%2e%2e/SPEC.md",
-            "/....//SPEC.md",
-        ]
-        for path in traversal_paths:
-            conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
-            try:
-                conn.request("GET", path)
-                resp = conn.getresponse()
-                status = resp.status
-                resp.read()
-                self.assertIn(
-                    status,
-                    (400, 403, 404),
-                    f"Directory traversal path {path} returned unexpected status {status}",
-                )
-            finally:
-                conn.close()
+    def test_directory_traversal_protection(self) -> None:
+        """Verifies path traversal attempts are rejected with 403 or 404."""
+        # Raw .. traversal
+        status1, _, _ = self.raw_request("GET", "/../app/server.py")
+        self.assertIn(status1, (403, 404))
+
+        # URL-encoded traversal (%2e%2e)
+        status2, _, _ = self.raw_request("GET", "/%2e%2e/app/database.py")
+        self.assertIn(status2, (403, 404))
+
+        # Traversal with encoded slash (%2f)
+        status3, _, _ = self.raw_request("GET", "/..%2fstyle.css")
+        self.assertIn(status3, (403, 404))
+
+        # Deep traversal
+        status4, _, _ = self.raw_request("GET", "/nested/../../etc/passwd")
+        self.assertIn(status4, (403, 404))
+
+    # 11. CORS and unsupported endpoints
+    def test_cors_options(self) -> None:
+        """Verifies OPTIONS preflight request returns 204 with CORS headers."""
+        status, _, headers, _ = self.make_request("OPTIONS", "/api/bookmarks")
+        self.assertEqual(status, 204)
+        self.assertEqual(headers.get("access-control-allow-origin"), "*")
+        self.assertIn("GET", headers.get("access-control-allow-methods", ""))
+        self.assertIn("POST", headers.get("access-control-allow-methods", ""))
+
+    def test_unknown_endpoints(self) -> None:
+        """Verifies unknown API endpoints return 404 JSON error."""
+        status, err, _, _ = self.make_request("GET", "/api/unknown_route")
+        self.assertEqual(status, 404)
+        self.assertIn("error", err)
+
+        status, err, _, _ = self.make_request("POST", "/api/unknown_route", data={})
+        self.assertEqual(status, 404)
+        self.assertIn("error", err)
 
 
 if __name__ == "__main__":
