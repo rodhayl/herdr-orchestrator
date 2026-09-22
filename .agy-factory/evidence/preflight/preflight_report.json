@@ -1,0 +1,91 @@
+{
+  "timestamp": "2026-09-22T22:36:34.433748+00:00",
+  "project_root": "/root/agy-herdr-factory-poc",
+  "os": "Linux ubuntu-gpu-ai 6.8.0-139-generic #139-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 03:52:05 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "user": "root",
+  "git_version": "git version 2.43.0",
+  "python_version": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "venv_active": false,
+  "herdr_version": "herdr 0.9.1",
+  "herdr_context": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc"
+  },
+  "worker_commands": {
+    "agy": {
+      "resolved_path": "/root/.local/bin/agy",
+      "shell_type": "agy is /root/.local/bin/agy",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy2": {
+      "resolved_path": "/root/.local/bin/agy2",
+      "shell_type": "agy2 is /root/.local/bin/agy2",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy3": {
+      "resolved_path": "/root/.local/bin/agy3",
+      "shell_type": "agy3 is /root/.local/bin/agy3",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy4": {
+      "resolved_path": "/root/.local/bin/agy4",
+      "shell_type": "agy4 is /root/.local/bin/agy4",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy5": {
+      "resolved_path": "/root/.local/bin/agy5",
+      "shell_type": "agy5 is /root/.local/bin/agy5",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy6": {
+      "resolved_path": "/root/.local/bin/agy6",
+      "shell_type": "agy6 is /root/.local/bin/agy6",
+      "version": "1.2.8",
+      "status": "available"
+    },
+    "agy7": {
+      "resolved_path": "/root/.local/bin/agy7",
+      "shell_type": "agy7 is /root/.local/bin/agy7",
+      "version": "1.2.8",
+      "status": "available"
+    }
+  },
+  "model_verified": "gemini-3.8-flash-high",
+  "config_files": [
+    {
+      "exists": true,
+      "path": "/root/.config/herdr/config.toml",
+      "size_bytes": 143,
+      "mtime": "2026-08-30T13:48:32.594800+00:00",
+      "sha256": "dcd6d6ddcd8ae55b5b54da04cd38068e52e0e97e0905c8f37f4037324b609245"
+    },
+    {
+      "exists": true,
+      "path": "/root/.gemini/antigravity-cli/settings.json",
+      "size_bytes": 286,
+      "mtime": "2026-09-22T11:38:11.472096+00:00",
+      "sha256": "8d653cd76cb013d6c425fc080c132043b77cde3481f6cb2ebb2e1d07fdedcf29"
+    },
+    {
+      "exists": true,
+      "path": "/root/.agy7_home/.gemini/antigravity-cli/settings.json",
+      "size_bytes": 106,
+      "mtime": "2026-09-22T22:28:48.762239+00:00",
+      "sha256": "cadea1138b4af2ba0aed788e9297cba10b412f4e3ee5241d77c3204ae7010547"
+    },
+    {
+      "exists": false,
+      "path": "/root/.config/agy7/herdr/config.toml"
+    }
+  ],
+  "existing_workspaces_count": 11,
+  "existing_panes_count": 16,
+  "integrations_status": "pi: not installed (/root/.agy7_home/.pi/agent/extensions/herdr-agent-state.ts)\nomp: not installed (/root/.agy7_home/.omp/agent/extensions/herdr-omp-agent-state.ts)\nclaude: not installed (/root/.agy7_home/.claude/hooks/herdr-agent-state.sh)\ncodex: not installed (/root/.agy7_home/.codex/herdr-agent-state.sh)\ncopilot: not installed (/root/.agy7_home/.copilot/hooks/herdr-agent-state.sh)\ndevin: not installed (/root/.config/agy7/devin/herdr-agent-state.sh)\ndroid: not installed (/root/.agy7_home/.factory/hooks/herdr-agent-state.sh)\nkimi: not installed (/root/.agy7_home/.kimi-code/hooks/herdr-agent-state.sh)\nopencode: not installed (/root/.agy7_home/.config/opencode/plugins/herdr-agent-state.js)\nkilo: not installed (/root/.agy7_home/.config/kilo/plugin/herdr-agent-state.js)\nhermes: not installed (/root/.agy7_home/.hermes/plugins/herdr-agent-state/__init__.py)\nqodercli: not installed (/root/.agy7_home/.qoder/hooks/herdr-agent-state.sh)\nqwen: not installed (/root/.agy7_home/.qwen/hooks/herdr-agent-session.sh)\ncursor: not installed (/root/.agy7_home/.cursor/herdr-agent-state.sh)\nmastracode: not installed (/root/.agy7_home/.mastracode/hooks/herdr-agent-state.sh)\nantigravity-cli: not installed (/root/.agy7_home/.gemini/config/hooks/herdr-agent-state.sh)\ngrok: not installed (/root/.agy7_home/.grok/hooks/herdr-agent-state.sh)\nletta (experimental): not installed (/root/.agy7_home/.letta/hooks/herdr-agent-session.sh)"
+}

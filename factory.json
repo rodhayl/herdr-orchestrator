@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "project_name": "MiniBoard Factory PoC",
+  "version": "1.0.0",
+  "default_model": "gemini-3.8-flash-high",
+  "worker_registry": {
+    "agy": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy",
+      "profile_home": "/root/.agy_home",
+      "description": "Primary AGY instance (reserved when orchestrator is agy)"
+    },
+    "agy2": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy2",
+      "profile_home": "/root/.agy2_home",
+      "description": "Wave 0 Product Specification Worker"
+    },
+    "agy3": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy3",
+      "profile_home": "/root/.agy3_home",
+      "description": "Wave 1 Backend & SQLite Storage Worker"
+    },
+    "agy4": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy4",
+      "profile_home": "/root/.agy4_home",
+      "description": "Wave 1 Frontend (HTML/CSS/JS) Worker"
+    },
+    "agy5": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy5",
+      "profile_home": "/root/.agy5_home",
+      "description": "Wave 1 Test Suite & Smoke Harness Worker"
+    },
+    "agy6": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy6",
+      "profile_home": "/root/.agy6_home",
+      "description": "Wave 2 Repair / Integration Quality Reviewer"
+    },
+    "agy7": {
+      "adapter": "antigravity",
+      "command": "/root/.local/bin/agy7",
+      "profile_home": "/root/.agy7_home",
+      "description": "Wave 3 Independent Audit Worker"
+    }
+  },
+  "future_worker_adapters": {
+    "codex": {
+      "adapter_type": "command_adapter",
+      "binary": "codex",
+      "invocation_protocol": "herdr-pane-cli",
+      "capabilities": ["code-editing", "diff-review"],
+      "status": "planned"
+    },
+    "droid": {
+      "adapter_type": "command_adapter",
+      "binary": "droid",
+      "invocation_protocol": "herdr-pane-cli",
+      "capabilities": ["code-editing", "refactoring"],
+      "status": "planned"
+    },
+    "freebuff": {
+      "adapter_type": "command_adapter",
+      "binary": "freebuff",
+      "invocation_protocol": "herdr-pane-cli",
+      "capabilities": ["code-editing", "planning"],
+      "status": "planned"
+    }
+  },
+  "guardrails": {
+    "enforce_path_allowlist": true,
+    "require_clean_git_base": true,
+    "disallow_sudo": true,
+    "disallow_global_installs": true,
+    "disallow_orchestrator_cleanup": true
+  }
+}

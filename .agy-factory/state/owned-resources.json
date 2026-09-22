@@ -1,0 +1,15 @@
+{
+  "control_plane": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc",
+    "herdr_socket": "/root/.config/herdr/herdr.sock"
+  },
+  "owned": {
+    "workspace_ids": [],
+    "pane_ids": [],
+    "branches": [],
+    "worktrees": []
+  }
+}

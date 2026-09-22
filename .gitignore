@@ -1,0 +1,9 @@
+# Ephemeral and virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Factory ephemeral state
+.agy-factory/worktrees/
+.agy-factory/tmp/
+.agy-factory/cache/

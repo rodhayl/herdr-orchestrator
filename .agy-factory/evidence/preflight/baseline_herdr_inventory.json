@@ -1,0 +1,414 @@
+{
+  "workspaces": [
+    {
+      "active_tab_id": "wT:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "empty",
+      "number": 1,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wT"
+    },
+    {
+      "active_tab_id": "wQ:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "aiconsulting",
+      "number": 2,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wQ"
+    },
+    {
+      "active_tab_id": "wE:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "GovernanceAIAdvisor",
+      "number": 3,
+      "pane_count": 2,
+      "tab_count": 1,
+      "workspace_id": "wE"
+    },
+    {
+      "active_tab_id": "wP:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "~",
+      "number": 4,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wP"
+    },
+    {
+      "active_tab_id": "w8:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "OpencodeFree - Coord",
+      "number": 5,
+      "pane_count": 2,
+      "tab_count": 1,
+      "workspace_id": "w8"
+    },
+    {
+      "active_tab_id": "wA:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "Freebuff-Vm200/Vm102",
+      "number": 6,
+      "pane_count": 2,
+      "tab_count": 1,
+      "workspace_id": "wA"
+    },
+    {
+      "active_tab_id": "wS:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "promptit",
+      "number": 7,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wS"
+    },
+    {
+      "active_tab_id": "wK:t1",
+      "agent_status": "working",
+      "focused": true,
+      "label": "agy-herdr-factory-poc",
+      "number": 8,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wK"
+    },
+    {
+      "active_tab_id": "wN:t1",
+      "agent_status": "working",
+      "focused": false,
+      "label": "A2A_MQ",
+      "number": 9,
+      "pane_count": 1,
+      "tab_count": 1,
+      "workspace_id": "wN"
+    },
+    {
+      "active_tab_id": "wC:t1",
+      "agent_status": "unknown",
+      "focused": false,
+      "label": "trading_bot",
+      "number": 10,
+      "pane_count": 2,
+      "tab_count": 1,
+      "workspace_id": "wC"
+    },
+    {
+      "active_tab_id": "wD:t1",
+      "agent_status": "working",
+      "focused": false,
+      "label": "trialsMemoryAgent",
+      "number": 11,
+      "pane_count": 2,
+      "tab_count": 1,
+      "workspace_id": "wD"
+    }
+  ],
+  "panes": [
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/empty",
+      "focused": false,
+      "foreground_cwd": "/root/empty",
+      "pane_id": "wT:p1",
+      "revision": 3,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wT:t1",
+      "terminal_id": "term_65c19eb33c77e18",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/empty",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/empty",
+      "workspace_id": "wT"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/Gitlab/aiconsulting",
+      "focused": false,
+      "foreground_cwd": "/root/Gitlab/aiconsulting",
+      "pane_id": "wQ:p1",
+      "revision": 8,
+      "scroll": {
+        "max_offset_from_bottom": 803,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wQ:t1",
+      "terminal_id": "term_65c0f491b15c414",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/Gitlab/aiconsulting",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/Gitlab/aiconsulting",
+      "workspace_id": "wQ"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/VM-102",
+      "focused": false,
+      "foreground_cwd": "/root/VM-102",
+      "pane_id": "wE:p4",
+      "revision": 7,
+      "scroll": {
+        "max_offset_from_bottom": 1720,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wE:t1",
+      "terminal_id": "term_65bde0768a4c86",
+      "terminal_title": "agentadmin@coding-agents: ~/Github/GovernanceAIAdvisor",
+      "terminal_title_stripped": "agentadmin@coding-agents: ~/Github/GovernanceAIAdvisor",
+      "workspace_id": "wE"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/VM-102",
+      "focused": false,
+      "foreground_cwd": "/root/VM-102",
+      "pane_id": "wE:p3",
+      "revision": 3,
+      "scroll": {
+        "max_offset_from_bottom": 15,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wE:t1",
+      "terminal_id": "term_65bde0768ab617",
+      "terminal_title": "agentadmin@coding-agents: ~/Github/GovernanceAIAdvisor",
+      "terminal_title_stripped": "agentadmin@coding-agents: ~/Github/GovernanceAIAdvisor",
+      "workspace_id": "wE"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root",
+      "focused": false,
+      "foreground_cwd": "/root",
+      "pane_id": "wP:p3",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wP:t1",
+      "terminal_id": "term_65c0f18c356ed13",
+      "terminal_title": "root@ubuntu-gpu-ai: ~",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~",
+      "workspace_id": "wP"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/home/mlworkload/AIClientAdvidorV2",
+      "focused": false,
+      "foreground_cwd": "/home/mlworkload/AIClientAdvidorV2",
+      "pane_id": "w8:pF",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "w8:t1",
+      "terminal_id": "term_65bde0767a5772",
+      "terminal_title": "root@ubuntu-gpu-ai: /home/mlworkload/AIClientAdvidorV2",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: /home/mlworkload/AIClientAdvidorV2",
+      "workspace_id": "w8"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/VM-102",
+      "focused": false,
+      "foreground_cwd": "/root/VM-102",
+      "pane_id": "w8:pJ",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "w8:t1",
+      "terminal_id": "term_65bde0767ac943",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/VM-102",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/VM-102",
+      "workspace_id": "w8"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/home/mlworkload/AIClientAdvidorV2",
+      "focused": false,
+      "foreground_cwd": "/home/mlworkload/AIClientAdvidorV2",
+      "pane_id": "wA:p7",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wA:t1",
+      "terminal_id": "term_65bde0768992d4",
+      "terminal_title": "root@ubuntu-gpu-ai: /home/mlworkload/AIClientAdvidorV2",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: /home/mlworkload/AIClientAdvidorV2",
+      "workspace_id": "wA"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/VM-102",
+      "focused": false,
+      "foreground_cwd": "/root/VM-102",
+      "pane_id": "wA:p6",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wA:t1",
+      "terminal_id": "term_65bde07689edf5",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/VM-102",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/VM-102",
+      "workspace_id": "wA"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/root/Gitlab/promptit",
+      "focused": false,
+      "foreground_cwd": "/root/Gitlab/promptit",
+      "pane_id": "wS:p1",
+      "revision": 12,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wS:t1",
+      "terminal_id": "term_65c1160f76bb517",
+      "terminal_title": "Freebuff: review the full pipeline and the work you did and\u2026",
+      "terminal_title_stripped": "Freebuff: review the full pipeline and the work you did and\u2026",
+      "workspace_id": "wS"
+    },
+    {
+      "agent": "agy",
+      "agent_status": "working",
+      "cwd": "/root/agy-herdr-factory-poc",
+      "focused": true,
+      "foreground_cwd": "/root/agy-herdr-factory-poc",
+      "pane_id": "wK:p1",
+      "revision": 105,
+      "scroll": {
+        "max_offset_from_bottom": 1703,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wK:t1",
+      "terminal_id": "term_65bde076768c81",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/agy-herdr-factory-poc",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/agy-herdr-factory-poc",
+      "workspace_id": "wK"
+    },
+    {
+      "agent": "agy",
+      "agent_status": "working",
+      "cwd": "/root/A2A_MQ",
+      "focused": false,
+      "foreground_cwd": "/root/A2A_MQ",
+      "pane_id": "wN:p1",
+      "revision": 3,
+      "scroll": {
+        "max_offset_from_bottom": 1477,
+        "offset_from_bottom": 0,
+        "viewport_rows": 72
+      },
+      "tab_id": "wN:t1",
+      "terminal_id": "term_65bf8ef49292fd",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/A2A_MQ",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/A2A_MQ",
+      "workspace_id": "wN"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/home/mlworkload/trading_bot_clean_astra",
+      "focused": false,
+      "foreground_cwd": "/home/mlworkload/trading_bot_clean_astra",
+      "pane_id": "wC:p6",
+      "revision": 25,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wC:t1",
+      "terminal_id": "term_65c0e7dc7c4b410",
+      "terminal_title": "\u26ec Validate E-tests milestone",
+      "terminal_title_stripped": "\u26ec Validate E-tests milestone",
+      "workspace_id": "wC"
+    },
+    {
+      "agent_status": "unknown",
+      "cwd": "/home/mlworkload/trading_bot_clean",
+      "focused": false,
+      "foreground_cwd": "/home/mlworkload/trading_bot_clean",
+      "pane_id": "wC:p2",
+      "revision": 1,
+      "scroll": {
+        "max_offset_from_bottom": 3834,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wC:t1",
+      "terminal_id": "term_65bde0768d9e39",
+      "terminal_title": "root@ubuntu-gpu-ai: /home/mlworkload/trading_bot_clean",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: /home/mlworkload/trading_bot_clean",
+      "workspace_id": "wC"
+    },
+    {
+      "agent": "agy",
+      "agent_status": "idle",
+      "cwd": "/root/trialsMemoryAgent",
+      "focused": false,
+      "foreground_cwd": "/root/trialsMemoryAgent",
+      "pane_id": "wD:p1",
+      "revision": 3,
+      "scroll": {
+        "max_offset_from_bottom": 0,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wD:t1",
+      "terminal_id": "term_65bde076a710ea",
+      "terminal_title": "root@ubuntu-gpu-ai: ~/trialsMemoryAgent",
+      "terminal_title_stripped": "root@ubuntu-gpu-ai: ~/trialsMemoryAgent",
+      "workspace_id": "wD"
+    },
+    {
+      "agent": "codex",
+      "agent_status": "working",
+      "cwd": "/root/trialsMemoryAgent",
+      "focused": false,
+      "foreground_cwd": "/root/trialsMemoryAgent",
+      "pane_id": "wD:p3",
+      "revision": 88,
+      "scroll": {
+        "max_offset_from_bottom": 1255,
+        "offset_from_bottom": 0,
+        "viewport_rows": 70
+      },
+      "tab_id": "wD:t1",
+      "terminal_id": "term_65c0fd8503df615",
+      "terminal_title": "\u2834 Close native Codex wrapper work | trialsMemoryAgent",
+      "terminal_title_stripped": "Close native Codex wrapper work | trialsMemoryAgent",
+      "workspace_id": "wD"
+    }
+  ],
+  "control_plane": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc"
+  }
+}
