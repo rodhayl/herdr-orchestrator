@@ -56,25 +56,31 @@ def is_path_safe_under_root(path_str: str, root_dir: pathlib.Path) -> bool:
 def match_path_allowlist(rel_path: str, allowed_patterns: list) -> bool:
     """
     Checks if a relative path matches any pattern in the task allowlist.
-    Handles exact files, directory trees ('dir/**' and 'dir/*'), and wildcards.
+    Handles exact files, directory trees ('dir/**', 'dir/*', 'dir/'), and wildcards.
     Guards against prefix collisions (e.g. 'app' matching 'apple').
     """
     normalized = rel_path.replace("\\", "/").strip("/")
     for pat in allowed_patterns:
-        pat_norm = pat.replace("\\", "/").strip("/")
-        if pat_norm.endswith("/**"):
-            base_dir = pat_norm[:-3].rstrip("/")
+        raw_pat = pat.replace("\\", "/").strip()
+        if raw_pat.endswith("/**"):
+            base_dir = raw_pat[:-3].strip("/")
             if normalized == base_dir or normalized.startswith(base_dir + "/"):
                 return True
-        elif pat_norm.endswith("/*"):
-            base_dir = pat_norm[:-2].rstrip("/")
+        elif raw_pat.endswith("/*"):
+            base_dir = raw_pat[:-2].strip("/")
             parent = "/".join(normalized.split("/")[:-1])
             if parent == base_dir:
                 return True
-        elif fnmatch.fnmatch(normalized, pat_norm):
-            return True
-        elif normalized == pat_norm:
-            return True
+        elif raw_pat.endswith("/"):
+            base_dir = raw_pat.strip("/")
+            if normalized == base_dir or normalized.startswith(base_dir + "/"):
+                return True
+        else:
+            pat_norm = raw_pat.strip("/")
+            if normalized == pat_norm or normalized.startswith(pat_norm + "/"):
+                return True
+            if fnmatch.fnmatch(normalized, pat_norm):
+                return True
     return False
 
 
@@ -184,6 +190,16 @@ class ResourceManager:
 
     def is_owned_workspace(self, workspace_id: str) -> bool:
         return check_mutation_safety(workspace_id, self.state["owned"]["workspace_ids"])
+
+    def clean_workspace(self, workspace_id: str) -> bool:
+        """Safely closes a workspace ONLY if it is registered as project-owned."""
+        if not self.is_owned_workspace(workspace_id):
+            raise PermissionError(f"Security violation: Workspace '{workspace_id}' is not project-owned. Mutation forbidden.")
+        success = self.herdr.close_workspace(workspace_id)
+        if workspace_id in self.state["owned"]["workspace_ids"]:
+            self.state["owned"]["workspace_ids"].remove(workspace_id)
+        self.save()
+        return success
 
     def cleanup_owned_resources(self) -> dict:
         """Idempotently cleans ONLY explicitly owned resources."""
