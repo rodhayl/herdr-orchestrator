@@ -563,7 +563,11 @@ class TaskExecutor:
         output_json_path = self.task_dir / "output.json"
         status_file_path = self.task_dir / "exit_code.txt"
 
-        schema_src = PROJECT_ROOT / "schemas" / ("review-result.schema.json" if self.review_only else "worker-result.schema.json")
+        custom_schema = self.task_plan.get("result_schema")
+        if custom_schema:
+            schema_src = PROJECT_ROOT / custom_schema
+        else:
+            schema_src = PROJECT_ROOT / "schemas" / ("review-result.schema.json" if self.review_only else "worker-result.schema.json")
         schema_dest = self.task_dir / "schema.json"
         shutil.copyfile(schema_src, schema_dest)
 
