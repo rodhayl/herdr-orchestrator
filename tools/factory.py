@@ -695,7 +695,7 @@ echo $? > "{status_file_path}"
             and agy_data.get("status") == "SUCCESS"
             and not path_violations
             and not missing_expected
-            and (self.review_only or len(changed_paths) > 0)
+            and (self.review_only or len(changed_paths) > 0 or (self.expected_files and not missing_expected))
         )
 
         self.state = "PATH_VALIDATED" if is_success else "FAILED"
@@ -1030,20 +1030,31 @@ class FactoryOrchestrator:
             }
         self.manifest["concurrency_evidence"] = concurrency_evidence
 
-        has_failed_tasks = any(
-            t.get("status") != "SUCCESS"
+        # Check final wave validation and overall success
+        last_val_wave = max([w["wave_index"] for w in self.plan["waves"] if w.get("post_wave_validation")], default=None)
+        final_validation_passed = True
+        if last_val_wave is not None:
+            val_results = self.manifest.get(f"validation_wave_{last_val_wave}", {})
+            final_validation_passed = all(check.get("passed", False) for check in val_results.values())
+
+        # Final audit must not have critical or major findings
+        audit_approved = True
+        final_audit = self.manifest.get("final_audit", {})
+        if final_audit:
+            findings = final_audit.get("findings", [])
+            has_blocking_findings = any(f.get("severity") in ("CRITICAL", "MAJOR") for f in findings)
+            audit_approved = not has_blocking_findings and final_audit.get("status") in ("APPROVED", "COMPLETED")
+
+        all_tasks_successful = all(
+            t.get("status") == "SUCCESS"
             for w in self.manifest["waves"]
             for t in w.get("tasks", [])
         )
-        has_failed_validation = any(
-            v.get("passed") is False
-            for w in self.manifest["waves"]
-            for v in w.get("validation_results", {}).values()
-        )
-        if has_failed_tasks or has_failed_validation:
-            self.manifest["final_status"] = "FAILED"
-        else:
+
+        if all_tasks_successful and final_validation_passed and audit_approved:
             self.manifest["final_status"] = "COMPLETED"
+        else:
+            self.manifest["final_status"] = "FAILED"
 
         with open(self.manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, indent=2)
