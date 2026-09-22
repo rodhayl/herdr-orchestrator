@@ -1,73 +1,114 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "project_name": "MiniBoard Factory PoC",
-  "version": "1.0.0",
+  "project_name": "AGY-Herdr Software Factory",
+  "version": "2.0.0",
   "default_model": "gemini-3.8-flash-high",
   "worker_registry": {
     "agy": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy",
       "profile_home": "/root/.agy_home",
+      "enabled": true,
+      "capabilities": ["implementation", "review", "planning", "testing"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
       "description": "Primary AGY instance (reserved when orchestrator is agy)"
     },
     "agy2": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy2",
       "profile_home": "/root/.agy2_home",
-      "description": "Wave 0 Product Specification Worker"
+      "enabled": true,
+      "capabilities": ["planning", "specification", "review"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Product Specification and Planning Worker"
     },
     "agy3": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy3",
       "profile_home": "/root/.agy3_home",
-      "description": "Wave 1 Backend & SQLite Storage Worker"
+      "enabled": true,
+      "capabilities": ["implementation", "backend", "database"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Backend & Storage Implementation Worker"
     },
     "agy4": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy4",
       "profile_home": "/root/.agy4_home",
-      "description": "Wave 1 Frontend (HTML/CSS/JS) Worker"
+      "enabled": true,
+      "capabilities": ["implementation", "frontend", "ui"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Frontend UI & Client Implementation Worker"
     },
     "agy5": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy5",
       "profile_home": "/root/.agy5_home",
-      "description": "Wave 1 Test Suite & Smoke Harness Worker"
+      "enabled": true,
+      "capabilities": ["implementation", "testing", "smoke-harness"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Test Suite & Smoke Harness Worker"
     },
     "agy6": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy6",
       "profile_home": "/root/.agy6_home",
-      "description": "Wave 2 Repair / Integration Quality Reviewer"
+      "enabled": true,
+      "capabilities": ["implementation", "repair", "integration", "review"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Integration Quality & Repair Worker"
     },
     "agy7": {
-      "adapter": "antigravity",
+      "family": "antigravity",
       "command": "/root/.local/bin/agy7",
       "profile_home": "/root/.agy7_home",
-      "description": "Wave 3 Independent Audit Worker"
+      "enabled": true,
+      "capabilities": ["audit", "review", "evaluation"],
+      "invocation_adapter": "antigravity_cli",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Independent Final Audit Worker"
     }
   },
   "future_worker_adapters": {
     "codex": {
+      "family": "codex",
       "adapter_type": "command_adapter",
       "binary": "codex",
+      "capabilities": ["implementation", "review"],
       "invocation_protocol": "herdr-pane-cli",
-      "capabilities": ["code-editing", "diff-review"],
-      "status": "planned"
+      "status": "planned",
+      "notes": "Ready for integration upon installation of codex CLI wrapper"
     },
     "droid": {
+      "family": "droid",
       "adapter_type": "command_adapter",
       "binary": "droid",
+      "capabilities": ["implementation", "refactoring"],
       "invocation_protocol": "herdr-pane-cli",
-      "capabilities": ["code-editing", "refactoring"],
-      "status": "planned"
+      "status": "planned",
+      "notes": "Ready for integration upon installation of droid CLI wrapper"
     },
     "freebuff": {
+      "family": "freebuff",
       "adapter_type": "command_adapter",
       "binary": "freebuff",
+      "capabilities": ["planning", "implementation"],
       "invocation_protocol": "herdr-pane-cli",
-      "capabilities": ["code-editing", "planning"],
-      "status": "planned"
+      "status": "planned",
+      "notes": "Ready for integration upon installation of freebuff CLI wrapper"
     }
   },
   "guardrails": {

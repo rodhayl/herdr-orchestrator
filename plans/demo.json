@@ -1,18 +1,11 @@
 {
   "plan_id": "demo",
-  "name": "MiniBoard Software Factory End-to-End Orchestration Plan",
-  "version": "1.0.0",
+  "name": "MiniBoard Software Factory Orchestration Plan",
+  "version": "2.0.0",
   "target_application": {
     "name": "MiniBoard",
     "description": "Local single-user Kanban task board using Python 3 stdlib, SQLite, and vanilla HTML/CSS/JS",
-    "columns": ["TODO", "DOING", "DONE"],
-    "endpoints": [
-      "GET /health",
-      "GET /api/tasks",
-      "POST /api/tasks",
-      "PATCH /api/tasks/<id>",
-      "DELETE /api/tasks/<id>"
-    ]
+    "root_directory": "."
   },
   "waves": [
     {
@@ -23,9 +16,11 @@
         {
           "task_id": "wave0_spec",
           "worker_id": "agy2",
-          "allowed_paths": ["docs/**"],
           "description": "Create the complete MiniBoard product specification in docs/SPECIFICATION.md using write_to_file. Document the exact SQLite schema for table 'tasks' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('TODO','DOING','DONE')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL). Document the exact REST API contract: GET /health (returns 200 {'status': 'ok'}), GET /api/tasks (returns 200 array of tasks), POST /api/tasks (accepts {'title': '...', 'status': 'TODO'}, returns 201 created task, 400 on error), PATCH /api/tasks/<id> (accepts {'title': '...'} or {'status': '...'}, returns 200 updated task, 404 if not found), DELETE /api/tasks/<id> (returns 200 {'status': 'deleted', 'id': id}, 404 if not found), and static file serving for web/ (index.html, style.css, app.js). Document the Python backend interface: create_server(host='127.0.0.1', port=0, db_path='miniboard.db') returning an HTTPServer running in a daemon thread. Document the testing requirements: unittest suites in tests/ and a 12-step standalone smoke test script in scripts/smoke_test.py. Document frontend requirements: vanilla HTML/CSS/JS Kanban board with TODO, DOING, DONE columns.",
-          "expected_files": ["docs/SPECIFICATION.md"]
+          "allowed_paths": ["docs/**"],
+          "expected_files": ["docs/SPECIFICATION.md"],
+          "review_only": false,
+          "timeout": 180
         }
       ]
     },
@@ -37,23 +32,52 @@
         {
           "task_id": "wave1_backend",
           "worker_id": "agy3",
+          "dependencies": ["wave0_spec"],
+          "context_files": ["docs/SPECIFICATION.md"],
+          "description": "Implement the MiniBoard backend in app/server.py and app/database.py using Python 3 stdlib only (http.server, sqlite3, json). Support create_server(host, port, db_path) returning server instance running in a daemon thread for testability. Implement GET /health, GET /api/tasks, POST /api/tasks, PATCH /api/tasks/<id>, DELETE /api/tasks/<id>, and static file serving for web/ directory. Store tasks in SQLite with columns id, title, status, created_at, updated_at. Validate inputs and return proper HTTP status codes.",
           "allowed_paths": ["app/**"],
-          "description": "Implement the MiniBoard backend in app/server.py and app/database.py using Python 3 stdlib only (http.server, sqlite3, json). Support create_server(host, port, db_path) returning (server, thread_or_handle) for testability. Implement GET /health, GET /api/tasks, POST /api/tasks, PATCH /api/tasks/<id>, DELETE /api/tasks/<id>, and static file serving for web/ directory. Store tasks in SQLite with columns id, title, status, created_at, updated_at. Validate inputs and return proper HTTP status codes.",
-          "expected_files": ["app/server.py", "app/database.py"]
+          "expected_files": ["app/server.py", "app/database.py"],
+          "review_only": false,
+          "timeout": 240
         },
         {
           "task_id": "wave1_frontend",
           "worker_id": "agy4",
-          "allowed_paths": ["web/**"],
+          "dependencies": ["wave0_spec"],
+          "context_files": ["docs/SPECIFICATION.md"],
           "description": "Implement the MiniBoard web frontend in web/index.html, web/style.css, and web/app.js. Responsive single-user Kanban board with TODO, DOING, and DONE columns. Allow creating tasks, editing task titles, dragging or clicking buttons to change task status between columns, deleting tasks, and displaying notifications/errors. Interface directly with /api/tasks endpoints using standard fetch API.",
-          "expected_files": ["web/index.html", "web/style.css", "web/app.js"]
+          "allowed_paths": ["web/**"],
+          "expected_files": ["web/index.html", "web/style.css", "web/app.js"],
+          "review_only": false,
+          "timeout": 240
         },
         {
           "task_id": "wave1_tests",
           "worker_id": "agy5",
-          "allowed_paths": ["tests/**", "scripts/**"],
+          "dependencies": ["wave0_spec"],
+          "context_files": ["docs/SPECIFICATION.md"],
           "description": "Implement comprehensive stdlib tests in tests/test_api.py, tests/test_persistence.py, and standalone smoke script in scripts/smoke_test.py. Tests must use unittest, tempfile, urllib, sqlite3, threading. Verify /health, CRUD on /api/tasks, invalid payload error handling, and database persistence across server restart on ephemeral port.",
-          "expected_files": ["tests/test_api.py", "tests/test_persistence.py", "scripts/smoke_test.py"]
+          "allowed_paths": ["tests/**", "scripts/**"],
+          "expected_files": ["tests/test_api.py", "tests/test_persistence.py", "scripts/smoke_test.py"],
+          "review_only": false,
+          "timeout": 240
+        }
+      ],
+      "post_wave_validation": [
+        {
+          "name": "compilation",
+          "command": ["python3", "-m", "compileall", "app", "tests"],
+          "timeout": 30
+        },
+        {
+          "name": "unittest",
+          "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+          "timeout": 60
+        },
+        {
+          "name": "smoke_test",
+          "command": ["python3", "scripts/smoke_test.py"],
+          "timeout": 60
         }
       ]
     },
@@ -65,9 +89,31 @@
         {
           "task_id": "wave2_review",
           "worker_id": "agy6",
-          "allowed_paths": ["app/**", "web/**", "tests/**", "scripts/**"],
+          "dependencies": ["wave1_backend", "wave1_frontend", "wave1_tests"],
+          "context_files": ["docs/SPECIFICATION.md"],
+          "is_repair": true,
           "description": "Perform focused integration and quality verification of the merged MiniBoard codebase. Ensure consistency between app/server.py routes, web/app.js API calls, and tests/ suites. Remedy any minor edge cases or integration defects while keeping code minimal and stdlib-only.",
-          "expected_files": []
+          "allowed_paths": ["app/**", "web/**", "tests/**", "scripts/**"],
+          "expected_files": [],
+          "review_only": false,
+          "timeout": 180
+        }
+      ],
+      "post_wave_validation": [
+        {
+          "name": "compilation",
+          "command": ["python3", "-m", "compileall", "app", "tests"],
+          "timeout": 30
+        },
+        {
+          "name": "unittest",
+          "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+          "timeout": 60
+        },
+        {
+          "name": "smoke_test",
+          "command": ["python3", "scripts/smoke_test.py"],
+          "timeout": 60
         }
       ]
     },
@@ -79,10 +125,13 @@
         {
           "task_id": "wave3_audit",
           "worker_id": "agy7",
-          "review_only": true,
+          "dependencies": ["wave2_review"],
+          "context_files": ["docs/SPECIFICATION.md"],
+          "description": "Conduct an objective, independent audit of the completed MiniBoard repository against docs/SPECIFICATION.md using view_file. Evaluate feature completeness, API contract compliance, SQLite persistence, frontend/backend integration, and test quality. Provide structured findings with severity, area, evidence, and recommendations. Do NOT modify any code.",
           "allowed_paths": [],
-          "description": "Conduct an objective, independent audit of the completed MiniBoard repository against docs/SPECIFICATION.md. Evaluate feature completeness, API contract compliance, SQLite persistence, frontend/backend integration, and test quality. Provide structured findings with severity, area, evidence, and recommendations. Do NOT modify any code.",
-          "expected_files": []
+          "expected_files": [],
+          "review_only": true,
+          "timeout": 180
         }
       ]
     }
