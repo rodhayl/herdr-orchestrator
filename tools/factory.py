@@ -468,6 +468,7 @@ class TaskExecutor:
         self.expected_files = plan_task.get("expected_files", [])
         self.context_files = plan_task.get("context_files", [])
         self.review_only = plan_task.get("review_only", False)
+        self.is_repair = plan_task.get("is_repair", False)
         self.timeout = plan_task.get("timeout", 180)
 
         self.task_dir = run_dir / "workers" / self.task_id
@@ -651,7 +652,7 @@ echo $? > "{status_file_path}"
 
         # Inspect diff for changed paths
         untracked_res = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=str(self.worktree_path),
             capture_output=True,
             text=True
@@ -659,7 +660,8 @@ echo $? > "{status_file_path}"
         changed_paths = []
         for line in untracked_res.stdout.splitlines():
             if line.strip():
-                changed_paths.append(line[3:].strip())
+                p = line[3:].strip().strip('"')
+                changed_paths.append(p)
 
         # Strict path allowlist verification
         path_violations = []
@@ -1026,8 +1028,20 @@ class FactoryOrchestrator:
             }
         self.manifest["concurrency_evidence"] = concurrency_evidence
 
-        self.manifest["end_time"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        self.manifest["final_status"] = "COMPLETED"
+        has_failed_tasks = any(
+            t.get("status") != "SUCCESS"
+            for w in self.manifest["waves"]
+            for t in w.get("tasks", [])
+        )
+        has_failed_validation = any(
+            v.get("passed") is False
+            for w in self.manifest["waves"]
+            for v in w.get("validation_results", {}).values()
+        )
+        if has_failed_tasks or has_failed_validation:
+            self.manifest["final_status"] = "FAILED"
+        else:
+            self.manifest["final_status"] = "COMPLETED"
 
         with open(self.manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, indent=2)
