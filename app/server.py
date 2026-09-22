@@ -44,6 +44,7 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
 
     def _send_json(self, status_code: int, data: Any) -> None:
         """Send a JSON formatted HTTP response with correct headers."""
+        self.close_connection = True
         payload = json.dumps(data).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -51,10 +52,14 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_plain(self, status_code: int, message: str) -> None:
         """Send a plain text HTTP response."""
+        self.close_connection = True
         payload = message.encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -62,7 +67,10 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _read_json_body(self) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
         """Read and parse the JSON request body. Return (data, error_message)."""
@@ -83,6 +91,7 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests."""
+        self.close_connection = True
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
@@ -126,7 +135,7 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # 4. Unknown API paths return 404 JSON
-        if path.startswith("/api/"):
+        if path == "/api" or path.startswith("/api/"):
             self._send_json(404, {"error": "Not Found"})
             return
 
@@ -138,7 +147,7 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
         decoded_path = urllib.parse.unquote(raw_path)
 
         # Reject path traversal attempts
-        parts = [p for p in decoded_path.split("/") if p]
+        parts = [p for p in decoded_path.replace("\\", "/").split("/") if p]
         if ".." in parts:
             self._send_plain(403, "Forbidden")
             return
@@ -177,6 +186,7 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
         try:
             with open(target_path, "rb") as f:
                 content = f.read()
+            self.close_connection = True
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
@@ -184,6 +194,8 @@ class MiniBoardHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(content)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         except OSError:
             self._send_plain(404, "Not Found")
 
