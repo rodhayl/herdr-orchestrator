@@ -143,7 +143,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/bookmarks":
-            query_params = urllib.parse.parse_qs(parsed.query)
+            query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             q_list = query_params.get("q")
             q = q_list[0] if q_list else None
             bookmarks = database.get_bookmarks(q=q, db_path=self.server.db_path)
