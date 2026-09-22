@@ -14,14 +14,27 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-# Ensure examples/minilinks is in sys.path for direct imports
+# Ensure examples/minilinks and project root are in sys.path for direct imports
 _current_dir = Path(__file__).resolve().parent
 _minilinks_dir = _current_dir.parent
+_project_root = _minilinks_dir.parent.parent
+
+if str(_project_root) not in sys.path:
+    sys.path.append(str(_project_root))
 if str(_minilinks_dir) not in sys.path:
     sys.path.insert(0, str(_minilinks_dir))
+else:
+    sys.path.remove(str(_minilinks_dir))
+    sys.path.insert(0, str(_minilinks_dir))
 
-from app import database
-from app.server import MiniLinksServer, create_server
+try:
+    from app import database
+    from app.server import MiniLinksServer, create_server
+    if not hasattr(database, "create_bookmark"):
+        raise ImportError("Imported wrong database module")
+except (ImportError, AttributeError):
+    from examples.minilinks.app import database
+    from examples.minilinks.app.server import MiniLinksServer, create_server
 
 
 def send_http_request(
