@@ -96,7 +96,7 @@
           "allowed_paths": ["examples/minilinks/**"],
           "expected_files": [],
           "review_only": false,
-          "timeout": 240
+          "timeout": 360
         }
       ],
       "post_wave_validation": [
@@ -131,7 +131,7 @@
           "allowed_paths": [],
           "expected_files": [],
           "review_only": true,
-          "timeout": 180
+          "timeout": 300
         }
       ]
     }

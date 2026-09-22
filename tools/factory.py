@@ -602,9 +602,8 @@ echo $? > "{status_file_path}"
 
         self.end_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        if not status_file_path.exists():
-            self.state = "FAILED"
-            return {
+        if not status_file_path.exists() or status_file_path.stat().st_size == 0:
+            res = {
                 "task_id": self.task_id,
                 "state": "FAILED",
                 "status": "TIMEOUT",
@@ -612,6 +611,9 @@ echo $? > "{status_file_path}"
                 "end_time": self.end_time,
                 "error": f"Worker timed out after {self.timeout}s"
             }
+            self.state = "FAILED"
+            self.result = res
+            return res
 
         exit_code = int(status_file_path.read_text().strip())
         self.state = "RESULT_RECEIVED"
