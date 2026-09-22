@@ -15,6 +15,9 @@ def get_utc_now() -> str:
 
 def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Creates and returns a SQLite connection with Row factory."""
+    parent = Path(db_path).parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -25,10 +28,6 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
     Initializes the SQLite database at `db_path`, creating the bookmarks table
     and ensuring any parent directories exist.
     """
-    parent = Path(db_path).parent
-    if str(parent) not in ("", "."):
-        parent.mkdir(parents=True, exist_ok=True)
-
     conn = get_connection(db_path)
     try:
         with conn:
@@ -91,7 +90,7 @@ def get_bookmarks(
                 "id": row["id"],
                 "title": row["title"],
                 "url": row["url"],
-                "notes": row["notes"] or "",
+                "notes": row["notes"] if row["notes"] is not None else "",
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
@@ -130,7 +129,7 @@ def get_bookmark_by_id(
             "id": row["id"],
             "title": row["title"],
             "url": row["url"],
-            "notes": row["notes"] or "",
+            "notes": row["notes"] if row["notes"] is not None else "",
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -243,15 +242,11 @@ def delete_bookmark(
     if target_id is None:
         return False
 
-    existing = get_bookmark_by_id(target_id, db_path=db_path)
-    if existing is None:
-        return False
-
     conn = get_connection(db_path)
     try:
         with conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM bookmarks WHERE id = ?", (target_id,))
-        return True
+            return cursor.rowcount > 0
     finally:
         conn.close()
