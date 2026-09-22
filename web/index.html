@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MiniBoard - Kanban Task Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-main">
+        <div class="brand">
+          <div class="brand-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+              <line x1="15" y1="3" x2="15" y2="21"></line>
+            </svg>
+          </div>
+          <h1>MiniBoard</h1>
+        </div>
+
+        <div class="stats-bar" aria-label="Task statistics">
+          <div class="stat-badge" id="stat-total" title="Total tasks">
+            <span class="stat-label">Total</span>
+            <span class="stat-value" id="total-tasks-count">0</span>
+          </div>
+          <div class="stat-badge stat-todo" title="TODO tasks">
+            <span class="stat-label">TODO</span>
+            <span class="stat-value" id="todo-tasks-count">0</span>
+          </div>
+          <div class="stat-badge stat-doing" title="DOING tasks">
+            <span class="stat-label">DOING</span>
+            <span class="stat-value" id="doing-tasks-count">0</span>
+          </div>
+          <div class="stat-badge stat-done" title="DONE tasks">
+            <span class="stat-label">DONE</span>
+            <span class="stat-value" id="done-tasks-count">0</span>
+          </div>
+          <div class="connection-status" id="connection-status" title="Server connection status">
+            <span class="status-dot"></span>
+            <span class="status-text" id="connection-status-text">Online</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Operational Status / Notification Banner -->
+      <div id="notification-banner" class="notification-banner hidden" role="alert" aria-live="polite">
+        <span class="notification-icon" id="notification-icon" aria-hidden="true"></span>
+        <span class="notification-message" id="notification-message"></span>
+        <button type="button" class="notification-close" id="notification-close-btn" aria-label="Dismiss notification">&times;</button>
+      </div>
+    </header>
+
+    <!-- Task Creation Form -->
+    <section class="task-form-section" aria-label="Create task">
+      <form id="task-form" class="task-form" onsubmit="return false;">
+        <div class="input-wrapper">
+          <input 
+            type="text" 
+            id="task-title-input" 
+            name="title" 
+            placeholder="Add a new task..." 
+            autocomplete="off" 
+            maxlength="500"
+            required
+            aria-label="Task title input"
+          >
+          <button type="submit" id="task-submit-btn" class="btn btn-primary" aria-label="Add task button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Add Task</span>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Kanban Board Grid -->
+    <main class="board-container">
+      <div class="kanban-grid">
+        <!-- TODO Column -->
+        <section class="kanban-column" id="col-todo" data-status="TODO" aria-label="TODO Column">
+          <div class="column-header">
+            <div class="column-title-group">
+              <span class="column-indicator col-indicator-todo" aria-hidden="true"></span>
+              <h2 class="column-title">TODO</h2>
+            </div>
+            <span class="column-badge" id="badge-todo">0</span>
+          </div>
+          <div class="task-dropzone" id="dropzone-todo" data-status="TODO">
+            <div class="task-list" id="list-todo"></div>
+            <div class="empty-placeholder" id="empty-todo">No tasks in TODO</div>
+          </div>
+        </section>
+
+        <!-- DOING Column -->
+        <section class="kanban-column" id="col-doing" data-status="DOING" aria-label="DOING Column">
+          <div class="column-header">
+            <div class="column-title-group">
+              <span class="column-indicator col-indicator-doing" aria-hidden="true"></span>
+              <h2 class="column-title">DOING</h2>
+            </div>
+            <span class="column-badge" id="badge-doing">0</span>
+          </div>
+          <div class="task-dropzone" id="dropzone-doing" data-status="DOING">
+            <div class="task-list" id="list-doing"></div>
+            <div class="empty-placeholder" id="empty-doing">No tasks in progress</div>
+          </div>
+        </section>
+
+        <!-- DONE Column -->
+        <section class="kanban-column" id="col-done" data-status="DONE" aria-label="DONE Column">
+          <div class="column-header">
+            <div class="column-title-group">
+              <span class="column-indicator col-indicator-done" aria-hidden="true"></span>
+              <h2 class="column-title">DONE</h2>
+            </div>
+            <span class="column-badge" id="badge-done">0</span>
+          </div>
+          <div class="task-dropzone" id="dropzone-done" data-status="DONE">
+            <div class="task-list" id="list-done"></div>
+            <div class="empty-placeholder" id="empty-done">No completed tasks</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
