@@ -6,32 +6,35 @@
 (() => {
   'use strict';
 
-  // State
+  // Application State
   let bookmarksState = [];
   let currentSearchQuery = '';
   let activeEditingId = null;
   let activeDeletingId = null;
   let searchDebounceTimer = null;
   let notificationTimer = null;
+  let lastFocusedElement = null;
 
-  // DOM Elements
+  // DOM Elements - Notification Banner
   const notificationBanner = document.getElementById('notification-banner');
   const notificationMessage = document.getElementById('notification-message');
   const notificationIcon = document.getElementById('notification-icon');
   const notificationCloseBtn = document.getElementById('notification-close');
 
+  // DOM Elements - Header & Search
   const searchInput = document.getElementById('search-input');
   const searchClearBtn = document.getElementById('search-clear-btn');
   const bookmarksCount = document.getElementById('bookmarks-count');
   const bookmarksList = document.getElementById('bookmarks-list');
 
+  // DOM Elements - Create Bookmark Form
   const bookmarkForm = document.getElementById('bookmark-form');
   const bookmarkTitleInput = document.getElementById('bookmark-title');
   const bookmarkUrlInput = document.getElementById('bookmark-url');
   const bookmarkNotesInput = document.getElementById('bookmark-notes');
   const bookmarkSubmitBtn = document.getElementById('bookmark-submit-btn');
 
-  // Edit Modal Elements
+  // DOM Elements - Edit Modal
   const editModal = document.getElementById('edit-modal');
   const editModalClose = document.getElementById('edit-modal-close');
   const editBookmarkForm = document.getElementById('edit-bookmark-form');
@@ -42,7 +45,7 @@
   const editCancelBtn = document.getElementById('edit-cancel-btn');
   const editSaveBtn = document.getElementById('edit-save-btn');
 
-  // Delete Modal Elements
+  // DOM Elements - Delete Modal
   const deleteModal = document.getElementById('delete-modal');
   const deleteModalClose = document.getElementById('delete-modal-close');
   const deleteBookmarkTitle = document.getElementById('delete-bookmark-title');
@@ -54,6 +57,42 @@
     initEventListeners();
     fetchBookmarks();
   });
+
+  /**
+   * Normalize user-entered URL if missing scheme
+   */
+  function normalizeUrl(rawUrl) {
+    const trimmed = (rawUrl || '').trim();
+    if (!trimmed) return '';
+    // If no URI scheme is provided (e.g. "docs.python.org"), default to https://
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) && !trimmed.startsWith('/')) {
+      return `https://${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  /**
+   * Sanitize URL for safe use in href attribute (prevent javascript: XSS)
+   */
+  function safeHref(rawUrl) {
+    if (!rawUrl) return '#';
+    const trimmed = rawUrl.trim();
+    if (/^(?:javascript|data|vbscript):/i.test(trimmed)) {
+      return '#';
+    }
+    return normalizeUrl(trimmed);
+  }
+
+  /**
+   * Safely read JSON response body with fallback
+   */
+  async function parseJsonResponse(response) {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Initialize all UI event listeners
@@ -71,6 +110,26 @@
       }, 250);
     });
 
+    // Immediate search on Enter key
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(searchDebounceTimer);
+        currentSearchQuery = searchInput.value.trim();
+        fetchBookmarks(currentSearchQuery);
+      }
+    });
+
+    // Handle native search clear button
+    searchInput.addEventListener('search', () => {
+      if (!searchInput.value) {
+        searchClearBtn.classList.add('hidden');
+        clearTimeout(searchDebounceTimer);
+        currentSearchQuery = '';
+        fetchBookmarks('');
+      }
+    });
+
+    // Clear search button click
     searchClearBtn.addEventListener('click', () => {
       searchInput.value = '';
       searchClearBtn.classList.add('hidden');
@@ -130,12 +189,13 @@
         },
       });
 
+      const data = await parseJsonResponse(response);
+
       if (!response.ok) {
-        throw new Error(`Failed to load bookmarks (HTTP ${response.status})`);
+        throw new Error((data && data.error) || `Failed to load bookmarks (HTTP ${response.status})`);
       }
 
-      const bookmarks = await response.json();
-      bookmarksState = Array.isArray(bookmarks) ? bookmarks : [];
+      bookmarksState = Array.isArray(data) ? data : [];
       renderBookmarks(bookmarksState, query);
     } catch (err) {
       console.error('Error fetching bookmarks:', err);
@@ -153,7 +213,7 @@
     e.preventDefault();
 
     const title = bookmarkTitleInput.value.trim();
-    const url = bookmarkUrlInput.value.trim();
+    const rawUrl = bookmarkUrlInput.value.trim();
     const notes = bookmarkNotesInput.value.trim();
 
     if (!title) {
@@ -162,12 +222,13 @@
       return;
     }
 
-    if (!url) {
+    if (!rawUrl) {
       showNotification('URL is required', 'error');
       bookmarkUrlInput.focus();
       return;
     }
 
+    const url = normalizeUrl(rawUrl);
     bookmarkSubmitBtn.disabled = true;
 
     try {
@@ -180,10 +241,10 @@
         body: JSON.stringify({ title, url, notes }),
       });
 
-      const data = await response.json();
+      const data = await parseJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(data.error || `Error creating bookmark (HTTP ${response.status})`);
+        throw new Error((data && data.error) || `Error creating bookmark (HTTP ${response.status})`);
       }
 
       // Reset form on success
@@ -204,6 +265,7 @@
    * Open edit modal prefilled with bookmark data
    */
   function openEditModal(bookmark) {
+    lastFocusedElement = document.activeElement;
     activeEditingId = bookmark.id;
     editBookmarkId.value = bookmark.id;
     editTitleInput.value = bookmark.title;
@@ -215,12 +277,15 @@
   }
 
   /**
-   * Close edit modal
+   * Close edit modal and restore focus
    */
   function closeEditModal() {
     editModal.classList.add('hidden');
     activeEditingId = null;
     editBookmarkForm.reset();
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      lastFocusedElement.focus();
+    }
   }
 
   /**
@@ -233,7 +298,7 @@
     if (!id) return;
 
     const title = editTitleInput.value.trim();
-    const url = editUrlInput.value.trim();
+    const rawUrl = editUrlInput.value.trim();
     const notes = editNotesInput.value.trim();
 
     if (!title) {
@@ -242,12 +307,13 @@
       return;
     }
 
-    if (!url) {
+    if (!rawUrl) {
       showNotification('URL is required', 'error');
       editUrlInput.focus();
       return;
     }
 
+    const url = normalizeUrl(rawUrl);
     editSaveBtn.disabled = true;
 
     try {
@@ -260,10 +326,10 @@
         body: JSON.stringify({ title, url, notes }),
       });
 
-      const updatedBookmark = await response.json();
+      const updatedBookmark = await parseJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(updatedBookmark.error || `Failed to update bookmark (HTTP ${response.status})`);
+        throw new Error((updatedBookmark && updatedBookmark.error) || `Failed to update bookmark (HTTP ${response.status})`);
       }
 
       showNotification('Bookmark updated successfully', 'success');
@@ -283,6 +349,7 @@
    * Open delete confirmation modal
    */
   function openDeleteModal(bookmark) {
+    lastFocusedElement = document.activeElement;
     activeDeletingId = bookmark.id;
     deleteBookmarkTitle.textContent = bookmark.title;
     deleteModal.classList.remove('hidden');
@@ -290,12 +357,15 @@
   }
 
   /**
-   * Close delete modal
+   * Close delete modal and restore focus
    */
   function closeDeleteModal() {
     deleteModal.classList.add('hidden');
     activeDeletingId = null;
     deleteBookmarkTitle.textContent = '';
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      lastFocusedElement.focus();
+    }
   }
 
   /**
@@ -315,10 +385,10 @@
         },
       });
 
-      const result = await response.json();
+      const result = await parseJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(result.error || `Failed to delete bookmark (HTTP ${response.status})`);
+        throw new Error((result && result.error) || `Failed to delete bookmark (HTTP ${response.status})`);
       }
 
       closeDeleteModal();
@@ -380,7 +450,7 @@
 
     const titleLink = document.createElement('a');
     titleLink.className = 'card-title-link';
-    titleLink.href = bookmark.url;
+    titleLink.href = safeHref(bookmark.url);
     titleLink.target = '_blank';
     titleLink.rel = 'noopener noreferrer';
     titleLink.textContent = bookmark.title;
@@ -388,10 +458,10 @@
     titleH3.appendChild(titleLink);
     cardHeader.appendChild(titleH3);
 
-    // URL Link
+    // Visible URL Link with truncation
     const urlLink = document.createElement('a');
     urlLink.className = 'card-url-link';
-    urlLink.href = bookmark.url;
+    urlLink.href = safeHref(bookmark.url);
     urlLink.target = '_blank';
     urlLink.rel = 'noopener noreferrer';
     urlLink.title = bookmark.url;
@@ -540,8 +610,8 @@
       notificationIcon.innerHTML = `
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="16" x2="12" y2="12"></line>
-          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="8"></line>
         </svg>
       `;
     }
