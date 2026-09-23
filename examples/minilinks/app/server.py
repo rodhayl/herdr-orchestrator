@@ -236,7 +236,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             )
             return
 
-        # Validate notes
+        # Validate notes: optional string, if omitted or null defaults to empty string
         if notes is not None and not isinstance(notes, str):
             self.send_json_error(400, "Notes must be a string if provided")
             return
@@ -320,10 +320,10 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
 
         if "notes" in body:
             notes = body["notes"]
-            if notes is not None and not isinstance(notes, str):
+            if not isinstance(notes, str):
                 self.send_json_error(400, "Invalid update payload")
                 return
-            clean_notes = notes if notes is not None else ""
+            clean_notes = notes
 
         if "is_favorite" in body:
             raw_fav = body["is_favorite"]
