@@ -1110,6 +1110,19 @@ class HerdrBoardProjector:
 
         self._save()
 
+        # Record board snapshot history
+        try:
+            history_file = self.board_dir / "history.jsonl"
+            history_entry = {
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "run_id": run_id,
+                "columns": {col: [c["task_id"] for c in self.cards.values() if c.get("column") == col] for col in self.COLUMNS}
+            }
+            with open(history_file, "a", encoding="utf-8") as hf:
+                hf.write(json.dumps(history_entry) + "\n")
+        except Exception:
+            pass
+
         # Check if actual board CLI is installed locally and daemon running
         board_bin = self.root_dir / ".tools" / "bin" / "board"
         if board_bin.exists() and os.access(board_bin, os.X_OK):
