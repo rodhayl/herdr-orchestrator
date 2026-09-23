@@ -18,11 +18,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. Export committed Git content only (zero uncommitted files, zero local runtime artifacts)
+# 1. Clone committed Git content to clean sandbox (zero uncommitted files, zero untracked artifacts)
 cd "$PROJECT_ROOT"
 CURRENT_COMMIT="$(git rev-parse HEAD)"
-echo "Exporting commit $CURRENT_COMMIT to clean sandbox..."
-git archive HEAD | tar -x -C "$TMP_CHECKOUT"
+echo "Cloning commit $CURRENT_COMMIT to clean sandbox..."
+git clone "$PROJECT_ROOT" "$TMP_CHECKOUT"
 
 # Verify excluded runtime directories do not exist in clean sandbox
 for d in .tools .venv .agy-factory/worktrees .agy-factory/tmp .agy-factory/cache; do
