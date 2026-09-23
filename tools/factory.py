@@ -1362,7 +1362,16 @@ class FactoryOrchestrator:
                 continue
 
             # Case F: BLOCKED, FAILED, TIMED_OUT, CONFLICTED
-            self.log_event("RECONCILE_CASE_F", {"task_id": tid, "state": state})
+            if state in ("TIMED_OUT", "FAILED"):
+                self.log_event("RECONCILE_CASE_F_RETRY", {"task_id": tid, "previous_state": state})
+                tinfo["canonical_state"] = "PENDING"
+                tinfo["status"] = "PENDING"
+            elif state == "BLOCKED":
+                self.log_event("RECONCILE_CASE_F_RESET_BLOCKED", {"task_id": tid})
+                tinfo["canonical_state"] = "PENDING"
+                tinfo["status"] = "PENDING"
+            else:
+                self.log_event("RECONCILE_CASE_F", {"task_id": tid, "state": state})
 
         self.save_manifest()
         self.log_event("RECONCILIATION_COMPLETED", {"run_id": self.run_id})
@@ -1392,25 +1401,30 @@ class FactoryOrchestrator:
                 for tid, tinfo in self.manifest["tasks"].items():
                     c_state = tinfo.get("canonical_state", "PENDING")
 
-                    if c_state in ("PENDING", "READY"):
+                    if c_state in ("PENDING", "READY", "BLOCKED"):
                         deps = tinfo.get("dependencies", [])
                         deps_states = [self.manifest["tasks"][d].get("canonical_state") for d in deps if d in self.manifest["tasks"]]
 
                         # If any dependency failed or blocked, transition to BLOCKED
                         if any(s in ("FAILED", "TIMED_OUT", "BLOCKED", "CONFLICTED", "CANCELLED") for s in deps_states):
-                            tinfo["canonical_state"] = "BLOCKED"
-                            tinfo["status"] = "BLOCKED"
-                            self.log_event("TASK_BLOCKED", {"task_id": tid, "failed_deps": deps})
+                            if c_state != "BLOCKED":
+                                tinfo["canonical_state"] = "BLOCKED"
+                                tinfo["status"] = "BLOCKED"
+                                self.log_event("TASK_BLOCKED", {"task_id": tid, "failed_deps": deps})
                             continue
 
                         # If all dependencies integrated or completed, task is READY
                         if all(s in ("INTEGRATED", "COMPLETED") for s in deps_states):
-                            if c_state == "PENDING":
+                            if c_state != "READY":
                                 tinfo["canonical_state"] = "READY"
+                                tinfo["status"] = "PENDING"
                                 self.log_event("TASK_READY", {"task_id": tid})
                             ready_tasks.append(tid)
                             all_terminal = False
                         else:
+                            if c_state == "BLOCKED":
+                                tinfo["canonical_state"] = "PENDING"
+                                tinfo["status"] = "PENDING"
                             all_terminal = False
 
                     elif c_state in ("DISPATCHING", "RUNNING", "RESULT_RECEIVED", "PATH_VALIDATING", "VALIDATING", "COMMITTING", "INTEGRATING"):

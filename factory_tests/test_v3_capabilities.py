@@ -583,6 +583,7 @@ class TestV3FailpointAndResume(unittest.TestCase):
 
         finally:
             # Restore original factory.json
+            orig_cfg["worker_registry"]["agy"]["adapter"] = "agy"
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(orig_cfg, f, indent=2)
 

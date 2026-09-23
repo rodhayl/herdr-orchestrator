@@ -60,7 +60,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 240
+      "timeout": 360
     },
     {
       "task_id": "backend_tests",
@@ -102,7 +102,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 240
+      "timeout": 360
     },
     {
       "task_id": "audit",
@@ -117,7 +117,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 240
+      "timeout": 360
     }
   ],
   "post_validation": [
