@@ -168,7 +168,7 @@ def row_to_dict(row: Union[sqlite3.Row, Dict[str, Any]]) -> Dict[str, Any]:
                 tags_list = list(raw_tags)
         if not isinstance(tags_list, list):
             tags_list = []
-    except (IndexError, KeyError, Exception):
+    except (IndexError, KeyError, ValueError, TypeError):
         tags_list = []
 
     clean_tags = [str(t) for t in tags_list]
