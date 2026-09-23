@@ -116,7 +116,9 @@
       "allowed_paths": [
         "examples/minilinks/**"
       ],
-      "expected_files": [],
+      "expected_files": [
+        "examples/minilinks/SPEC.md"
+      ],
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
