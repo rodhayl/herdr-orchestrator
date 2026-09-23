@@ -201,8 +201,13 @@ class TestV4CapabilityRouter(unittest.TestCase):
     """Tests for deterministic capability-based routing and fallback logic."""
 
     def setUp(self):
+        os.environ["FACTORY_TEST_HARNESS"] = "1"
         with open(PROJECT_ROOT / "factory.json", "r", encoding="utf-8") as f:
             self.config = json.load(f)
+
+    def tearDown(self):
+        if "FACTORY_TEST_HARNESS" in os.environ:
+            del os.environ["FACTORY_TEST_HARNESS"]
 
     def test_explicit_worker_assignment_backward_compatibility(self):
         """Verifies that tasks with explicit worker_id bypass capability selection."""
