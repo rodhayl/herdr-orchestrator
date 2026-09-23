@@ -157,7 +157,14 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             q_list = query_params.get("q")
             q = q_list[0] if q_list else None
-            bookmarks = database.get_bookmarks(q=q, db_path=self.server.db_path)
+            fav_list = query_params.get("favorites")
+            fav_param = fav_list[0] if fav_list else None
+            favorites_only = (
+                fav_param is not None and fav_param.strip().lower() == "true"
+            )
+            bookmarks = database.get_bookmarks(
+                q=q, favorites_only=favorites_only, db_path=self.server.db_path
+            )
             self.send_json(200, bookmarks)
             return
 
@@ -234,6 +241,15 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_error(400, "Notes must be a string if provided")
             return
 
+        # Validate is_favorite
+        is_favorite = False
+        if "is_favorite" in body:
+            raw_fav = body["is_favorite"]
+            if not isinstance(raw_fav, bool):
+                self.send_json_error(400, "is_favorite must be a boolean if provided")
+                return
+            is_favorite = raw_fav
+
         clean_title = title.strip()
         clean_url = url.strip()
         clean_notes = notes if notes is not None else ""
@@ -242,6 +258,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             title=clean_title,
             url=clean_url,
             notes=clean_notes,
+            is_favorite=is_favorite,
             db_path=self.server.db_path,
         )
         self.send_json(201, created)
@@ -276,7 +293,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_error(400, "Invalid update payload")
             return
 
-        allowed_fields = {"title", "url", "notes"}
+        allowed_fields = {"title", "url", "notes", "is_favorite"}
         present_fields = [k for k in body.keys() if k in allowed_fields]
         if not present_fields:
             self.send_json_error(400, "Invalid update payload")
@@ -285,6 +302,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
         clean_title: Optional[str] = None
         clean_url: Optional[str] = None
         clean_notes: Optional[str] = None
+        clean_is_favorite: Optional[bool] = None
 
         if "title" in body:
             title = body["title"]
@@ -307,6 +325,13 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                 return
             clean_notes = notes if notes is not None else ""
 
+        if "is_favorite" in body:
+            raw_fav = body["is_favorite"]
+            if not isinstance(raw_fav, bool):
+                self.send_json_error(400, "Invalid update payload")
+                return
+            clean_is_favorite = raw_fav
+
         existing = database.get_bookmark_by_id(bm_id, db_path=self.server.db_path)
         if existing is None:
             self.send_json_error(404, "Bookmark not found")
@@ -317,6 +342,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             title=clean_title,
             url=clean_url,
             notes=clean_notes,
+            is_favorite=clean_is_favorite,
             db_path=self.server.db_path,
         )
         if updated is None:
