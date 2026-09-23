@@ -93,3 +93,42 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - [x] Updated `scripts/doctor.sh`, `scripts/update-package.sh`, and `scripts/verify-real.sh` to v5.0.0.
 - [x] Applied updated `toolchain.lock.json` recording 8 certified profiles, Codex CLI, and detected future harnesses.
 
+---
+
+## [2026-09-23T15:45:00Z] v6.0.0 5-Harness Architecture, Execution Classes, Telemetry & Multi-Model Profiles
+
+### 1. Context & Trigger
+- **Trigger**: Mandatory upgrade from Factory v5.0.0 to v6.0.0.
+- **Operator**: Antigravity Orchestrator (Gemini 3.8 Flash High).
+- **Previous Stack (v5.0.0)**:
+  - Factory Engine: `5.0.0`
+  - Registered Adapters: `AgyAdapter`, `DroidAdapter`, `CodexAdapter`
+  - Execution Profiles: 8 profiles
+  - Routing: Capability-based profile preference without explicit task execution classes
+  - Telemetry: Basic timing without standardized JSON schema or git churn tracking
+
+### 2. Discovered Installed Stack
+- **Herdr CLI**: `0.9.1` (protocol 22, socket snapshot verified)
+- **AGY CLI**: `1.2.9` (Gemini 3.8 Flash medium/high; Claude Sonnet 4.6 high)
+- **Droid CLI**: `0.225.1` (Qwen 3.8 Max xhigh/medium, real execution and test harness verified)
+- **Codex CLI**: `0.155.1` (GPT-5.6 Luna xhigh/high/medium, test harness verified)
+- **Claude Code CLI**: `2.1.263` (Claude Sonnet 5 high/medium, test harness verified)
+- **OpenCode CLI**: `1.18.31` (Gemini 3.8 Flash high / Mimo v2.6 Flash Free, test harness verified)
+- **herdr-board**: Upstream release `v0.17.0` (retained `BLOCKED_EXTERNAL_COMPATIBILITY` due to host Herdr 0.9.1 vs required 0.9.0)
+- **Python**: `3.12.3` (CPython stdlib-only)
+- **Git**: `2.43.0`
+
+### 3. Decisions & Actions Taken
+- [x] Closed unsupported v5 certification claims: honestly distinguished real test-harness verification from live credentials.
+- [x] Resolved Herdr-board compatibility: confirmed Herdr 0.9.1 remains incompatible with herdr-board v0.17.0 (`<0.9.0`), retaining `BLOCKED_EXTERNAL_COMPATIBILITY` without downgrading host Herdr.
+- [x] Implemented `ClaudeAdapter` with isolated Herdr workspaces, CLI flags (`-p`, `--model claude-sonnet-5`, `--effort`, `--permission-mode acceptEdits`, `--output-format json`, `--json-schema`), timeout management, and test behavior injection.
+- [x] Implemented `OpenCodeAdapter` with isolated Herdr workspaces, CLI flags (`run`, `--dir`, `--model`, `--variant`, `--format json`, `--auto`, `--pure`), timeout management, and test behavior injection.
+- [x] Expanded `harness_profiles.json` to 19 certified/declared execution profiles across 5 distinct harnesses (AGY, Droid, Codex, Claude, OpenCode) with multi-effort profiles (medium, high, xhigh, free).
+- [x] Introduced deterministic `execution_class` layer (`routine`, `standard`, `deep`) derived from task type or plan declaration, routed via `ROUTING_PRIORITY_MATRIX`.
+- [x] Standardized execution telemetry adhering to `schemas/execution-metrics.schema.json`, appending to `.agy-factory/evidence/telemetry.jsonl` with lines added/deleted/files changed git churn.
+- [x] Added descriptive telemetry CLI `python3 tools/factory.py metrics summarize [--json] [--run <id>] [--profile <id>]` (observation-only, zero learned routing).
+- [x] Upgraded MiniLinks application with bookmark `archived` feature (database migration, CRUD, REST API endpoints `POST /archive` & `/restore`, `?archived=true/false/all` query filtering, frontend UI toggle/buttons, unit tests, and smoke test Step 8b).
+- [x] Successfully executed full 5-harness rehearsal DAG (`plans/minilinks_v6_archive.json`) across AGY, Droid, Codex, Claude, and OpenCode with complete task integration and status COMPLETED.
+- [x] Updated `scripts/update-package.sh`, `scripts/doctor.sh`, `toolchain.lock.json`, and `UPDATE_PACKAGE.md` to Factory v6.0.0.
+
+

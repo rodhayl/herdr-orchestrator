@@ -13,7 +13,7 @@ lock_file = project_root / "toolchain.lock.json"
 profiles_file = project_root / "harness_profiles.json"
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v5.0.0) — Environment Diagnostics (doctor)")
+print("AGY-Herdr Software Factory (v6.0.0) — Environment Diagnostics (doctor)")
 print("=" * 80)
 
 structural_ok = True
@@ -105,20 +105,22 @@ else:
     print(f"  [FAIL] Codex CLI not found")
     structural_ok = False
 
-# Claude Code CLI (Read-only future inspection)
+# Claude Code CLI
 claude_ver, _, claude_code = run_cmd(["claude", "--version"])
 if claude_code == 0:
-    print(f"  [INFO] Claude Code CLI: Version {claude_ver} (detected on host, planned for v6)")
+    print(f"  [OK] Claude Code CLI: Version {claude_ver}")
 else:
-    print(f"  [INFO] Claude Code CLI: Not installed")
+    print(f"  [FAIL] Claude Code CLI not found")
+    structural_ok = False
 
-# OpenCode CLI (Read-only future inspection)
+# OpenCode CLI
 opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
 opencode_ver, _, opencode_code = run_cmd([opencode_cmd, "--version"])
 if opencode_code == 0:
-    print(f"  [INFO] OpenCode CLI: Version {opencode_ver} (detected on host, planned for v6)")
+    print(f"  [OK] OpenCode CLI: Version {opencode_ver}")
 else:
-    print(f"  [INFO] OpenCode CLI: Not installed")
+    print(f"  [FAIL] OpenCode CLI not found")
+    structural_ok = False
 
 # Rust / Cargo
 rust_ver, _, rcode = run_cmd(["rustc", "--version"])
@@ -208,6 +210,26 @@ else:
     print("         Real Codex worker execution requires OPENAI_API_KEY.")
     print("         Deterministic tests and mock CodexAdapter harness remain fully functional.")
     auth_warnings.append("OPENAI_API_KEY not set (Codex AUTH_BLOCKED)")
+
+# Claude Code Authentication Check
+claude_token = os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+if claude_token:
+    print("  [OK] Claude Code Provider Authentication: Token is present")
+else:
+    print("  [WARN] Claude Code Provider Authentication: CLAUDE_CODE_TOKEN / ANTHROPIC_API_KEY not set.")
+    print("         Real Claude worker execution requires CLAUDE_CODE_TOKEN.")
+    print("         Deterministic tests and mock ClaudeAdapter harness remain fully functional.")
+    auth_warnings.append("CLAUDE_CODE_TOKEN not set (Claude AUTH_BLOCKED)")
+
+# OpenCode Authentication Check
+opencode_token = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY")
+if opencode_token:
+    print("  [OK] OpenCode Provider Authentication: Token is present")
+else:
+    print("  [WARN] OpenCode Provider Authentication: OPENROUTER_API_KEY / OPENCODE_API_KEY not set.")
+    print("         Real OpenCode worker execution requires OPENROUTER_API_KEY.")
+    print("         Deterministic tests and mock OpenCodeAdapter harness remain fully functional.")
+    auth_warnings.append("OPENROUTER_API_KEY not set (OpenCode AUTH_BLOCKED)")
 
 # 5. Final Verdict
 print("\n" + "=" * 80)

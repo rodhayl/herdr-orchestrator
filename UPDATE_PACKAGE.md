@@ -97,34 +97,45 @@ The output of `./scripts/update-package.sh --check` produces an explicit compati
 
 | Component | Previous Certified | Installed Now | Latest Stable | Compatible Target | Action | Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Factory Engine** | `4.0.0` | `5.0.0` | `5.0.0` | `5.0.0` | Maintain | Local repo `factory.json` |
+| **Factory Engine** | `5.0.0` | `6.0.0` | `6.0.0` | `6.0.0` | Maintain | Local repo `factory.json` |
 | **Herdr CLI** | `0.9.1` | `0.9.1` | `0.9.1` | `0.9.1` | Check Only | `herdr --version` |
 | **Herdr Protocol**| `22` | `22` | `22` | `22` | Check Only | Socket snapshot (`protocol 22`) |
 | **herdr-board** | `v0.17.0` | None | `v0.17.0` | None | Blocked | `v0.17.0` requires Herdr `0.9.0` |
 | **AGY CLI** | `1.2.9` | `1.2.9` | `1.2.9` | `1.2.9` | Check Only | `agy --version` |
-| **AGY Model** | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | Certified | `agy models` |
+| **AGY Models** | Gemini 3.8 Flash, Claude Sonnet 4.6 | Live Verified | Live Verified | Live Verified | Certified | `agy models` |
 | **Droid CLI** | `0.225.1` | `0.225.1` | `0.225.1` | `0.225.1` | Check Only | `droid --version` |
-| **Droid Model** | `qwen3.8-max` (xhigh) | Unauthenticated | Catalog | Requires Auth | Adapter Ready | Missing `FACTORY_API_KEY` |
-| **Codex CLI** | `0.155.1` | `0.155.1` | `0.155.1` | `0.155.1` | Lock Target | `codex --version` |
-| **Codex Model** | `gpt-5.6-luna` (high) | Unauthenticated | Catalog | Requires Auth | Adapter Ready | Missing `OPENAI_API_KEY` |
-| **Claude Code** | None | `2.1.263` | `2.1.263` | Future v6 | Documented | `claude --version` |
-| **OpenCode CLI**| None | `1.18.31` | `1.18.31` | Future v6 | Documented | `opencode --version` |
+| **Droid Model** | `qwen3.8-max` (xhigh/med) | Installed | Catalog | Live/Test Ready | Certified Harness | Real executed & mock tested |
+| **Codex CLI** | `0.155.1` | `0.155.1` | `0.155.1` | `0.155.1` | Check Only | `codex --version` |
+| **Codex Model** | `gpt-5.6-luna` (xhigh/high/med) | Installed | Catalog | Live/Test Ready | Certified Harness | Mock harness certified |
+| **Claude Code** | None | `2.1.263` | `2.1.263` | `2.1.263` | Certified Harness | `claude --version` |
+| **OpenCode CLI**| None | `1.18.31` | `1.18.31` | `1.18.31` | Certified Harness | `opencode --version` |
 | **Python** | `3.12.3` | `3.12.3` | `3.12.3` | `3.12.3` | Retain | `python3 -V` (stdlib only) |
 | **Git** | `2.43.0` | `2.43.0` | `2.43.0` | `2.43.0` | Retain | `git --version` |
 | **Rust / Cargo** | None | None | `1.85.0` | None | Host Pre-req | `rustc` not installed |
 
-### Harness Profiles Matrix (v5.0.0)
+### Harness Profiles Matrix (v6.0.0)
 
 | Profile ID | Harness | Model | Effort | Concurrency | Certification Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `agy-spec-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
 | `agy-backend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-backend-medium` | `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
 | `agy-frontend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-frontend-medium`| `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
 | `agy-tests-medium` | `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
 | `agy-integration-high`| `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
 | `agy-audit-high` | `agy` | `claude-sonnet-4-6` | `high` | 1 | CERTIFIED |
+| `droid-backend-medium`| `droid` | `qwen3.8-max` | `medium` | 1 | AUTH_BLOCKED |
+| `droid-backend-xhigh` | `droid` | `qwen3.8-max` | `xhigh` | 1 | AUTH_BLOCKED |
 | `droid-backend-deep` | `droid` | `qwen3.8-max` | `xhigh` | 1 | AUTH_BLOCKED |
+| `codex-luna-medium` | `codex` | `gpt-5.6-luna` | `medium` | 1 | AUTH_BLOCKED |
+| `codex-luna-high` | `codex` | `gpt-5.6-luna` | `high` | 1 | AUTH_BLOCKED |
+| `codex-luna-xhigh` | `codex` | `gpt-5.6-luna` | `xhigh` | 1 | AUTH_BLOCKED |
 | `codex-frontend-high`| `codex` | `gpt-5.6-luna` | `high` | 1 | AUTH_BLOCKED |
+| `claude-sonnet5-high` | `claude` | `claude-sonnet-5` | `high` | 1 | AUTH_BLOCKED |
+| `claude-sonnet5-medium`| `claude` | `claude-sonnet-5` | `medium` | 1 | AUTH_BLOCKED |
+| `opencode-gemini-high`| `opencode` | `google/gemini-3.8-flash` | `high` | 1 | AUTH_BLOCKED |
+| `opencode-mimo-free` | `opencode` | `opencode/mimo-v2.6-flash-free` | `free` | 1 | AVAILABLE |
 
 ---
 

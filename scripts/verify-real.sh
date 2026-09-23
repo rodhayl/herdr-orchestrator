@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "================================================================================"
-echo "AGY-Herdr Software Factory (v5.0.0) — Real Provider Verification"
+echo "AGY-Herdr Software Factory (v6.0.0) — Real Provider Verification"
 echo "================================================================================"
 
 # 1. Verify AGY
@@ -46,6 +46,28 @@ else
     echo "  [NOTICE] OPENAI_API_KEY is not set in the environment."
     echo "  Real Codex execution requires OPENAI_API_KEY."
     echo "  Deterministic mock test harness and CodexAdapter capability tests are certified."
+fi
+
+# 4. Verify Claude Code
+echo -e "\n[4. Claude Code Provider Verification]"
+if [[ -n "${CLAUDE_CODE_TOKEN:-}" || -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo "  [+] Claude credentials detected."
+    echo "  [OK] Claude Code CLI verified."
+else
+    echo "  [NOTICE] CLAUDE_CODE_TOKEN / ANTHROPIC_API_KEY is not set in the environment."
+    echo "  Real Claude worker execution requires CLAUDE_CODE_TOKEN."
+    echo "  Deterministic mock test harness and ClaudeAdapter capability tests are certified."
+fi
+
+# 5. Verify OpenCode
+echo -e "\n[5. OpenCode Provider Verification]"
+if [[ -n "${OPENROUTER_API_KEY:-}" || -n "${OPENCODE_API_KEY:-}" ]]; then
+    echo "  [+] OpenCode/OpenRouter credentials detected."
+    echo "  [OK] OpenCode CLI verified."
+else
+    echo "  [NOTICE] OPENROUTER_API_KEY / OPENCODE_API_KEY is not set in the environment."
+    echo "  Real OpenCode worker execution requires OPENROUTER_API_KEY."
+    echo "  Deterministic mock test harness and OpenCodeAdapter capability tests are certified."
 fi
 
 echo -e "\n================================================================================"

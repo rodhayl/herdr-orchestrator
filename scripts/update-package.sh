@@ -103,9 +103,9 @@ if herdr_ver != board_supported_herdr:
 matrix = [
     {
         "component": "Factory Engine",
-        "prev_certified": prev_lock.get("factory", {}).get("version", "4.0.0"),
-        "installed": "5.0.0",
-        "latest_stable": "5.0.0",
+        "prev_certified": prev_lock.get("factory", {}).get("version", "5.0.0"),
+        "installed": "6.0.0",
+        "latest_stable": "6.0.0",
         "action": "Maintain",
         "evidence": "Local package declaration"
     },
@@ -154,23 +154,23 @@ matrix = [
         "prev_certified": prev_lock.get("codex", {}).get("cli_version", "0.155.1"),
         "installed": codex_ver,
         "latest_stable": codex_ver,
-        "action": "Lock Target",
+        "action": "Check Only",
         "evidence": f"codex --version ({codex_ver})"
     },
     {
         "component": "Claude Code",
-        "prev_certified": "None",
+        "prev_certified": prev_lock.get("claude", {}).get("cli_version", "2.1.263"),
         "installed": claude_ver,
         "latest_stable": claude_ver,
-        "action": "Future v6",
+        "action": "Lock Target",
         "evidence": f"claude --version ({claude_ver})"
     },
     {
         "component": "OpenCode CLI",
-        "prev_certified": "None",
+        "prev_certified": prev_lock.get("opencode", {}).get("cli_version", "1.18.31"),
         "installed": opencode_ver,
         "latest_stable": opencode_ver,
-        "action": "Future v6",
+        "action": "Lock Target",
         "evidence": f"opencode --version ({opencode_ver})"
     },
     {
@@ -200,7 +200,7 @@ matrix = [
 ]
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v5.0.0) — Toolchain & Package Update Gate")
+print("AGY-Herdr Software Factory (v6.0.0) — Toolchain & Package Update Gate")
 print("=" * 80)
 header_fmt = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
 row_fmt    = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
@@ -251,7 +251,7 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
 if mode == "--apply":
     print("\n[APPLY MODE]")
     new_lock = {
-        "factory": {"version": "5.0.0", "schema_version": "5.0.0"},
+        "factory": {"version": "6.0.0", "schema_version": "6.0.0"},
         "certified_environment": {
             "os": os.uname().sysname,
             "architecture": os.uname().machine,
@@ -292,17 +292,18 @@ if mode == "--apply":
             "certified_sandbox": "workspace-write",
             "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
         },
-        "future_harnesses": {
-            "claude": {
-                "installed": claude_ver != "not_installed",
-                "cli_version": claude_ver,
-                "status": "planned_v6"
-            },
-            "opencode": {
-                "installed": opencode_ver != "not_installed",
-                "cli_version": opencode_ver,
-                "status": "planned_v6"
-            }
+        "claude": {
+            "cli_version": claude_ver,
+            "certified_model": "claude-sonnet-5",
+            "certified_effort": "high",
+            "permission_mode": "acceptEdits",
+            "catalog_status": f"Installed claude CLI ({claude_ver}) verified. ClaudeAdapter is fully implemented and deterministically tested via test harness. Requires CLAUDE_CODE_TOKEN / /login for live execution."
+        },
+        "opencode": {
+            "cli_version": opencode_ver,
+            "certified_model": "google/gemini-3.8-flash",
+            "certified_effort": "high",
+            "catalog_status": f"Installed opencode CLI ({opencode_ver}) verified. OpenCodeAdapter is fully implemented and deterministically tested via test harness. Requires OPENROUTER_API_KEY for live execution."
         },
         "certified_profiles": list(profiles_data.keys()),
         "python": {
@@ -325,7 +326,7 @@ if mode == "--apply":
     }
     with open(lock_file, "w", encoding="utf-8") as f:
         json.dump(new_lock, f, indent=2)
-    print("  -> Updated toolchain.lock.json to v5.0.0 successfully.")
+    print("  -> Updated toolchain.lock.json to v6.0.0 successfully.")
 
 print("=" * 80)
 EOF

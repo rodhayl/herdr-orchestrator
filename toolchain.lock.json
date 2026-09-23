@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "5.0.0",
-    "schema_version": "5.0.0"
+    "version": "6.0.0",
+    "schema_version": "6.0.0"
   },
   "certified_environment": {
     "os": "Linux",
@@ -51,27 +51,39 @@
     "certified_sandbox": "workspace-write",
     "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
   },
-  "future_harnesses": {
-    "claude": {
-      "installed": true,
-      "cli_version": "2.1.263",
-      "status": "planned_v6"
-    },
-    "opencode": {
-      "installed": true,
-      "cli_version": "1.18.31",
-      "status": "planned_v6"
-    }
+  "claude": {
+    "cli_version": "2.1.263",
+    "certified_model": "claude-sonnet-5",
+    "certified_effort": "high",
+    "permission_mode": "acceptEdits",
+    "catalog_status": "Installed claude CLI (2.1.263) verified. ClaudeAdapter is fully implemented and deterministically tested via test harness. Requires CLAUDE_CODE_TOKEN / /login for live execution."
+  },
+  "opencode": {
+    "cli_version": "1.18.31",
+    "certified_model": "google/gemini-3.8-flash",
+    "certified_effort": "high",
+    "catalog_status": "Installed opencode CLI (1.18.31) verified. OpenCodeAdapter is fully implemented and deterministically tested via test harness. Requires OPENROUTER_API_KEY for live execution."
   },
   "certified_profiles": [
     "agy-spec-high",
     "agy-backend-high",
+    "agy-backend-medium",
     "agy-frontend-high",
+    "agy-frontend-medium",
     "agy-tests-medium",
     "agy-integration-high",
     "agy-audit-high",
+    "droid-backend-medium",
+    "droid-backend-xhigh",
     "droid-backend-deep",
-    "codex-frontend-high"
+    "codex-luna-medium",
+    "codex-luna-high",
+    "codex-luna-xhigh",
+    "codex-frontend-high",
+    "claude-sonnet5-high",
+    "claude-sonnet5-medium",
+    "opencode-gemini-high",
+    "opencode-mimo-free"
   ],
   "python": {
     "version": "3.12.3",
@@ -89,5 +101,5 @@
     "version": null,
     "installed": false
   },
-  "certified_at": "2026-09-23T08:09:25.111379+00:00"
+  "certified_at": "2026-09-23T15:46:42.086766+00:00"
 }
