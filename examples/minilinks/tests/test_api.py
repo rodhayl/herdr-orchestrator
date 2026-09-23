@@ -179,6 +179,10 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertIn("is_favorite", payload)
         self.assertIs(payload["is_favorite"], False)
         self.assertIsInstance(payload["is_favorite"], bool)
+        # Verify archived defaults to native False
+        self.assertIn("archived", payload)
+        self.assertIs(payload["archived"], False)
+        self.assertIsInstance(payload["archived"], bool)
         self.assertTrue(payload.get("created_at"))
         self.assertTrue(payload.get("updated_at"))
         self.assertEqual(payload["created_at"], payload["updated_at"])
@@ -189,7 +193,7 @@ class TestMiniLinksAPI(unittest.TestCase):
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, title, url, notes, is_favorite FROM bookmarks WHERE id = ?",
+                "SELECT id, title, url, notes, is_favorite, archived FROM bookmarks WHERE id = ?",
                 (payload["id"],),
             )
             row = cursor.fetchone()
@@ -199,6 +203,7 @@ class TestMiniLinksAPI(unittest.TestCase):
             self.assertEqual(row[2], "https://docs.python.org/3/")
             self.assertEqual(row[3], "Official standard library reference")
             self.assertEqual(row[4], 0)
+            self.assertEqual(row[5], 0)
         finally:
             conn.close()
 
@@ -838,6 +843,8 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(bm["url"], "https://test.com")
         self.assertEqual(bm["notes"], "Detailed Notes String")
         self.assertIs(bm["is_favorite"], False)
+        self.assertIs(bm["archived"], False)
+        self.assertEqual(bm["tags"], [])
 
         # Non-existent ID
         status, err, _, _ = self.make_request("GET", "/api/bookmarks/99999")

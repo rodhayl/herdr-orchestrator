@@ -192,7 +192,7 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT id, title, url, notes, is_favorite, created_at, updated_at
+                    SELECT id, title, url, notes, is_favorite, archived, created_at, updated_at
                     FROM bookmarks
                     ORDER BY id ASC
                     """
@@ -200,40 +200,48 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 rows = cursor.fetchall()
                 self.assertEqual(len(rows), 4)
 
-                # Validate row 1 (bm1): updated notes and is_favorite=1 (INTEGER)
+                # Validate row 1 (bm1): updated notes, is_favorite=1, archived=0 (INTEGER)
                 self.assertEqual(rows[0]["id"], bm1_id)
                 self.assertEqual(rows[0]["title"], "Python Standard Library")
                 self.assertEqual(rows[0]["url"], "https://docs.python.org/3/library/")
                 self.assertEqual(rows[0]["notes"], "Updated standard library docs")
                 self.assertEqual(rows[0]["is_favorite"], 1)
                 self.assertIsInstance(rows[0]["is_favorite"], int)
+                self.assertEqual(rows[0]["archived"], 0)
+                self.assertIsInstance(rows[0]["archived"], int)
                 self.assertEqual(rows[0]["created_at"], bm1_created_at)
                 self.assertEqual(rows[0]["updated_at"], bm1_new_updated_at)
 
-                # Validate row 2 (bm2): is_favorite=0 (INTEGER)
+                # Validate row 2 (bm2): is_favorite=0, archived=0 (INTEGER)
                 self.assertEqual(rows[1]["id"], bm2_id)
                 self.assertEqual(rows[1]["title"], "SQLite Official Site")
                 self.assertEqual(rows[1]["url"], "https://www.sqlite.org/")
                 self.assertEqual(rows[1]["notes"], "Self-contained SQL engine")
                 self.assertEqual(rows[1]["is_favorite"], 0)
                 self.assertIsInstance(rows[1]["is_favorite"], int)
+                self.assertEqual(rows[1]["archived"], 0)
+                self.assertIsInstance(rows[1]["archived"], int)
                 self.assertEqual(rows[1]["created_at"], bm2_created_at)
                 self.assertEqual(rows[1]["updated_at"], bm2_updated_at)
 
-                # Validate row 3 (bm3): is_favorite=1 (INTEGER)
+                # Validate row 3 (bm3): is_favorite=1, archived=0 (INTEGER)
                 self.assertEqual(rows[2]["id"], bm3_id)
                 self.assertEqual(rows[2]["title"], "MDN Web Docs")
                 self.assertEqual(rows[2]["url"], "https://developer.mozilla.org/")
                 self.assertEqual(rows[2]["notes"], "Web standards and APIs")
                 self.assertEqual(rows[2]["is_favorite"], 1)
                 self.assertIsInstance(rows[2]["is_favorite"], int)
+                self.assertEqual(rows[2]["archived"], 0)
+                self.assertIsInstance(rows[2]["archived"], int)
                 self.assertEqual(rows[2]["created_at"], bm3_created_at)
                 self.assertEqual(rows[2]["updated_at"], bm3_updated_at)
 
-                # Validate row 4 (bm4): toggled to is_favorite=0 (INTEGER)
+                # Validate row 4 (bm4): toggled to is_favorite=0, archived=0 (INTEGER)
                 self.assertEqual(rows[3]["id"], bm4_id)
                 self.assertEqual(rows[3]["is_favorite"], 0)
                 self.assertIsInstance(rows[3]["is_favorite"], int)
+                self.assertEqual(rows[3]["archived"], 0)
+                self.assertIsInstance(rows[3]["archived"], int)
             finally:
                 conn.close()
 
@@ -254,6 +262,8 @@ class TestMiniLinksPersistence(unittest.TestCase):
             self.assertEqual(list_res[0]["notes"], "Updated standard library docs")
             self.assertIs(list_res[0]["is_favorite"], True)
             self.assertIsInstance(list_res[0]["is_favorite"], bool)
+            self.assertIs(list_res[0]["archived"], False)
+            self.assertIsInstance(list_res[0]["archived"], bool)
             self.assertEqual(list_res[0]["created_at"], bm1_created_at)
             self.assertEqual(list_res[0]["updated_at"], bm1_new_updated_at)
 
@@ -264,6 +274,8 @@ class TestMiniLinksPersistence(unittest.TestCase):
             self.assertEqual(list_res[1]["notes"], "Self-contained SQL engine")
             self.assertIs(list_res[1]["is_favorite"], False)
             self.assertIsInstance(list_res[1]["is_favorite"], bool)
+            self.assertIs(list_res[1]["archived"], False)
+            self.assertIsInstance(list_res[1]["archived"], bool)
             self.assertEqual(list_res[1]["created_at"], bm2_created_at)
             self.assertEqual(list_res[1]["updated_at"], bm2_updated_at)
 
@@ -271,11 +283,15 @@ class TestMiniLinksPersistence(unittest.TestCase):
             self.assertEqual(list_res[2]["id"], bm3_id)
             self.assertIs(list_res[2]["is_favorite"], True)
             self.assertIsInstance(list_res[2]["is_favorite"], bool)
+            self.assertIs(list_res[2]["archived"], False)
+            self.assertIsInstance(list_res[2]["archived"], bool)
 
             # Check bookmark 4 on Server 2
             self.assertEqual(list_res[3]["id"], bm4_id)
             self.assertIs(list_res[3]["is_favorite"], False)
             self.assertIsInstance(list_res[3]["is_favorite"], bool)
+            self.assertIs(list_res[3]["archived"], False)
+            self.assertIsInstance(list_res[3]["archived"], bool)
 
             # Verify favorite filtering on Server 2
             status_fav, fav_res = send_http_request(
@@ -1298,6 +1314,179 @@ class TestMiniLinksPersistence(unittest.TestCase):
             if server:
                 server.shutdown()
                 server.server_close()
+            temp_dir.cleanup()
+
+    def test_archived_persistence_across_server_restart(self) -> None:
+        """
+        Validates SQLite persistence of bookmark archived status across server lifecycle restarts:
+        1. Starts Server 1 on an ephemeral port with a temporary db_path.
+        2. Inserts bookmarks with varied archive status (default False, explicit True, explicit False).
+        3. Archives a bookmark via POST /api/bookmarks/<id>/archive.
+        4. Restores a bookmark via POST /api/bookmarks/<id>/restore.
+        5. Archives a bookmark via PATCH /api/bookmarks/<id>.
+        6. Shuts down Server 1 cleanly.
+        7. Verifies database file integrity directly using sqlite3 module while server is stopped.
+        8. Starts Server 2 pointing to the same db_path on a new ephemeral port.
+        9. Verifies default GET /api/bookmarks, ?archived=false, ?archived=true, and ?archived=all.
+        10. Shuts down Server 2 and cleans up.
+        """
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "archived_persistence.db")
+        server1: Optional[MiniLinksServer] = None
+        server2: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Start Server 1 on an ephemeral port
+            server1 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base1 = f"http://127.0.0.1:{server1.server_port}"
+
+            # BM1: Created active by default
+            status1, bm1 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Active BM1", "url": "https://active1.example.com", "notes": "Active"},
+            )
+            self.assertEqual(status1, 201)
+            bm1_id = bm1["id"]
+            self.assertFalse(bm1["archived"])
+
+            # BM2: Created directly as archived
+            status2, bm2 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Archived BM2", "url": "https://archived2.example.com", "archived": True},
+            )
+            self.assertEqual(status2, 201)
+            bm2_id = bm2["id"]
+            self.assertTrue(bm2["archived"])
+
+            # BM3: Created active, then archived via /archive endpoint
+            status3, bm3 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM3 To Archive", "url": "https://bm3.example.com"},
+            )
+            self.assertEqual(status3, 201)
+            bm3_id = bm3["id"]
+            status3_arch, bm3_arch = send_http_request(base1, "POST", f"/api/bookmarks/{bm3_id}/archive")
+            self.assertEqual(status3_arch, 200)
+            self.assertTrue(bm3_arch["archived"])
+
+            # BM4: Created archived, then restored via /restore endpoint
+            status4, bm4 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM4 To Restore", "url": "https://bm4.example.com", "archived": True},
+            )
+            self.assertEqual(status4, 201)
+            bm4_id = bm4["id"]
+            status4_rest, bm4_rest = send_http_request(base1, "POST", f"/api/bookmarks/{bm4_id}/restore")
+            self.assertEqual(status4_rest, 200)
+            self.assertFalse(bm4_rest["archived"])
+
+            # BM5: Created active, then archived via PATCH
+            status5, bm5 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM5 Patch Archive", "url": "https://bm5.example.com"},
+            )
+            self.assertEqual(status5, 201)
+            bm5_id = bm5["id"]
+            status5_patch, bm5_patch = send_http_request(
+                base1, "PATCH", f"/api/bookmarks/{bm5_id}", {"archived": True}
+            )
+            self.assertEqual(status5_patch, 200)
+            self.assertTrue(bm5_patch["archived"])
+
+            # Clean shutdown Server 1
+            server1.shutdown()
+            server1.server_close()
+            server1 = None
+
+            # Direct SQLite verification
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, archived FROM bookmarks ORDER BY id ASC")
+                rows = cursor.fetchall()
+                self.assertEqual(len(rows), 5)
+                arch_map = {row["id"]: row["archived"] for row in rows}
+                self.assertEqual(arch_map[bm1_id], 0)
+                self.assertEqual(arch_map[bm2_id], 1)
+                self.assertEqual(arch_map[bm3_id], 1)
+                self.assertEqual(arch_map[bm4_id], 0)
+                self.assertEqual(arch_map[bm5_id], 1)
+            finally:
+                conn.close()
+
+            # Start Server 2 pointing to same database
+            server2 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base2 = f"http://127.0.0.1:{server2.server_port}"
+
+            # Default GET /api/bookmarks: active only (BM1, BM4)
+            status_def, active_bms = send_http_request(base2, "GET", "/api/bookmarks")
+            self.assertEqual(status_def, 200)
+            self.assertEqual(len(active_bms), 2)
+            self.assertEqual([b["id"] for b in active_bms], [bm1_id, bm4_id])
+            for b in active_bms:
+                self.assertIs(b["archived"], False)
+                self.assertIsInstance(b["archived"], bool)
+
+            # Explicit ?archived=false: active only (BM1, BM4)
+            status_false, false_bms = send_http_request(base2, "GET", "/api/bookmarks?archived=false")
+            self.assertEqual(status_false, 200)
+            self.assertEqual([b["id"] for b in false_bms], [bm1_id, bm4_id])
+
+            # Explicit ?archived=true: archived only (BM2, BM3, BM5)
+            status_arch, arch_bms = send_http_request(base2, "GET", "/api/bookmarks?archived=true")
+            self.assertEqual(status_arch, 200)
+            self.assertEqual(len(arch_bms), 3)
+            self.assertEqual([b["id"] for b in arch_bms], [bm2_id, bm3_id, bm5_id])
+            for b in arch_bms:
+                self.assertIs(b["archived"], True)
+                self.assertIsInstance(b["archived"], bool)
+
+            # Explicit ?archived=all: all 5 bookmarks
+            status_all, all_bms = send_http_request(base2, "GET", "/api/bookmarks?archived=all")
+            self.assertEqual(status_all, 200)
+            self.assertEqual(len(all_bms), 5)
+
+            # Verify single retrieval by ID on Server 2
+            for expected_id, expected_arch in [
+                (bm1_id, False),
+                (bm2_id, True),
+                (bm3_id, True),
+                (bm4_id, False),
+                (bm5_id, True),
+            ]:
+                status_single, single_bm = send_http_request(base2, "GET", f"/api/bookmarks/{expected_id}")
+                self.assertEqual(status_single, 200)
+                self.assertIs(single_bm["archived"], expected_arch)
+                self.assertIsInstance(single_bm["archived"], bool)
+
+            server2.shutdown()
+            server2.server_close()
+            server2 = None
+
+        finally:
+            if server1:
+                try:
+                    server1.shutdown()
+                    server1.server_close()
+                except Exception:
+                    pass
+            if server2:
+                try:
+                    server2.shutdown()
+                    server2.server_close()
+                except Exception:
+                    pass
             temp_dir.cleanup()
 
 

@@ -263,7 +263,7 @@
       }
 
       bookmarksState = Array.isArray(data) ? data : [];
-      renderBookmarks(bookmarksState, query, favoritesOnly);
+      renderBookmarks(bookmarksState, query, favoritesOnly, archivedOnly);
     } catch (err) {
       console.error('Error fetching bookmarks:', err);
       showNotification(err.message || 'Unable to load bookmarks', 'error');
@@ -497,10 +497,10 @@
 
       // Update in-memory state and count
       bookmarksState = bookmarksState.filter(bm => bm.id !== id);
-      updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive);
+      updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
 
       if (bookmarksState.length === 0) {
-        renderEmptyState(currentSearchQuery, isFavoritesFilterActive);
+        renderEmptyState(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
       }
     } catch (err) {
       console.error('Error deleting bookmark:', err);
@@ -513,12 +513,12 @@
   /**
    * Render bookmarks into container
    */
-  function renderBookmarks(bookmarks, query = '', favoritesOnly = false) {
+  function renderBookmarks(bookmarks, query = '', favoritesOnly = false, archivedOnly = false) {
     bookmarksList.innerHTML = '';
-    updateBookmarksCount(bookmarks.length, query, favoritesOnly);
+    updateBookmarksCount(bookmarks.length, query, favoritesOnly, archivedOnly);
 
     if (bookmarks.length === 0) {
-      renderEmptyState(query, favoritesOnly);
+      renderEmptyState(query, favoritesOnly, archivedOnly);
       return;
     }
 
@@ -533,9 +533,10 @@
    */
   function createBookmarkCard(bookmark) {
     const isFav = Boolean(bookmark.is_favorite);
+    const isArch = Boolean(bookmark.archived);
 
     const article = document.createElement('article');
-    article.className = `bookmark-card${isFav ? ' is-favorite' : ''}`;
+    article.className = `bookmark-card${isFav ? ' is-favorite' : ''}${isArch ? ' is-archived' : ''}`;
     article.setAttribute('data-id', bookmark.id);
 
     // Card Header
@@ -613,7 +614,7 @@
           searchInput.value = tag;
           searchClearBtn.classList.remove('hidden');
           currentSearchQuery = tag;
-          fetchBookmarks(tag, isFavoritesFilterActive);
+          fetchBookmarks(tag, isFavoritesFilterActive, isArchivedFilterActive);
         });
         tagsBlock.appendChild(chip);
       });
@@ -800,10 +801,10 @@
           cardElement.remove();
         }
         bookmarksState = bookmarksState.filter(b => b.id !== id);
-        updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive);
+        updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
 
         if (bookmarksState.length === 0) {
-          renderEmptyState(currentSearchQuery, isFavoritesFilterActive);
+          renderEmptyState(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
         }
       }
     } catch (err) {
@@ -817,12 +818,38 @@
   /**
    * Render empty state message
    */
-  function renderEmptyState(query = '', favoritesOnly = false) {
+  function renderEmptyState(query = '', favoritesOnly = false, archivedOnly = false) {
     bookmarksList.innerHTML = '';
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
 
-    if (query && favoritesOnly) {
+    if (archivedOnly) {
+      if (query && favoritesOnly) {
+        emptyState.innerHTML = `
+          <div class="empty-state-icon" style="font-size: 2.5rem; line-height: 1;" aria-hidden="true">📦</div>
+          <h3 class="empty-state-title">No archived favorite bookmarks found</h3>
+          <p class="empty-state-text">No archived favorite bookmarks matched your search for "<strong>${escapeHtml(query)}</strong>".</p>
+        `;
+      } else if (query) {
+        emptyState.innerHTML = `
+          <div class="empty-state-icon" style="font-size: 2.5rem; line-height: 1;" aria-hidden="true">📦</div>
+          <h3 class="empty-state-title">No archived bookmarks found</h3>
+          <p class="empty-state-text">No archived bookmarks matched your search for "<strong>${escapeHtml(query)}</strong>". Try checking for spelling errors or searching for a different keyword.</p>
+        `;
+      } else if (favoritesOnly) {
+        emptyState.innerHTML = `
+          <div class="empty-state-icon" style="font-size: 2.5rem; line-height: 1;" aria-hidden="true">📦</div>
+          <h3 class="empty-state-title">No archived favorite bookmarks yet</h3>
+          <p class="empty-state-text">You have no archived bookmarks marked as favorites.</p>
+        `;
+      } else {
+        emptyState.innerHTML = `
+          <div class="empty-state-icon" style="font-size: 2.5rem; line-height: 1;" aria-hidden="true">📦</div>
+          <h3 class="empty-state-title">No archived bookmarks</h3>
+          <p class="empty-state-text">Bookmarks you archive will appear here. Archive bookmarks you don't need right now to keep your collection clean.</p>
+        `;
+      }
+    } else if (query && favoritesOnly) {
       emptyState.innerHTML = `
         <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
@@ -876,15 +903,27 @@
   /**
    * Update bookmarks count indicator
    */
-  function updateBookmarksCount(count, query = '', favoritesOnly = false) {
-    if (query && favoritesOnly) {
-      bookmarksCount.textContent = `${count} favorite ${count === 1 ? 'match' : 'matches'}`;
-    } else if (query) {
-      bookmarksCount.textContent = `${count} ${count === 1 ? 'match' : 'matches'}`;
-    } else if (favoritesOnly) {
-      bookmarksCount.textContent = `${count} ${count === 1 ? 'favorite' : 'favorites'}`;
+  function updateBookmarksCount(count, query = '', favoritesOnly = false, archivedOnly = false) {
+    if (archivedOnly) {
+      if (query && favoritesOnly) {
+        bookmarksCount.textContent = `${count} archived favorite ${count === 1 ? 'match' : 'matches'}`;
+      } else if (query) {
+        bookmarksCount.textContent = `${count} archived ${count === 1 ? 'match' : 'matches'}`;
+      } else if (favoritesOnly) {
+        bookmarksCount.textContent = `${count} archived ${count === 1 ? 'favorite' : 'favorites'}`;
+      } else {
+        bookmarksCount.textContent = `${count} ${count === 1 ? 'archived bookmark' : 'archived bookmarks'}`;
+      }
     } else {
-      bookmarksCount.textContent = `${count} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
+      if (query && favoritesOnly) {
+        bookmarksCount.textContent = `${count} favorite ${count === 1 ? 'match' : 'matches'}`;
+      } else if (query) {
+        bookmarksCount.textContent = `${count} ${count === 1 ? 'match' : 'matches'}`;
+      } else if (favoritesOnly) {
+        bookmarksCount.textContent = `${count} ${count === 1 ? 'favorite' : 'favorites'}`;
+      } else {
+        bookmarksCount.textContent = `${count} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
+      }
     }
   }
 
