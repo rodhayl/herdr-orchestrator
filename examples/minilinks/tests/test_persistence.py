@@ -289,7 +289,7 @@ class TestMiniLinksPersistence(unittest.TestCase):
 
             # Verify query filtering combined with favorites on Server 2
             status_combo, combo_res = send_http_request(
-                base2, "GET", "/api/bookmarks?favorites=true&q=Standard"
+                base2, "GET", "/api/bookmarks?favorites=true&q=Python"
             )
             self.assertEqual(status_combo, 200)
             self.assertEqual(len(combo_res), 1)
