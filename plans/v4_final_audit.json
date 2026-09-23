@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "v4_final_audit",
+  "name": "v4.0.0 Final Independent Audit Plan",
+  "version": "4.0.0",
+  "tasks": [
+    {
+      "task_id": "v4_audit",
+      "task_type": "audit",
+      "requires": [
+        "review",
+        "audit"
+      ],
+      "model": "claude-sonnet-4-6",
+      "review_only": true,
+      "allowed_paths": [],
+      "expected_files": [],
+      "context_files": [
+        "UPDATE_PACKAGE.md",
+        "REPRODUCIBILITY.md",
+        "toolchain.lock.json",
+        "factory.json"
+      ],
+      "description": "Perform an independent, rigorous final audit of the v4.0.0 Factory core, package update system, DroidAdapter, deterministic capability router, board one-way projection, and cleanliness invariants. Audit specifically: UPDATE_PACKAGE.md completeness; previous-version preservation; version discovery; stable-release filtering; compatibility selection; lock integrity; update rollback; DroidAdapter; routing determinism; mixed-adapter behavior; board one-way authority; board version compatibility; reproducibility; host pollution; clean-checkout evidence; unsupported claims. Return structured findings with severity, area, evidence, and recommendations. Do NOT modify any code.",
+      "timeout": 360
+    }
+  ]
+}
