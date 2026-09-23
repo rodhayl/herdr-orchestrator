@@ -150,4 +150,49 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Classification Verdict**: Run `run-20260923-153816` is reclassified as **`MOCK` (contains mock execution)**. It provided valid deterministic workflow testing, but does NOT constitute `REAL_MULTI_HARNESS_CERTIFIED`.
 - **Evidence Record**: Recorded in `.agy-factory/evidence/v6_reconciliation.json` conforming to `schemas/v6-reconciliation.schema.json`.
 
+---
+
+## [2026-09-23T22:38:00Z] v6.1.0 Production Certification Closure & Verification
+
+### 1. Context & Objectives
+- **Trigger**: Factory v6.1.0 Production Certification Closure Goal.
+- **Operator**: Antigravity Orchestrator (Gemini 3.8 Flash High).
+- **Core Mission**: Close every production-certification gap left by v6.0.0; make it technically impossible to confuse deterministic mock simulation with genuine provider-backed execution; implement fail-closed certification guards; verify read-only harness auth discovery; execute real mixed-harness DAG and independent final audit.
+
+### 2. Verified Implementation & Architectural Guardrails
+- **Provenance Model**: Added canonical execution provenance classification (`REAL`, `MOCK`, `TRANSPORT_ONLY`, `UNKNOWN`) to every task attempt record, event, and telemetry entry.
+- **Fail-Closed Certification Guard**: Implemented `assert_real_certifiable(manifest)` in `tools/factory.py` (and CLI `factory.py certify guard <run_id>`). Fails closed if `FACTORY_TEST_HARNESS=1`, if `contains_mock_execution=true`, if any attempt mode is `MOCK`, if test fixture or fake shim paths are detected via `verify_binary_identity`, or if raw result hashes / evidence bundles are missing.
+- **Harness-Specific Auth Discovery**: Implemented `probe_harness_auth` and `probe_profile_auth` with read-only, secret-safe discovery:
+  - `agy`: `provider_credentials` via `agy models` (model `gemini-3.8-flash` available).
+  - `droid`: `AUTH_BLOCKED` via `droid doctor` ("no usable credentials found").
+  - `codex`: `AUTH_BLOCKED` via `codex login status` ("Not logged in").
+  - `claude`: `AUTH_BLOCKED` via `claude auth status --json` (`loggedIn: false`).
+  - `opencode`: `api_key_env` via `opencode auth list` (active `OPENROUTER_API_KEY`).
+  - Profiles: `opencode-mimo-free` (`openrouter/openrouter/free`) is `REAL_PROVIDER_CERTIFIED`; `opencode-gemini-high` is `PROFILE_UNAVAILABLE` due to OpenRouter workspace guardrails.
+- **Secret Redaction**: Implemented recursive `redact_secrets` masking tokens, API keys, and sensitive auth parameters across manifests, execution bundles, invocation arguments, and events.
+- **Native CLI Contracts**:
+  - `CodexAdapter`: Verified TOML reasoning effort quoting `-c 'model_reasoning_effort="{effort}"'`.
+  - `ClaudeAdapter`: Pinned flags `--model`, `--effort`, `--output-format json`, `--json-schema`.
+  - `OpenCodeAdapter`: Pinned flags `run`, `--dir`, `--model`, `--variant`, `--format json`, `--auto`, `--pure`.
+- **Telemetry Partitioning**: Updated `summarize_execution_metrics` to strictly group and report metrics by `execution_mode` (never combining mock and real metrics into a single rate).
+
+### 3. Genuine Real-Provider Certifications
+- **Real Mixed-Harness Rehearsal Run (`run-20260923-222722`)**:
+  - Plan: `plans/certification_real_v6_1.json` (`Factory v6.1 Real Mixed-Harness Production Certification DAG`).
+  - Execution: Completely executed WITHOUT `FACTORY_TEST_HARNESS`.
+  - Tasks:
+    - `cert_spec`: Routed to `agy-spec-high` (`agy2`). Executed real `agy` CLI binary (`/root/.local/bin/agy2` v1.2.9). Status `COMPLETED`, mode `REAL`, raw result hash `300cc574...`, integrated in commit `4c45fc2`.
+    - `cert_support`: Routed to `opencode-mimo-free` (`opencode`). Executed real `opencode` CLI binary (`/root/.opencode/bin/opencode` v1.18.31, model `openrouter/openrouter/free`, variant `free`). Status `COMPLETED`, mode `REAL`, session `ses_f2f9c6079ffezgy2pBZf66QHsX`, raw result hash `2599c264...`, integrated in commit `70ec18c`.
+  - Manifest & Verdict: `contains_mock_execution: false`, `certification_level: REAL_PROVIDER_CERTIFIED`. Validated by `assert_real_certifiable` guard (`PASSED`).
+- **Independent Final Audit Run (`run-20260923-223546`)**:
+  - Plan: `plans/v6_1_final_audit.json`.
+  - Execution: Routed to `agy-audit-high` (`agy7`, model `claude-sonnet-4-6`). Executed genuine `agy` CLI binary in read-only review mode.
+  - Verdict: `status: APPROVED`. Comprehensive audit evaluation across backend, frontend, tests, security, and integration.
+
+### 4. Verification & Clean-Room Portability
+- **Deterministic Suites**: All 5 test suites (121 unit tests in `factory_tests`, MiniBoard unit tests, MiniBoard smoke test, MiniLinks unit tests, MiniLinks smoke test) passed with 0 failures, 0 errors.
+- **Provider Verification**: `./scripts/verify-real.sh` confirmed live AGY and OpenCode execution, and accurate `AUTH_BLOCKED` reporting for Droid, Codex, and Claude.
+- **Clean-Room Portability**: `./scripts/portable-smoke.sh` executed all 6 steps in an isolated clean checkout sandbox without leaked directories, machine-specific paths, or prior state.
+- **Toolchain Lock & Governance**: Updated `factory.json`, `harness_profiles.json`, `toolchain.lock.json`, `scripts/update-package.sh`, `scripts/doctor.sh`, and schemas to `v6.1.0`. Preserved Herdr 0.9.1 `BLOCKED_EXTERNAL_COMPATIBILITY` for `herdr-board` without patching upstream gates.
+
 
