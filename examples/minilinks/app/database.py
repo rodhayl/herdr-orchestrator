@@ -24,6 +24,16 @@ def get_connection(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> sqlite3.Conne
     return conn
 
 
+def _migrate_notes_column(conn: sqlite3.Connection) -> None:
+    """Adds notes column to bookmarks table if missing (backward compatibility)."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(bookmarks)")
+    cols = [row[1] for row in cursor.fetchall()]
+    if cols and "notes" not in cols:
+        cursor.execute("ALTER TABLE bookmarks ADD COLUMN notes TEXT DEFAULT ''")
+        cursor.execute("UPDATE bookmarks SET notes = '' WHERE notes IS NULL")
+
+
 def _migrate_favorite_column(conn: sqlite3.Connection) -> None:
     """Adds is_favorite column to bookmarks table if missing (backward compatibility)."""
     cursor = conn.cursor()
@@ -31,13 +41,26 @@ def _migrate_favorite_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in cursor.fetchall()]
     if cols and "is_favorite" not in cols:
         cursor.execute("ALTER TABLE bookmarks ADD COLUMN is_favorite INTEGER DEFAULT 0")
+        cursor.execute("UPDATE bookmarks SET is_favorite = 0 WHERE is_favorite IS NULL")
+
+
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    """Migrates bookmarks schema ensuring notes and is_favorite columns exist."""
+    _migrate_notes_column(conn)
+    _migrate_favorite_column(conn)
+
+
+# Backward-compatible function aliases
+migrate_notes_column = _migrate_notes_column
+migrate_favorite_column = _migrate_favorite_column
+_migrate_schema = migrate_schema
 
 
 def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
     """
     Initializes the SQLite database at `db_path`, creating the bookmarks table
-    with is_favorite column and performing backward-compatible table migration
-    adding the column via ALTER TABLE if missing.
+    with notes and is_favorite columns and performing backward-compatible table migration
+    adding columns via ALTER TABLE if missing.
     """
     conn = get_connection(db_path)
     try:
@@ -53,15 +76,16 @@ def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
                     updated_at TEXT NOT NULL
                 );
             """)
+            _migrate_notes_column(conn)
             _migrate_favorite_column(conn)
     finally:
         conn.close()
 
 
-def row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+def row_to_dict(row: Union[sqlite3.Row, Dict[str, Any]]) -> Dict[str, Any]:
     """
     Converts a SQLite Row into a bookmark dictionary, ensuring
-    'is_favorite' is returned as a Python boolean.
+    'is_favorite' is returned as a Python boolean and 'notes' as a string.
     """
     is_fav = False
     try:
@@ -69,11 +93,18 @@ def row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
     except (IndexError, KeyError):
         is_fav = False
 
+    notes_str = ""
+    try:
+        raw_notes = row["notes"]
+        notes_str = str(raw_notes) if raw_notes is not None else ""
+    except (IndexError, KeyError):
+        notes_str = ""
+
     return {
         "id": row["id"],
         "title": row["title"],
         "url": row["url"],
-        "notes": row["notes"] if row["notes"] is not None else "",
+        "notes": notes_str,
         "is_favorite": is_fav,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -119,12 +150,12 @@ def get_bookmarks(
         if fav_filter:
             conditions.append("is_favorite = 1")
 
-        if q is not None and q.strip() != "":
-            query_str = q.strip().lower()
+        if q is not None and str(q).strip() != "":
+            query_str = str(q).strip().lower()
             conditions.append(
-                "(instr(LOWER(COALESCE(title, '')), ?) > 0 OR "
-                "instr(LOWER(COALESCE(url, '')), ?) > 0 OR "
-                "instr(LOWER(COALESCE(notes, '')), ?) > 0)"
+                "(instr(LOWER(COALESCE(title, '')), LOWER(?)) > 0 OR "
+                "instr(LOWER(COALESCE(url, '')), LOWER(?)) > 0 OR "
+                "instr(LOWER(COALESCE(notes, '')), LOWER(?)) > 0)"
             )
             params.extend([query_str, query_str, query_str])
 
@@ -138,8 +169,10 @@ def get_bookmarks(
         try:
             cursor.execute(sql, params)
         except sqlite3.OperationalError as e:
-            if "no such column: is_favorite" in str(e):
+            err_msg = str(e)
+            if "no such column: is_favorite" in err_msg or "no such column: notes" in err_msg:
                 with conn:
+                    _migrate_notes_column(conn)
                     _migrate_favorite_column(conn)
                 cursor.execute(sql, params)
             else:
@@ -190,12 +223,14 @@ def get_bookmark_by_id(
             WHERE id = ?
         """
         try:
-            cursor.execute(sql, (target_id,),)
+            cursor.execute(sql, (target_id,))
         except sqlite3.OperationalError as e:
-            if "no such column: is_favorite" in str(e):
+            err_msg = str(e)
+            if "no such column: is_favorite" in err_msg or "no such column: notes" in err_msg:
                 with conn:
+                    _migrate_notes_column(conn)
                     _migrate_favorite_column(conn)
-                cursor.execute(sql, (target_id,),)
+                cursor.execute(sql, (target_id,))
             else:
                 raise
 
@@ -210,7 +245,7 @@ def get_bookmark_by_id(
 def create_bookmark(
     title: str,
     url: str,
-    notes: Optional[str] = "",
+    notes: Optional[Union[str, bool]] = "",
     is_favorite: Union[bool, int, str, Path] = False,
     db_path: Union[str, Path] = DEFAULT_DB_PATH,
 ) -> Dict[str, Any]:
@@ -221,25 +256,36 @@ def create_bookmark(
     clean_title = title.strip() if isinstance(title, str) else title
     clean_url = url.strip() if isinstance(url, str) else url
     now_iso = get_utc_now()
-    notes_val = notes if notes is not None else ""
 
-    # Handle backward-compatible positional db_path argument
+    # Handle backward-compatible positional call where 3rd arg was is_favorite
     fav_bool = False
-    if isinstance(is_favorite, bool):
-        fav_bool = is_favorite
-    elif isinstance(is_favorite, Path):
-        db_path = is_favorite
-        fav_bool = False
-    elif isinstance(is_favorite, str):
-        if is_favorite.lower() in ("true", "1"):
-            fav_bool = True
-        elif is_favorite.lower() in ("false", "0", ""):
-            fav_bool = False
-        elif "/" in is_favorite or "\\" in is_favorite or is_favorite.endswith(".db"):
+    if isinstance(notes, bool):
+        fav_bool = notes
+        notes_val = ""
+        if isinstance(is_favorite, (str, Path)) and (
+            isinstance(is_favorite, Path)
+            or "/" in str(is_favorite)
+            or "\\" in str(is_favorite)
+            or str(is_favorite).endswith(".db")
+        ):
+            db_path = is_favorite
+    else:
+        notes_val = str(notes) if notes is not None else ""
+        if isinstance(is_favorite, bool):
+            fav_bool = is_favorite
+        elif isinstance(is_favorite, Path):
             db_path = is_favorite
             fav_bool = False
-    elif isinstance(is_favorite, int):
-        fav_bool = bool(is_favorite)
+        elif isinstance(is_favorite, str):
+            if is_favorite.lower() in ("true", "1"):
+                fav_bool = True
+            elif is_favorite.lower() in ("false", "0", ""):
+                fav_bool = False
+            elif "/" in is_favorite or "\\" in is_favorite or is_favorite.endswith(".db"):
+                db_path = is_favorite
+                fav_bool = False
+        elif isinstance(is_favorite, int):
+            fav_bool = bool(is_favorite)
 
     fav_int = 1 if fav_bool else 0
 
@@ -256,7 +302,9 @@ def create_bookmark(
                     (clean_title, clean_url, notes_val, fav_int, now_iso, now_iso),
                 )
             except sqlite3.OperationalError as e:
-                if "no such column: is_favorite" in str(e):
+                err_msg = str(e)
+                if "no such column: is_favorite" in err_msg or "no such column: notes" in err_msg:
+                    _migrate_notes_column(conn)
                     _migrate_favorite_column(conn)
                     cursor.execute(
                         """
@@ -343,7 +391,7 @@ def update_bookmark(
         params.append(clean_url)
     if notes is not None:
         updates.append("notes = ?")
-        params.append(notes)
+        params.append(str(notes))
     if fav_val is not None:
         updates.append("is_favorite = ?")
         params.append(fav_val)
@@ -366,7 +414,9 @@ def update_bookmark(
                     params,
                 )
             except sqlite3.OperationalError as e:
-                if "no such column: is_favorite" in str(e):
+                err_msg = str(e)
+                if "no such column: is_favorite" in err_msg or "no such column: notes" in err_msg:
+                    _migrate_notes_column(conn)
                     _migrate_favorite_column(conn)
                     cursor.execute(
                         f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?",
@@ -375,14 +425,31 @@ def update_bookmark(
                 else:
                     raise
 
-            cursor.execute(
-                """
-                SELECT id, title, url, notes, is_favorite, created_at, updated_at
-                FROM bookmarks
-                WHERE id = ?
-                """,
-                (target_id,),
-            )
+            try:
+                cursor.execute(
+                    """
+                    SELECT id, title, url, notes, is_favorite, created_at, updated_at
+                    FROM bookmarks
+                    WHERE id = ?
+                    """,
+                    (target_id,),
+                )
+            except sqlite3.OperationalError as e:
+                err_msg = str(e)
+                if "no such column: is_favorite" in err_msg or "no such column: notes" in err_msg:
+                    _migrate_notes_column(conn)
+                    _migrate_favorite_column(conn)
+                    cursor.execute(
+                        """
+                        SELECT id, title, url, notes, is_favorite, created_at, updated_at
+                        FROM bookmarks
+                        WHERE id = ?
+                        """,
+                        (target_id,),
+                    )
+                else:
+                    raise
+
             row = cursor.fetchone()
             if row is None:
                 return None
