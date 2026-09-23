@@ -506,6 +506,45 @@ def run_smoke_test() -> None:
             f"updated_at refreshed to {new_updated_at}; favorites filter verified via GET"
         )
 
+        # Step 8b: Archive & Restore Toggling Semantics
+        print("[Step 8b] Archive & Restore Semantics: POST /api/bookmarks/<id>/archive & /restore, ?archived=...")
+        # Archive bookmark
+        status_arch, payload_arch, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/archive")
+        assert status_arch == 200, f"Expected HTTP 200 archiving bookmark, got {status_arch}"
+        assert payload_arch.get("id") == bm_id and payload_arch.get("archived") is True
+
+        # Verify default list excludes archived bookmark
+        status_unarch_list, payload_unarch_list, _ = http_request(base_url, "GET", "/api/bookmarks")
+        assert status_unarch_list == 200 and len(payload_unarch_list) == 0
+
+        # Verify archived filter includes archived bookmark
+        status_arch_list, payload_arch_list, _ = http_request(base_url, "GET", "/api/bookmarks?archived=true")
+        assert status_arch_list == 200 and len(payload_arch_list) == 1
+        assert payload_arch_list[0].get("id") == bm_id
+        assert payload_arch_list[0].get("archived") is True
+
+        # Verify ?archived=all includes bookmark
+        status_all_list, payload_all_list, _ = http_request(base_url, "GET", "/api/bookmarks?archived=all")
+        assert status_all_list == 200 and len(payload_all_list) == 1
+
+        # Restore bookmark
+        status_rest, payload_rest, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/restore")
+        assert status_rest == 200, f"Expected HTTP 200 restoring bookmark, got {status_rest}"
+        assert payload_rest.get("id") == bm_id and payload_rest.get("archived") is False
+
+        # Verify default list now includes bookmark
+        status_rest_list, payload_rest_list, _ = http_request(base_url, "GET", "/api/bookmarks")
+        assert status_rest_list == 200 and len(payload_rest_list) == 1
+        assert payload_rest_list[0].get("id") == bm_id
+
+        # Verify 404 for non-existent archive/restore
+        status_arch_404, _, _ = http_request(base_url, "POST", "/api/bookmarks/99999/archive")
+        assert status_arch_404 == 404
+        status_rest_404, _, _ = http_request(base_url, "POST", "/api/bookmarks/99999/restore")
+        assert status_rest_404 == 404
+
+        print("  --> PASS: Archive and restore actions, 404 handling, and ?archived filtering verified")
+
         # Step 9: Update Non-Existent Bookmark
         print("[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...")
         status, payload, _ = http_request(
