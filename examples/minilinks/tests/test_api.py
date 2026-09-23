@@ -1306,6 +1306,206 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("error", err)
 
+    # 8b. Bookmark tags endpoints and filtering
+    def test_create_bookmark_with_tags(self) -> None:
+        """Verifies creating bookmarks with tags normalizes, deduplicates, and preserves tags."""
+        # Create with valid tags
+        status, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={
+                "title": "Python Documentation",
+                "url": "https://docs.python.org",
+                "tags": ["Python", "Docs", "  programming  ", "python"],
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(created["tags"], ["Python", "Docs", "programming"])
+
+        bm_id = created["id"]
+        # Verify single GET returns tags
+        status_get, bm, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+        self.assertEqual(status_get, 200)
+        self.assertEqual(bm["tags"], ["Python", "Docs", "programming"])
+
+        # Create with default omitted tags -> []
+        status_def, created_def, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "No Tags", "url": "https://notags.com"},
+        )
+        self.assertEqual(status_def, 201)
+        self.assertEqual(created_def["tags"], [])
+
+        # Create with null tags -> []
+        status_null, created_null, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Null Tags", "url": "https://nulltags.com", "tags": None},
+        )
+        self.assertEqual(status_null, 201)
+        self.assertEqual(created_null["tags"], [])
+
+    def test_create_bookmark_invalid_tags(self) -> None:
+        """Verifies invalid tags payloads return 400."""
+        # Non-list tags
+        for invalid in ["tag", 123, {"tag": "val"}]:
+            with self.subTest(invalid_tags=invalid):
+                status, err, _, _ = self.make_request(
+                    "POST",
+                    "/api/bookmarks",
+                    data={"title": "Test", "url": "https://test.com", "tags": invalid},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("error", err)
+
+        # List containing non-strings
+        for invalid_elem in [[123], ["valid", None], ["valid", ["nested"]]]:
+            with self.subTest(invalid_tag_elem=invalid_elem):
+                status, err, _, _ = self.make_request(
+                    "POST",
+                    "/api/bookmarks",
+                    data={"title": "Test", "url": "https://test.com", "tags": invalid_elem},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("error", err)
+
+    def test_get_tags_endpoint(self) -> None:
+        """Verifies GET /api/tags returns a sorted, deduplicated list of all tags in {'tags': [...]}."""
+        # Initially empty
+        status_empty, tags_empty, _, _ = self.make_request("GET", "/api/tags")
+        self.assertEqual(status_empty, 200)
+        self.assertEqual(tags_empty, {"tags": []})
+
+        # Create bookmarks with overlapping tags
+        self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "BM1", "url": "https://bm1.com", "tags": ["backend", "python"]},
+        )
+        self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "BM2", "url": "https://bm2.com", "tags": ["frontend", "javascript"]},
+        )
+        self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "BM3", "url": "https://bm3.com", "tags": ["python", "machine-learning"]},
+        )
+
+        status, tags_payload, _, _ = self.make_request("GET", "/api/tags")
+        self.assertEqual(status, 200)
+        self.assertEqual(tags_payload, {"tags": ["backend", "frontend", "javascript", "machine-learning", "python"]})
+
+    def test_get_bookmarks_tag_filter(self) -> None:
+        """Verifies GET /api/bookmarks?tag=<tag> filters accurately and case-insensitively."""
+        _, b1, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "FastAPI", "url": "https://fastapi.tiangolo.com", "tags": ["python", "api"]},
+        )
+        _, b2, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "React", "url": "https://react.dev", "tags": ["javascript", "frontend"]},
+        )
+        _, b3, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Django", "url": "https://djangoproject.com", "tags": ["python", "web"]},
+        )
+
+        # Filter by "python" -> b1, b3
+        status, res, _, _ = self.make_request("GET", "/api/bookmarks?tag=python")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(res), 2)
+        ids = {r["id"] for r in res}
+        self.assertEqual(ids, {b1["id"], b3["id"]})
+
+        # Case-insensitive query: "PYTHON"
+        status, res_upper, _, _ = self.make_request("GET", "/api/bookmarks?tag=PYTHON")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(res_upper), 2)
+
+        # Filter by "frontend" -> b2
+        status, res_front, _, _ = self.make_request("GET", "/api/bookmarks?tag=frontend")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(res_front), 1)
+        self.assertEqual(res_front[0]["id"], b2["id"])
+
+        # Non-matching tag -> []
+        status, res_none, _, _ = self.make_request("GET", "/api/bookmarks?tag=nonexistent")
+        self.assertEqual(status, 200)
+        self.assertEqual(res_none, [])
+
+        # Combined tag and search filter
+        status, res_comb, _, _ = self.make_request("GET", "/api/bookmarks?tag=python&q=Django")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(res_comb), 1)
+        self.assertEqual(res_comb[0]["id"], b3["id"])
+
+    def test_patch_bookmark_tags(self) -> None:
+        """Verifies PATCH /api/bookmarks/<id> updates tags and validates format."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Test", "url": "https://test.com", "tags": ["initial"]},
+        )
+        bm_id = created["id"]
+
+        # Update tags
+        status, updated, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"tags": ["updated", "new-tag"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["tags"], ["updated", "new-tag"])
+
+        # Clear tags
+        status_clear, cleared, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"tags": []},
+        )
+        self.assertEqual(status_clear, 200)
+        self.assertEqual(cleared["tags"], [])
+
+        # Invalid tags in PATCH
+        status_err, err, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"tags": "not-a-list"},
+        )
+        self.assertEqual(status_err, 400)
+        self.assertIn("error", err)
+
+    def test_put_bookmark_tags(self) -> None:
+        """Verifies PUT /api/bookmarks/<id> updates title, url, notes, and tags."""
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Old Title", "url": "https://old.com", "notes": "Old notes", "tags": ["old"]},
+        )
+        bm_id = created["id"]
+
+        status, updated, _, _ = self.make_request(
+            "PUT",
+            f"/api/bookmarks/{bm_id}",
+            data={
+                "title": "New Title",
+                "url": "https://new.com",
+                "notes": "New notes",
+                "tags": ["replacement", "tag"],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["title"], "New Title")
+        self.assertEqual(updated["url"], "https://new.com")
+        self.assertEqual(updated["notes"], "New notes")
+        self.assertEqual(updated["tags"], ["replacement", "tag"])
+
     # 9. Delete bookmark
     def test_delete_bookmark_success_and_subsequent_404(self) -> None:
         """Verifies DELETE /api/bookmarks/<id> deletes a bookmark and subsequent calls return 404."""

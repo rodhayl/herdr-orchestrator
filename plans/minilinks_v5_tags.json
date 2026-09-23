@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "minilinks_v5_tags",
+  "name": "MiniLinks v5 Tags Feature Multi-Harness Execution Profile Routed DAG",
+  "version": "5.0.0",
+  "target_application": {
+    "name": "MiniLinks",
+    "description": "Lightweight SQLite-backed bookmark manager with tags, notes, and favorites",
+    "root_directory": "examples/minilinks"
+  },
+  "max_concurrency": 2,
+  "tasks": [
+    {
+      "task_id": "spec",
+      "task_type": "specification",
+      "requires": [
+        "planning",
+        "specification"
+      ],
+      "dependencies": [],
+      "description": "Update examples/minilinks/SPEC.md to thoroughly specify the bookmark tags feature. Document the 'tags' array attribute (stored as TEXT DEFAULT '[]' in SQLite, serialized in JSON payloads as an array of unique trimmed strings), update REST API contracts (POST /api/bookmarks accepts optional tags defaulting to empty list, PATCH /api/bookmarks/<id> accepts tags updates, GET /api/bookmarks returns tags for all items and supports ?tag=<tag> filtering and ?q= search filtering against tags text, GET /api/tags returns list of all unique tags), and specify the frontend UI bookmark card tags display and editing interface.",
+      "allowed_paths": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "expected_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "backend",
+      "task_type": "backend",
+      "requires": [
+        "coding",
+        "backend"
+      ],
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement and verify the bookmark tags feature in the MiniLinks backend. In examples/minilinks/app/database.py: ensure SQLite schema defines 'tags TEXT DEFAULT \\'[]\\'', implement automatic table migration if the tags column is absent, implement get_all_tags, update get_bookmarks to support ?tag= filter and ?q= search across tags, and ensure row_to_dict returns a normalized list of strings for 'tags'. In examples/minilinks/app/server.py: ensure GET /api/tags returns all unique tags, ensure POST /api/bookmarks accepts optional tags (validating array of strings), ensure PATCH /api/bookmarks/<id> validates and updates tags, and ensure GET /api/bookmarks supports ?tag= query parameter.",
+      "allowed_paths": [
+        "examples/minilinks/app/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/app/database.py",
+        "examples/minilinks/app/server.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "frontend",
+      "task_type": "frontend",
+      "requires": [
+        "coding",
+        "frontend"
+      ],
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement and verify the bookmark tags UI in examples/minilinks/web/. In index.html: ensure the creation form has an input for tags (id='bookmark-tags', comma-separated) and add a tag filter area. In app.js: ensure bookmark cards render formatted tag chips (class 'tag-chip'), ensure clicking a tag chip filters bookmarks by tag, ensure the edit modal populates and updates tags via PATCH /api/bookmarks/<id>, and ensure bookmark creation submits tags. In style.css: add styling for the tag chips and tag container.",
+      "allowed_paths": [
+        "examples/minilinks/web/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/web/index.html",
+        "examples/minilinks/web/style.css",
+        "examples/minilinks/web/app.js"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    },
+    {
+      "task_id": "tests",
+      "task_type": "testing",
+      "requires": [
+        "coding",
+        "testing"
+      ],
+      "dependencies": [
+        "backend"
+      ],
+      "description": "Implement and verify comprehensive automated tests in examples/minilinks/tests/ for the bookmark tags feature. In test_api.py: test that newly created bookmarks accept tags, test default empty tags list when omitted, test invalid tags rejected with 400 Bad Request, test GET /api/tags returns list of unique tags, test GET /api/bookmarks?tag=<tag> filters properly, and test PATCH /api/bookmarks/<id> updating and clearing tags. In test_persistence.py: test that tags persist accurately across SQLite database server restarts and test migration on pre-existing database.",
+      "allowed_paths": [
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/tests/test_api.py",
+        "examples/minilinks/tests/test_persistence.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "integration",
+      "task_type": "integration",
+      "requires": [
+        "integration",
+        "debugging"
+      ],
+      "dependencies": [
+        "frontend",
+        "tests"
+      ],
+      "is_repair": true,
+      "description": "Harden integration between backend, frontend, and tests for the bookmark tags feature. Update examples/minilinks/scripts/smoke_test.py to verify tags creation, retrieval, filtering, and updates in the deterministic smoke test. Fix any defects across app, web, tests, or scripts so all unit tests and the smoke test pass with zero errors.",
+      "allowed_paths": [
+        "examples/minilinks/scripts/**",
+        "examples/minilinks/app/**",
+        "examples/minilinks/web/**",
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    },
+    {
+      "task_id": "audit",
+      "task_type": "audit",
+      "requires": [
+        "review",
+        "audit"
+      ],
+      "dependencies": [
+        "integration"
+      ],
+      "review_only": true,
+      "description": "Perform an independent, rigorous final audit of the complete MiniLinks tags feature implementation across database schema, REST API contracts, static frontend UI, test suites, and smoke test against examples/minilinks/SPEC.md.",
+      "allowed_paths": [],
+      "expected_files": [],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "model": "claude-sonnet-4-6",
+      "timeout": 360
+    }
+  ],
+  "post_validation": [
+    {
+      "name": "minilinks_unit_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "examples/minilinks/tests",
+        "-v"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "minilinks_smoke_test",
+      "command": [
+        "python3",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "miniboard_regression_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "factory_core_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "factory_tests",
+        "-v"
+      ],
+      "timeout": 60
+    }
+  ]
+}

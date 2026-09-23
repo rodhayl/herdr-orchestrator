@@ -34,6 +34,7 @@
   const bookmarkTitleInput = document.getElementById('bookmark-title');
   const bookmarkUrlInput = document.getElementById('bookmark-url');
   const bookmarkNotesInput = document.getElementById('bookmark-notes');
+  const bookmarkTagsInput = document.getElementById('bookmark-tags');
   const bookmarkSubmitBtn = document.getElementById('bookmark-submit-btn');
 
   // DOM Elements - Edit Modal
@@ -44,6 +45,7 @@
   const editTitleInput = document.getElementById('edit-title');
   const editUrlInput = document.getElementById('edit-url');
   const editNotesInput = document.getElementById('edit-notes');
+  const editTagsInput = document.getElementById('edit-tags');
   const editCancelBtn = document.getElementById('edit-cancel-btn');
   const editSaveBtn = document.getElementById('edit-save-btn');
 
@@ -244,6 +246,14 @@
   }
 
   /**
+   * Helper to parse comma-separated tags string into clean array
+   */
+  function parseTags(raw) {
+    if (!raw) return [];
+    return raw.split(',').map(t => t.trim()).filter(Boolean);
+  }
+
+  /**
    * Create a new bookmark
    */
   async function handleCreateBookmark(e) {
@@ -252,6 +262,7 @@
     const title = bookmarkTitleInput.value.trim();
     const rawUrl = bookmarkUrlInput.value.trim();
     const notes = bookmarkNotesInput.value.trim();
+    const tags = parseTags(bookmarkTagsInput ? bookmarkTagsInput.value : '');
 
     if (!title) {
       showNotification('Title is required', 'error');
@@ -275,7 +286,7 @@
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: JSON.stringify({ title, url, notes }),
+        body: JSON.stringify({ title, url, notes, tags }),
       });
 
       const data = await parseJsonResponse(response);
@@ -319,6 +330,9 @@
     editTitleInput.value = bookmark.title;
     editUrlInput.value = bookmark.url;
     editNotesInput.value = bookmark.notes || '';
+    if (editTagsInput) {
+      editTagsInput.value = Array.isArray(bookmark.tags) ? bookmark.tags.join(', ') : '';
+    }
 
     editModal.classList.remove('hidden');
     editTitleInput.focus();
@@ -348,6 +362,7 @@
     const title = editTitleInput.value.trim();
     const rawUrl = editUrlInput.value.trim();
     const notes = editNotesInput.value.trim();
+    const tags = parseTags(editTagsInput ? editTagsInput.value : '');
 
     if (!title) {
       showNotification('Title is required', 'error');
@@ -371,7 +386,7 @@
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: JSON.stringify({ title, url, notes }),
+        body: JSON.stringify({ title, url, notes, tags }),
       });
 
       const updatedBookmark = await parseJsonResponse(response);
@@ -549,6 +564,28 @@
       notesBlock.className = 'card-notes';
       notesBlock.textContent = bookmark.notes;
       article.appendChild(notesBlock);
+    }
+
+    // Tags block (if present)
+    if (Array.isArray(bookmark.tags) && bookmark.tags.length > 0) {
+      const tagsBlock = document.createElement('div');
+      tagsBlock.className = 'card-tags';
+      bookmark.tags.forEach(tag => {
+        const chip = document.createElement('span');
+        chip.className = 'tag-chip';
+        chip.textContent = tag;
+        chip.title = `Filter by tag: ${tag}`;
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          searchInput.value = tag;
+          searchClearBtn.classList.remove('hidden');
+          currentSearchQuery = tag;
+          fetchBookmarks(tag, isFavoritesFilterActive);
+        });
+        tagsBlock.appendChild(chip);
+      });
+      article.appendChild(tagsBlock);
     }
 
     // Timestamps

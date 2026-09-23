@@ -1045,6 +1045,179 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 server.server_close()
             temp_dir.cleanup()
 
+    def test_tags_persistence_across_server_restart(self) -> None:
+        """Validates bookmark tags persistence across server restarts and direct SQLite inspection."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "tags_persistence.db")
+        server1: Optional[MiniLinksServer] = None
+        server2: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Start Server 1
+            server1 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base1 = f"http://127.0.0.1:{server1.server_port}"
+
+            # Insert bookmark 1 with tags
+            status1, bm1 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Python Docs", "url": "https://docs.python.org", "tags": ["python", "stdlib"]},
+            )
+            self.assertEqual(status1, 201)
+            bm1_id = bm1["id"]
+
+            # Insert bookmark 2 without tags (default empty list)
+            status2, bm2 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Web Specs", "url": "https://w3.org"},
+            )
+            self.assertEqual(status2, 201)
+            bm2_id = bm2["id"]
+            self.assertEqual(bm2["tags"], [])
+
+            # Update bookmark 2 with tags via PATCH
+            status2_patch, bm2_patched = send_http_request(
+                base1,
+                "PATCH",
+                f"/api/bookmarks/{bm2_id}",
+                {"tags": ["web", "standards"]},
+            )
+            self.assertEqual(status2_patch, 200)
+            self.assertEqual(bm2_patched["tags"], ["web", "standards"])
+
+            # 2. Shut down Server 1
+            server1.shutdown()
+            server1.server_close()
+            server1 = None
+
+            # 3. Direct SQLite database inspection
+            conn = sqlite3.connect(db_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, tags FROM bookmarks ORDER BY id ASC")
+                rows = cursor.fetchall()
+                self.assertEqual(len(rows), 2)
+                # BM1
+                self.assertEqual(rows[0][0], bm1_id)
+                bm1_tags_db = json.loads(rows[0][1])
+                self.assertEqual(bm1_tags_db, ["python", "stdlib"])
+                # BM2
+                self.assertEqual(rows[1][0], bm2_id)
+                bm2_tags_db = json.loads(rows[1][1])
+                self.assertEqual(bm2_tags_db, ["web", "standards"])
+            finally:
+                conn.close()
+
+            # 4. Start Server 2 pointing to same database
+            server2 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base2 = f"http://127.0.0.1:{server2.server_port}"
+
+            # Verify GET /api/bookmarks
+            status_list, bookmarks = send_http_request(base2, "GET", "/api/bookmarks")
+            self.assertEqual(status_list, 200)
+            self.assertEqual(len(bookmarks), 2)
+            self.assertEqual(bookmarks[0]["tags"], ["python", "stdlib"])
+            self.assertEqual(bookmarks[1]["tags"], ["web", "standards"])
+
+            # Verify GET /api/tags
+            status_tags, tags_res = send_http_request(base2, "GET", "/api/tags")
+            self.assertEqual(status_tags, 200)
+            self.assertEqual(tags_res, {"tags": ["python", "standards", "stdlib", "web"]})
+
+            # Verify GET /api/bookmarks?tag=python
+            status_tag, filtered = send_http_request(base2, "GET", "/api/bookmarks?tag=python")
+            self.assertEqual(status_tag, 200)
+            self.assertEqual(len(filtered), 1)
+            self.assertEqual(filtered[0]["id"], bm1_id)
+        finally:
+            if server1:
+                try:
+                    server1.shutdown()
+                    server1.server_close()
+                except Exception:
+                    pass
+            if server2:
+                try:
+                    server2.shutdown()
+                    server2.server_close()
+                except Exception:
+                    pass
+            temp_dir.cleanup()
+
+    def test_sqlite_backward_compatibility_migration_tags(self) -> None:
+        """Verifies automatic database migration adds tags column to older SQLite schema lacking tags."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "legacy_no_tags.db")
+        server: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Create legacy table without tags column
+            conn = sqlite3.connect(db_path)
+            with conn:
+                conn.execute("""
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        notes TEXT DEFAULT '',
+                        is_favorite INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, notes, is_favorite, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Legacy Without Tags",
+                        "https://legacy.example.com",
+                        "Legacy Notes",
+                        0,
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+            conn.close()
+
+            # 2. Start server which executes migration
+            server = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base = f"http://127.0.0.1:{server.server_port}"
+
+            # 3. Verify legacy bookmark is readable with default tags=[]
+            status, bookmarks = send_http_request(base, "GET", "/api/bookmarks")
+            self.assertEqual(status, 200)
+            self.assertEqual(len(bookmarks), 1)
+            self.assertEqual(bookmarks[0]["tags"], [])
+
+            # 4. Verify GET /api/tags returns empty list
+            status_tags, tags_res = send_http_request(base, "GET", "/api/tags")
+            self.assertEqual(status_tags, 200)
+            self.assertEqual(tags_res, {"tags": []})
+
+            # 5. Insert new bookmark with tags
+            status_new, created = send_http_request(
+                base,
+                "POST",
+                "/api/bookmarks",
+                {"title": "New", "url": "https://new.com", "tags": ["migrated"]},
+            )
+            self.assertEqual(status_new, 201)
+            self.assertEqual(created["tags"], ["migrated"])
+
+            # 6. Verify tags endpoint now includes the new tag
+            _, tags_updated = send_http_request(base, "GET", "/api/tags")
+            self.assertEqual(tags_updated, {"tags": ["migrated"]})
+        finally:
+            if server:
+                server.shutdown()
+                server.server_close()
+            temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

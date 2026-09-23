@@ -153,6 +153,11 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"status": "ok"})
             return
 
+        if path == "/api/tags":
+            tags = database.get_all_tags(self.server.db_path)
+            self.send_json(200, {"tags": tags})
+            return
+
         if path == "/api/bookmarks":
             query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             q_list = query_params.get("q")
@@ -162,8 +167,10 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             favorites_only = (
                 fav_param is not None and fav_param.strip().lower() == "true"
             )
+            tag_list = query_params.get("tag")
+            tag = tag_list[0] if tag_list else None
             bookmarks = database.get_bookmarks(
-                q=q, favorites_only=favorites_only, db_path=self.server.db_path
+                q=q, favorites_only=favorites_only, tag=tag, db_path=self.server.db_path
             )
             self.send_json(200, bookmarks)
             return
@@ -250,6 +257,18 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                 return
             is_favorite = raw_fav
 
+        # Validate tags
+        tags = None
+        if "tags" in body:
+            tags_val = body["tags"]
+            if tags_val is not None:
+                if not isinstance(tags_val, list) or any(not isinstance(t, str) for t in tags_val):
+                    self.send_json_error(400, "tags must be an array of strings if provided")
+                    return
+                tags = tags_val
+            else:
+                tags = []
+
         clean_title = title.strip()
         clean_url = url.strip()
         clean_notes = notes if notes is not None else ""
@@ -259,6 +278,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             url=clean_url,
             notes=clean_notes,
             is_favorite=is_favorite,
+            tags=tags,
             db_path=self.server.db_path,
         )
         self.send_json(201, created)
@@ -293,7 +313,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_error(400, "Invalid update payload")
             return
 
-        allowed_fields = {"title", "url", "notes", "is_favorite"}
+        allowed_fields = {"title", "url", "notes", "tags", "is_favorite"}
         present_fields = [k for k in body.keys() if k in allowed_fields]
         if not present_fields:
             self.send_json_error(400, "Invalid update payload")
@@ -302,6 +322,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
         clean_title: Optional[str] = None
         clean_url: Optional[str] = None
         clean_notes: Optional[str] = None
+        clean_tags: Optional[List[str]] = None
         clean_is_favorite: Optional[bool] = None
 
         if "title" in body:
@@ -325,6 +346,13 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                 return
             clean_notes = notes
 
+        if "tags" in body:
+            tags_val = body["tags"]
+            if not isinstance(tags_val, list) or any(not isinstance(t, str) for t in tags_val):
+                self.send_json_error(400, "tags must be an array of strings if provided")
+                return
+            clean_tags = tags_val
+
         if "is_favorite" in body:
             raw_fav = body["is_favorite"]
             if not isinstance(raw_fav, bool):
@@ -343,6 +371,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             url=clean_url,
             notes=clean_notes,
             is_favorite=clean_is_favorite,
+            tags=clean_tags,
             db_path=self.server.db_path,
         )
         if updated is None:
@@ -350,6 +379,10 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             return
 
         self.send_json(200, updated)
+
+    def do_PUT(self) -> None:
+        """Handles PUT requests: alias for update at /api/bookmarks/<id>."""
+        self.do_PATCH()
 
     def do_DELETE(self) -> None:
         """Handles DELETE requests: removing bookmarks at /api/bookmarks/<id>."""

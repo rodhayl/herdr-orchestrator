@@ -131,11 +131,12 @@ def run_smoke_test() -> None:
         print("  --> PASS: Initial bookmarks list is empty []")
 
         # Step 4: Create Bookmark (Valid) & Notes Creation Semantics
-        print("[Step 4/12] Create Bookmark (Valid) & Notes Creation Semantics: POST /api/bookmarks...")
+        print("[Step 4/12] Create Bookmark (Valid), Notes & Tags Semantics: POST /api/bookmarks...")
         create_payload = {
             "title": "Python Docs",
             "url": "https://docs.python.org",
             "notes": "Official Docs",
+            "tags": ["docs", "python"],
         }
         status, payload, _ = http_request(
             base_url, "POST", "/api/bookmarks", payload=create_payload
@@ -153,6 +154,9 @@ def run_smoke_test() -> None:
         assert payload.get("notes") == "Official Docs", (
             f"Unexpected notes: {payload.get('notes')}"
         )
+        assert payload.get("tags") == ["docs", "python"], (
+            f"Unexpected tags: {payload.get('tags')}"
+        )
         assert payload.get("is_favorite") is False, (
             f"Expected is_favorite to default to False, got {payload.get('is_favorite')}"
         )
@@ -164,12 +168,12 @@ def run_smoke_test() -> None:
         assert created_at and isinstance(created_at, str), f"Missing created_at: {created_at}"
         assert updated_at and isinstance(updated_at, str), f"Missing updated_at: {updated_at}"
 
-        # Verify sqlite3 persistence directly for notes and fields
+        # Verify sqlite3 persistence directly for notes, tags, and fields
         conn = sqlite3.connect(temp_db)
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, title, url, notes, is_favorite FROM bookmarks WHERE id = ?",
+                "SELECT id, title, url, notes, is_favorite, tags FROM bookmarks WHERE id = ?",
                 (bm_id,),
             )
             row = cursor.fetchone()
@@ -179,11 +183,12 @@ def run_smoke_test() -> None:
             assert row[2] == "https://docs.python.org", f"Expected url 'https://docs.python.org', got {row[2]}"
             assert row[3] == "Official Docs", f"Expected notes 'Official Docs' in sqlite3, got {row[3]}"
             assert row[4] == 0, f"Expected is_favorite=0 in sqlite3, got {row[4]}"
+            assert json.loads(row[5]) == ["docs", "python"], f"Expected tags ['docs', 'python'] in sqlite3, got {row[5]}"
         finally:
             conn.close()
 
-        # Verify default empty notes string when omitted or explicitly null
-        # 1. Omitted notes defaults to ""
+        # Verify default empty notes string and empty tags list when omitted or explicitly null
+        # 1. Omitted notes and tags default to "" and []
         status_omitted, payload_omitted, _ = http_request(
             base_url,
             "POST",
@@ -192,17 +197,19 @@ def run_smoke_test() -> None:
         )
         assert status_omitted == 201, f"Expected HTTP 201 for omitted notes, got {status_omitted}"
         assert payload_omitted.get("notes") == "", f"Expected empty string notes, got {payload_omitted.get('notes')}"
+        assert payload_omitted.get("tags") == [], f"Expected empty list tags, got {payload_omitted.get('tags')}"
         temp_omitted_id = payload_omitted["id"]
 
-        # 2. Null notes defaults to ""
+        # 2. Null notes and null tags default to "" and []
         status_null, payload_null, _ = http_request(
             base_url,
             "POST",
             "/api/bookmarks",
-            payload={"title": "Temp Null Notes", "url": "https://example.com/null", "notes": None},
+            payload={"title": "Temp Null Notes", "url": "https://example.com/null", "notes": None, "tags": None},
         )
         assert status_null == 201, f"Expected HTTP 201 for null notes, got {status_null}"
         assert payload_null.get("notes") == "", f"Expected empty string notes, got {payload_null.get('notes')}"
+        assert payload_null.get("tags") == [], f"Expected empty list tags, got {payload_null.get('tags')}"
         temp_null_id = payload_null["id"]
 
         # Clean up temporary test bookmarks so Step 6 has exactly 1 bookmark
@@ -211,10 +218,10 @@ def run_smoke_test() -> None:
         status_del2, _, _ = http_request(base_url, "DELETE", f"/api/bookmarks/{temp_null_id}")
         assert status_del2 == 200, f"Failed to clean up temp null bookmark {temp_null_id}"
 
-        print(f"  --> PASS: Created bookmark with ID {bm_id} (notes='Official Docs', is_favorite=False) at {created_at}")
+        print(f"  --> PASS: Created bookmark with ID {bm_id} (notes='Official Docs', tags=['docs', 'python'], is_favorite=False) at {created_at}")
 
         # Step 5: Create Bookmark Validation Errors
-        print("[Step 5/12] Create Bookmark Validation Errors: testing empty title and non-string notes...")
+        print("[Step 5/12] Create Bookmark Validation Errors: testing empty title, non-string notes, and invalid tags...")
         # 1. Missing / empty title
         status, payload, _ = http_request(
             base_url, "POST", "/api/bookmarks", payload={"title": ""}
@@ -253,10 +260,27 @@ def run_smoke_test() -> None:
         )
         assert status_invalid_fav == 400, f"Expected HTTP 400 for non-boolean is_favorite, got {status_invalid_fav}"
 
-        print("  --> PASS: Validation correctly rejected empty title, non-string notes, and invalid is_favorite with HTTP 400")
+        # 5. Invalid tags (not a list, or list containing non-string)
+        status_bad_tags, payload_bad_tags, _ = http_request(
+            base_url,
+            "POST",
+            "/api/bookmarks",
+            payload={"title": "Valid Title", "url": "https://example.com", "tags": "invalid_not_list"},
+        )
+        assert status_bad_tags == 400, f"Expected HTTP 400 for string tags, got {status_bad_tags}"
+
+        status_bad_tags2, payload_bad_tags2, _ = http_request(
+            base_url,
+            "POST",
+            "/api/bookmarks",
+            payload={"title": "Valid Title", "url": "https://example.com", "tags": [123]},
+        )
+        assert status_bad_tags2 == 400, f"Expected HTTP 400 for non-string tag element, got {status_bad_tags2}"
+
+        print("  --> PASS: Validation correctly rejected empty title, non-string notes, invalid tags, and invalid is_favorite with HTTP 400")
 
         # Step 6: Verify Bookmark Listing & Notes
-        print("[Step 6/12] Verify Bookmark Listing & Notes: GET /api/bookmarks...")
+        print("[Step 6/12] Verify Bookmark Listing, Notes & Tags: GET /api/bookmarks...")
         status, payload, _ = http_request(base_url, "GET", "/api/bookmarks")
         assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
         assert isinstance(payload, list) and len(payload) == 1, (
@@ -267,19 +291,21 @@ def run_smoke_test() -> None:
         assert item.get("title") == "Python Docs", f"Unexpected title: {item.get('title')}"
         assert item.get("url") == "https://docs.python.org", f"Unexpected url: {item.get('url')}"
         assert item.get("notes") == "Official Docs", f"Unexpected notes: {item.get('notes')}"
+        assert item.get("tags") == ["docs", "python"], f"Unexpected tags: {item.get('tags')}"
         assert item.get("is_favorite") is False, (
             f"Expected is_favorite False, got {item.get('is_favorite')}"
         )
 
-        # Also verify GET /api/bookmarks/<id> returns complete object with notes
+        # Also verify GET /api/bookmarks/<id> returns complete object with notes and tags
         status_single, single_bm, _ = http_request(base_url, "GET", f"/api/bookmarks/{bm_id}")
         assert status_single == 200, f"Expected HTTP 200 for single retrieval, got {status_single}"
         assert single_bm.get("id") == bm_id
         assert single_bm.get("notes") == "Official Docs"
-        print(f"  --> PASS: Listing and single retrieval returned bookmark {bm_id} with notes='Official Docs'")
+        assert single_bm.get("tags") == ["docs", "python"]
+        print(f"  --> PASS: Listing and single retrieval returned bookmark {bm_id} with notes='Official Docs' and tags=['docs', 'python']")
 
         # Step 7: Search Filtering across Title, URL, and Notes
-        print("[Step 7/12] Search Filtering: GET /api/bookmarks?q=Python, ?q=Docs (matching notes), and ?q=NonExistentTerm...")
+        print("[Step 7/12] Search & Tag Filtering: GET /api/bookmarks?q=..., GET /api/bookmarks?tag=..., and GET /api/tags...")
         # Search matching title
         status, payload_title, _ = http_request(base_url, "GET", "/api/bookmarks?q=Python")
         assert status == 200, f"Expected HTTP 200, got {status}"
@@ -313,7 +339,23 @@ def run_smoke_test() -> None:
         assert isinstance(payload_empty, list) and len(payload_empty) == 0, (
             f"Expected 0 results for non-matching term, got {len(payload_empty)}"
         )
-        print("  --> PASS: Search correctly matched title, URL, and notes substrings, and handled non-matching queries")
+
+        # Tag filtering
+        status_tag, payload_tag, _ = http_request(base_url, "GET", "/api/bookmarks?tag=python")
+        assert status_tag == 200, f"Expected HTTP 200 for tag filter, got {status_tag}"
+        assert isinstance(payload_tag, list) and len(payload_tag) == 1
+        assert payload_tag[0].get("id") == bm_id
+
+        # Tags listing endpoint
+        status_tags, payload_tags, _ = http_request(base_url, "GET", "/api/tags")
+        assert status_tags == 200, f"Expected HTTP 200 for /api/tags, got {status_tags}"
+        assert payload_tags == {"tags": ["docs", "python"]}, f"Expected {{'tags': ['docs', 'python']}}, got {payload_tags}"
+
+        # Non-matching tag filter
+        status_notag, payload_notag, _ = http_request(base_url, "GET", "/api/bookmarks?tag=nonexistent")
+        assert status_notag == 200 and len(payload_notag) == 0
+
+        print("  --> PASS: Search correctly matched title, URL, notes, and tags; tag filtering and /api/tags verified")
 
         # Step 8: Update Bookmark, Notes & Favorite Toggling
         print("[Step 8/12] Update Bookmark, Notes & Favorite: PATCH /api/bookmarks/<id>...")
@@ -392,6 +434,17 @@ def run_smoke_test() -> None:
         )
         assert status_restore == 200, f"Expected HTTP 200 restoring notes, got {status_restore}"
         assert payload_restore.get("notes") == "Updated Documentation Notes"
+
+        # Verify updating tags via PATCH
+        status_patch_tags, payload_patch_tags, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"tags": ["python", "reference"]}
+        )
+        assert status_patch_tags == 200, f"Expected HTTP 200 updating tags, got {status_patch_tags}"
+        assert payload_patch_tags.get("tags") == ["python", "reference"]
+
+        # Verify /api/tags reflects updated tags
+        _, payload_tags_updated, _ = http_request(base_url, "GET", "/api/tags")
+        assert payload_tags_updated == {"tags": ["python", "reference"]}
 
         # Verify invalid notes rejected on PATCH
         status_bad_notes, payload_bad_notes, _ = http_request(

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     title TEXT NOT NULL,
     url TEXT NOT NULL,
     notes TEXT DEFAULT '',
+    tags TEXT DEFAULT '[]',
     is_favorite INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -45,7 +46,8 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 | `id` | `INTEGER` | `PRIMARY KEY AUTOINCREMENT` | Unique identifier generated sequentially by SQLite. | `1` |
 | `title` | `TEXT` | `NOT NULL` | Human-readable title of the bookmark. Cannot be NULL or empty string. | `"Python Documentation"` |
 | `url` | `TEXT` | `NOT NULL` | Destination web URL. Must start with `http://` or `https://`. Cannot be NULL or empty string. | `"https://docs.python.org/3/"` |
-| `notes` | `TEXT` | `DEFAULT ''` | Optional user notes, descriptions, annotations, or tags. Stored as `TEXT DEFAULT ''`. Always serialized as a string in JSON payloads (`""` when empty). | `"Official Python 3 library reference"` |
+| `notes` | `TEXT` | `DEFAULT ''` | Optional user notes, descriptions, or annotations. Stored as `TEXT DEFAULT ''`. Always serialized as a string in JSON payloads (`""` when empty). | `"Official Python 3 library reference"` |
+| `tags` | `TEXT` | `DEFAULT '[]'` | JSON-serialized array of user-assigned textual tags. Always serialized as a list of strings (`[]` when empty). | `["python", "docs"]` |
 | `is_favorite` | `INTEGER` | `DEFAULT 0` | Boolean flag indicating whether the bookmark is starred/favorited (`0` for false, `1` for true). Serialized as a native boolean (`true`/`false`) in JSON API payloads. | `0` (serialized as `false`) |
 | `created_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp recorded when the bookmark record is first inserted. | `"2026-09-23T00:00:00Z"` |
 | `updated_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp updated on initial creation and every subsequent modification. | `"2026-09-23T00:05:00Z"` |
@@ -58,6 +60,11 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   - When provided, it must be a string. Non-string types (e.g., numbers, booleans, arrays, objects) must be rejected with `400 Bad Request`.
   - Supports arbitrary multiline text, newlines (`\n`), code snippets, URLs, markdown-like syntax, and special characters.
   - Stored in SQLite as `TEXT DEFAULT ''`. In all API responses, it is serialized as a native JSON string (`""` when empty, never `null` or omitted).
+- `tags`: Optional list of strings attribute.
+  - If omitted in API request payloads or explicitly passed as `null` / `None`, it defaults to an empty array `[]`.
+  - When provided, it must be an array of strings. Non-array types or arrays containing non-string items must be rejected with `400 Bad Request`.
+  - Tags are stripped of leading/trailing whitespace, and empty strings are pruned. Duplicate tags within the same bookmark are deduplicated while preserving order.
+  - Stored in SQLite as a JSON array string `TEXT DEFAULT '[]'`. In all API responses, it is serialized as a native JSON array of strings (`[]` when empty).
 - `is_favorite`: Stored as SQLite `INTEGER` (`0` for `false`, `1` for `true`) with default `0`. In JSON API request and response payloads, it is represented and serialized as a native boolean (`true` or `false`). Non-boolean values in API payloads (such as strings or arbitrary numbers other than strict boolean deserialization) must be rejected with `400 Bad Request`.
 - `created_at`: Set automatically at insert time in ISO 8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`); never mutated on updates.
 - `updated_at`: Set automatically at insert time; updated to the current ISO 8601 UTC timestamp on every `PATCH` modification.
@@ -90,6 +97,32 @@ The `notes` attribute provides user-authored context, annotations, tags, or deta
    - If provided as non-string type: rejected with `400 Bad Request`.
 5. **Search Indexing**:
    - Substring search queries (`GET /api/bookmarks?q=<term>`) examine the `notes` column using case-insensitive search (`instr(LOWER(COALESCE(notes, '')), LOWER(?)) > 0`).
+
+### 2.6 Optional Bookmark Tags Attribute Specification (`tags`)
+
+The `tags` attribute provides lightweight categorical labeling for bookmarks:
+
+1. **Storage Representation**:
+   - Column definition: `tags TEXT DEFAULT '[]'`.
+   - Tags are stored as a JSON-encoded array of strings.
+   - Backward compatibility: older databases without `tags` are automatically migrated via `ALTER TABLE bookmarks ADD COLUMN tags TEXT DEFAULT '[]'`.
+2. **Payload Serialization**:
+   - Every bookmark dictionary serialized to JSON contains the key `"tags"` mapping to a list of strings.
+   - Example with tags: `"tags": ["development", "python"]`.
+   - Example without tags: `"tags": []`.
+   - Never returned as `null` or excluded from the response payload.
+3. **Creation Semantics**:
+   - In `POST /api/bookmarks`, `tags` is optional.
+   - Defaults to `[]` when omitted or `null`.
+   - When supplied, must be an array of strings. Elements are trimmed, non-empty, and deduplicated preserving order.
+   - Rejects non-array or array containing non-strings with `400 Bad Request`.
+4. **Update Semantics**:
+   - In `PATCH /api/bookmarks/<id>`, `tags` can be updated independently or alongside other fields.
+   - Supplying an empty array (`"tags": []`) clears all tags.
+   - Rejects non-array or array containing non-strings with `400 Bad Request`.
+5. **Tag Filtering & Tag Query Endpoint**:
+   - `GET /api/bookmarks?tag=<tag>` filters bookmarks that contain `<tag>` (case-insensitive).
+   - `GET /api/tags` returns a list of all unique tags used across all bookmarks (`{"tags": [...]}`).
 
 ---
 
