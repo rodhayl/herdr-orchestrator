@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "certification_real_v6_1",
+  "name": "Factory v6.1 Real Mixed-Harness Production Certification DAG",
+  "version": "6.1.0",
+  "target_application": {
+    "name": "MiniLinks",
+    "description": "MiniLinks v6.1 Provenance Certification Target",
+    "root_directory": "examples/minilinks"
+  },
+  "max_concurrency": 1,
+  "tasks": [
+    {
+      "task_id": "cert_spec",
+      "task_type": "specification",
+      "execution_class": "routine",
+      "requires": [
+        "specification"
+      ],
+      "dependencies": [],
+      "description": "Write a concise v6.1 production certification note to examples/minilinks/docs/V6_1_CERTIFICATION.md verifying execution provenance classification (REAL vs MOCK), harness read-only authentication discovery, and real multi-harness dispatch.",
+      "allowed_paths": [
+        "examples/minilinks/docs/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/docs/V6_1_CERTIFICATION.md"
+      ],
+      "timeout": 180
+    },
+    {
+      "task_id": "cert_support",
+      "task_type": "support",
+      "execution_class": "routine",
+      "requires": [
+        "support"
+      ],
+      "dependencies": [
+        "cert_spec"
+      ],
+      "description": "Create a support verification manifest in examples/minilinks/fixtures/v6_1_certification.json containing {\"version\": \"6.1.0\", \"certified\": true, \"harnesses\": [\"agy\", \"opencode\"]}.",
+      "allowed_paths": [
+        "examples/minilinks/fixtures/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/fixtures/v6_1_certification.json"
+      ],
+      "timeout": 180
+    }
+  ]
+}
