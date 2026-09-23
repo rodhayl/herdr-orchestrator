@@ -59,13 +59,13 @@ fi
 # 4. Verify ownership state file exists
 OWNED_FILE="$PROJECT_ROOT/.agy-factory/state/owned-resources.json"
 if [[ ! -f "$OWNED_FILE" ]]; then
-    cat << 'EOF' > "$OWNED_FILE"
+    cat << EOF > "$OWNED_FILE"
 {
   "control_plane": {
     "workspace_id": "wK",
     "pane_id": "wK:p1",
     "tab_id": "wK:t1",
-    "cwd": "/root/agy-herdr-factory-poc",
+    "cwd": "$PROJECT_ROOT",
     "herdr_socket": "/root/.config/herdr/herdr.sock"
   },
   "owned": {

@@ -52,7 +52,7 @@ python3 tools/factory.py board sync
 ./scripts/board-stop.sh
 
 echo -e "\n[Step 6/6] Confirming no machine-specific absolute path dependencies..."
-if grep -rn "/root/agy-herdr-factory-poc" "$TMP_CHECKOUT/scripts/" 2>/dev/null; then
+if grep -rn --exclude="portable-smoke.sh" "$PROJECT_ROOT" "$TMP_CHECKOUT/scripts/" 2>/dev/null; then
     echo "ERROR: Hardcoded repository path found in scripts!"
     exit 1
 fi
