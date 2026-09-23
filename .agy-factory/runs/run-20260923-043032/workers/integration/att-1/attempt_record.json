@@ -1,0 +1,34 @@
+{
+  "attempt_id": 1,
+  "task_id": "integration",
+  "worker_id": "agy6",
+  "adapter": "agy",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260923-043032/integration/att-1",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+  "env_info": {
+    "workspace_id": "w2E",
+    "pane_id": "w2E:p1",
+    "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+  },
+  "start_time": "2026-09-23T04:45:19.103364+00:00",
+  "end_time": "2026-09-23T04:47:44.284560+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [
+    "examples/minilinks/scripts/smoke_test.py"
+  ],
+  "path_violations": [],
+  "missing_expected": [],
+  "structured_output": {
+    "changed_files": [
+      "examples/minilinks/scripts/smoke_test.py"
+    ],
+    "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+    "status": "COMPLETED",
+    "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+    "task_id": "integration"
+  },
+  "state": "PATH_VALIDATED",
+  "status": "SUCCESS"
+}

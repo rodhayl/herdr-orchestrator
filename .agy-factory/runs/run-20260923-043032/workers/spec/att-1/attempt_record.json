@@ -1,0 +1,34 @@
+{
+  "attempt_id": 1,
+  "task_id": "spec",
+  "worker_id": "agy2",
+  "adapter": "agy",
+  "model": "gemini-3.8-flash-high",
+  "branch": "factory/run-20260923-043032/spec/att-1",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+  "env_info": {
+    "workspace_id": "w29",
+    "pane_id": "w29:p1",
+    "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+  },
+  "start_time": "2026-09-23T04:30:32.872691+00:00",
+  "end_time": "2026-09-23T04:31:40.400694+00:00",
+  "exit_code": 0,
+  "agy_status": "SUCCESS",
+  "changed_paths": [
+    "examples/minilinks/SPEC.md"
+  ],
+  "path_violations": [],
+  "missing_expected": [],
+  "structured_output": {
+    "changed_files": [
+      "examples/minilinks/SPEC.md"
+    ],
+    "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+    "status": "COMPLETED",
+    "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+    "task_id": "spec"
+  },
+  "state": "PATH_VALIDATED",
+  "status": "SUCCESS"
+}

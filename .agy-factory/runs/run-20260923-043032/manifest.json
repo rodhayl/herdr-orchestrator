@@ -1,0 +1,1531 @@
+{
+  "factory_version": "3.0.0",
+  "run_id": "run-20260923-043032",
+  "plan_path": "/root/agy-herdr-factory-poc/plans/minilinks_v3_favorite.json",
+  "plan_name": "MiniLinks v3 Favorite/Star Bookmarks Feature DAG Orchestration Plan",
+  "plan_id": "minilinks_v3_favorite",
+  "control_plane": {
+    "workspace_id": "wK",
+    "pane_id": "wK:p1",
+    "tab_id": "wK:t1",
+    "cwd": "/root/agy-herdr-factory-poc",
+    "herdr_socket": "/root/.config/herdr/herdr.sock"
+  },
+  "start_time": "2026-09-23T04:30:32.834805+00:00",
+  "end_time": "2026-09-23T04:54:24.087345+00:00",
+  "run_state": "COMPLETED",
+  "tasks": {
+    "spec": {
+      "task_id": "spec",
+      "worker_id": "agy2",
+      "adapter": "agy",
+      "dependencies": [],
+      "canonical_state": "INTEGRATED",
+      "display_state": "DONE",
+      "current_attempt_id": 1,
+      "attempts_count": 1,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "spec",
+          "worker_id": "agy2",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/spec/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+          "env_info": {
+            "workspace_id": "w29",
+            "pane_id": "w29:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+          },
+          "start_time": "2026-09-23T04:30:32.872691+00:00",
+          "end_time": "2026-09-23T04:31:40.400694+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/SPEC.md"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/SPEC.md"
+            ],
+            "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+            "status": "COMPLETED",
+            "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+            "task_id": "spec"
+          },
+          "state": "INTEGRATED",
+          "status": "SUCCESS",
+          "commit_hash": "b68b8b445da17bfc9d449c7cd8dfc7fc28b2fe18"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 1,
+        "task_id": "spec",
+        "worker_id": "agy2",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/spec/att-1",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+        "env_info": {
+          "workspace_id": "w29",
+          "pane_id": "w29:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+        },
+        "start_time": "2026-09-23T04:30:32.872691+00:00",
+        "end_time": "2026-09-23T04:31:40.400694+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [
+          "examples/minilinks/SPEC.md"
+        ],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "changed_files": [
+            "examples/minilinks/SPEC.md"
+          ],
+          "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+          "status": "COMPLETED",
+          "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+          "task_id": "spec"
+        },
+        "state": "INTEGRATED",
+        "status": "SUCCESS",
+        "commit_hash": "b68b8b445da17bfc9d449c7cd8dfc7fc28b2fe18"
+      },
+      "status": "SUCCESS",
+      "state": "INTEGRATED"
+    },
+    "backend": {
+      "task_id": "backend",
+      "worker_id": "agy3",
+      "adapter": "agy",
+      "dependencies": [
+        "spec"
+      ],
+      "canonical_state": "INTEGRATED",
+      "display_state": "DONE",
+      "current_attempt_id": 1,
+      "attempts_count": 1,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "backend",
+          "worker_id": "agy3",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/backend/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1",
+          "env_info": {
+            "workspace_id": "w2B",
+            "pane_id": "w2B:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1"
+          },
+          "start_time": "2026-09-23T04:31:40.543503+00:00",
+          "end_time": "2026-09-23T04:33:59.768675+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/app/database.py",
+            "examples/minilinks/app/server.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/app/database.py",
+              "examples/minilinks/app/server.py"
+            ],
+            "notes": "Implemented the is_favorite feature following standard library only and zero external dependencies. SQLite migration handles existing databases backward-compatibly. Boolean types are strictly enforced in PATCH/POST payloads and serialized as native JSON booleans.",
+            "status": "COMPLETED",
+            "summary": "Implemented is_favorite feature in MiniLinks backend (database schema, table migration, filtering, updates, boolean serialization in REST API)",
+            "task_id": "backend"
+          },
+          "state": "INTEGRATED",
+          "status": "SUCCESS",
+          "commit_hash": "c39bf0ac94048d468a1e6e217a689da02a12161d"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 1,
+        "task_id": "backend",
+        "worker_id": "agy3",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/backend/att-1",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1",
+        "env_info": {
+          "workspace_id": "w2B",
+          "pane_id": "w2B:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1"
+        },
+        "start_time": "2026-09-23T04:31:40.543503+00:00",
+        "end_time": "2026-09-23T04:33:59.768675+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [
+          "examples/minilinks/app/database.py",
+          "examples/minilinks/app/server.py"
+        ],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "changed_files": [
+            "examples/minilinks/app/database.py",
+            "examples/minilinks/app/server.py"
+          ],
+          "notes": "Implemented the is_favorite feature following standard library only and zero external dependencies. SQLite migration handles existing databases backward-compatibly. Boolean types are strictly enforced in PATCH/POST payloads and serialized as native JSON booleans.",
+          "status": "COMPLETED",
+          "summary": "Implemented is_favorite feature in MiniLinks backend (database schema, table migration, filtering, updates, boolean serialization in REST API)",
+          "task_id": "backend"
+        },
+        "state": "INTEGRATED",
+        "status": "SUCCESS",
+        "commit_hash": "c39bf0ac94048d468a1e6e217a689da02a12161d"
+      },
+      "status": "SUCCESS",
+      "state": "INTEGRATED"
+    },
+    "frontend": {
+      "task_id": "frontend",
+      "worker_id": "agy4",
+      "adapter": "agy",
+      "dependencies": [
+        "spec"
+      ],
+      "canonical_state": "INTEGRATED",
+      "display_state": "DONE",
+      "current_attempt_id": 2,
+      "attempts_count": 2,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "frontend",
+          "worker_id": "agy4",
+          "branch": "factory/run-20260923-043032/frontend/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-1",
+          "start_time": "2026-09-23T04:31:40.544171+00:00",
+          "end_time": "2026-09-23T04:35:41.349235+00:00",
+          "exit_code": -1,
+          "timed_out": true,
+          "state": "TIMED_OUT",
+          "status": "TIMEOUT",
+          "error": "Worker timed out after 240s"
+        },
+        {
+          "attempt_id": 2,
+          "task_id": "frontend",
+          "worker_id": "agy4",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/frontend/att-2",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2",
+          "env_info": {
+            "workspace_id": "w2D",
+            "pane_id": "w2D:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2"
+          },
+          "start_time": "2026-09-23T04:42:35.782870+00:00",
+          "end_time": "2026-09-23T04:45:18.989518+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/web/app.js",
+            "examples/minilinks/web/index.html",
+            "examples/minilinks/web/style.css"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/web/index.html",
+              "examples/minilinks/web/style.css",
+              "examples/minilinks/web/app.js"
+            ],
+            "notes": "Implemented standard-compliant favorite/star bookmark UI following the MiniLinks product specification. The star toggle buttons dispatch PATCH requests with native boolean JSON payloads, update DOM state and in-memory caches, and automatically remove unfavorited cards when the favorites filter is active. Filter states combine seamlessly with query searches.",
+            "status": "COMPLETED",
+            "summary": "Implemented favorite/star bookmark UI in index.html, style.css, and app.js, including the Favorites filter button in search/filter controls, star toggle buttons (\u2605/\u2606) per bookmark card triggering PATCH /api/bookmarks/<id> with is_favorite updates, filtering by favorites, and dedicated star styling.",
+            "task_id": "frontend"
+          },
+          "state": "INTEGRATED",
+          "status": "SUCCESS",
+          "commit_hash": "ad13cd22399b7da5b6ac23bf63d6b1af8dfa0437"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 2,
+        "task_id": "frontend",
+        "worker_id": "agy4",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/frontend/att-2",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2",
+        "env_info": {
+          "workspace_id": "w2D",
+          "pane_id": "w2D:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2"
+        },
+        "start_time": "2026-09-23T04:42:35.782870+00:00",
+        "end_time": "2026-09-23T04:45:18.989518+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [
+          "examples/minilinks/web/app.js",
+          "examples/minilinks/web/index.html",
+          "examples/minilinks/web/style.css"
+        ],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "changed_files": [
+            "examples/minilinks/web/index.html",
+            "examples/minilinks/web/style.css",
+            "examples/minilinks/web/app.js"
+          ],
+          "notes": "Implemented standard-compliant favorite/star bookmark UI following the MiniLinks product specification. The star toggle buttons dispatch PATCH requests with native boolean JSON payloads, update DOM state and in-memory caches, and automatically remove unfavorited cards when the favorites filter is active. Filter states combine seamlessly with query searches.",
+          "status": "COMPLETED",
+          "summary": "Implemented favorite/star bookmark UI in index.html, style.css, and app.js, including the Favorites filter button in search/filter controls, star toggle buttons (\u2605/\u2606) per bookmark card triggering PATCH /api/bookmarks/<id> with is_favorite updates, filtering by favorites, and dedicated star styling.",
+          "task_id": "frontend"
+        },
+        "state": "INTEGRATED",
+        "status": "SUCCESS",
+        "commit_hash": "ad13cd22399b7da5b6ac23bf63d6b1af8dfa0437"
+      },
+      "status": "SUCCESS",
+      "state": "INTEGRATED"
+    },
+    "backend_tests": {
+      "task_id": "backend_tests",
+      "worker_id": "agy5",
+      "adapter": "agy",
+      "dependencies": [
+        "backend"
+      ],
+      "canonical_state": "INTEGRATED",
+      "display_state": "DONE",
+      "current_attempt_id": 1,
+      "attempts_count": 1,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "backend_tests",
+          "worker_id": "agy5",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/backend_tests/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1",
+          "env_info": {
+            "workspace_id": "w2C",
+            "pane_id": "w2C:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1"
+          },
+          "start_time": "2026-09-23T04:33:59.892007+00:00",
+          "end_time": "2026-09-23T04:36:11.061250+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/tests/test_api.py",
+            "examples/minilinks/tests/test_persistence.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/tests/test_api.py",
+              "examples/minilinks/tests/test_persistence.py"
+            ],
+            "notes": "Implemented full test coverage for the is_favorite feature in test_api.py and test_persistence.py using standard library unittest, urllib, and sqlite3. All tests adhere strictly to SPEC.md and REST API contracts, verifying default values, boolean serialization, payload validation, query filtering, SQLite column integrity, multi-cycle server restart persistence, and database schema migrations.",
+            "status": "COMPLETED",
+            "summary": "Added comprehensive test coverage for the is_favorite feature across test_api.py and test_persistence.py, including default favorite state, PATCH toggle between true and false, GET favorites filtering (with query combination and case-insensitivity), validation on invalid non-boolean values, and accurate persistence across SQLite server restarts.",
+            "task_id": "backend_tests"
+          },
+          "state": "INTEGRATED",
+          "status": "SUCCESS",
+          "commit_hash": "81bdb47a82aa3eccef48219315b61332dd1938b8"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 1,
+        "task_id": "backend_tests",
+        "worker_id": "agy5",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/backend_tests/att-1",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1",
+        "env_info": {
+          "workspace_id": "w2C",
+          "pane_id": "w2C:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1"
+        },
+        "start_time": "2026-09-23T04:33:59.892007+00:00",
+        "end_time": "2026-09-23T04:36:11.061250+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [
+          "examples/minilinks/tests/test_api.py",
+          "examples/minilinks/tests/test_persistence.py"
+        ],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "changed_files": [
+            "examples/minilinks/tests/test_api.py",
+            "examples/minilinks/tests/test_persistence.py"
+          ],
+          "notes": "Implemented full test coverage for the is_favorite feature in test_api.py and test_persistence.py using standard library unittest, urllib, and sqlite3. All tests adhere strictly to SPEC.md and REST API contracts, verifying default values, boolean serialization, payload validation, query filtering, SQLite column integrity, multi-cycle server restart persistence, and database schema migrations.",
+          "status": "COMPLETED",
+          "summary": "Added comprehensive test coverage for the is_favorite feature across test_api.py and test_persistence.py, including default favorite state, PATCH toggle between true and false, GET favorites filtering (with query combination and case-insensitivity), validation on invalid non-boolean values, and accurate persistence across SQLite server restarts.",
+          "task_id": "backend_tests"
+        },
+        "state": "INTEGRATED",
+        "status": "SUCCESS",
+        "commit_hash": "81bdb47a82aa3eccef48219315b61332dd1938b8"
+      },
+      "status": "SUCCESS",
+      "state": "INTEGRATED"
+    },
+    "integration": {
+      "task_id": "integration",
+      "worker_id": "agy6",
+      "adapter": "agy",
+      "dependencies": [
+        "frontend",
+        "backend_tests"
+      ],
+      "canonical_state": "INTEGRATED",
+      "display_state": "DONE",
+      "current_attempt_id": 1,
+      "attempts_count": 1,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "integration",
+          "worker_id": "agy6",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/integration/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+          "env_info": {
+            "workspace_id": "w2E",
+            "pane_id": "w2E:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+          },
+          "start_time": "2026-09-23T04:45:19.103364+00:00",
+          "end_time": "2026-09-23T04:47:44.284560+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/scripts/smoke_test.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/scripts/smoke_test.py"
+            ],
+            "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+            "status": "COMPLETED",
+            "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+            "task_id": "integration"
+          },
+          "state": "INTEGRATED",
+          "status": "SUCCESS",
+          "commit_hash": "87b95a8c4e81ef45833d4325f77cc34c0ab8a186"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 1,
+        "task_id": "integration",
+        "worker_id": "agy6",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/integration/att-1",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+        "env_info": {
+          "workspace_id": "w2E",
+          "pane_id": "w2E:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+        },
+        "start_time": "2026-09-23T04:45:19.103364+00:00",
+        "end_time": "2026-09-23T04:47:44.284560+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [
+          "examples/minilinks/scripts/smoke_test.py"
+        ],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "changed_files": [
+            "examples/minilinks/scripts/smoke_test.py"
+          ],
+          "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+          "status": "COMPLETED",
+          "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+          "task_id": "integration"
+        },
+        "state": "INTEGRATED",
+        "status": "SUCCESS",
+        "commit_hash": "87b95a8c4e81ef45833d4325f77cc34c0ab8a186"
+      },
+      "status": "SUCCESS",
+      "state": "INTEGRATED"
+    },
+    "audit": {
+      "task_id": "audit",
+      "worker_id": "agy7",
+      "adapter": "agy",
+      "dependencies": [
+        "integration"
+      ],
+      "canonical_state": "COMPLETED",
+      "display_state": "DONE",
+      "current_attempt_id": 1,
+      "attempts_count": 1,
+      "attempts": [
+        {
+          "attempt_id": 1,
+          "task_id": "audit",
+          "worker_id": "agy7",
+          "adapter": "agy",
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/audit/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1",
+          "env_info": {
+            "workspace_id": "w2F",
+            "pane_id": "w2F:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1"
+          },
+          "start_time": "2026-09-23T04:47:44.446256+00:00",
+          "end_time": "2026-09-23T04:49:28.611497+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "findings": [
+              {
+                "area": "backend",
+                "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+                "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+                "severity": "INFO"
+              },
+              {
+                "area": "backend",
+                "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+                "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+                "severity": "INFO"
+              },
+              {
+                "area": "frontend",
+                "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+                "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+                "severity": "INFO"
+              },
+              {
+                "area": "tests",
+                "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+                "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+                "severity": "INFO"
+              }
+            ],
+            "status": "APPROVED",
+            "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+            "task_id": "audit"
+          },
+          "state": "PATH_VALIDATED",
+          "status": "SUCCESS"
+        }
+      ],
+      "latest_result": {
+        "attempt_id": 1,
+        "task_id": "audit",
+        "worker_id": "agy7",
+        "adapter": "agy",
+        "model": "gemini-3.8-flash-high",
+        "branch": "factory/run-20260923-043032/audit/att-1",
+        "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1",
+        "env_info": {
+          "workspace_id": "w2F",
+          "pane_id": "w2F:p1",
+          "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1"
+        },
+        "start_time": "2026-09-23T04:47:44.446256+00:00",
+        "end_time": "2026-09-23T04:49:28.611497+00:00",
+        "exit_code": 0,
+        "agy_status": "SUCCESS",
+        "changed_paths": [],
+        "path_violations": [],
+        "missing_expected": [],
+        "structured_output": {
+          "findings": [
+            {
+              "area": "backend",
+              "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+              "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+              "severity": "INFO"
+            },
+            {
+              "area": "backend",
+              "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+              "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+              "severity": "INFO"
+            },
+            {
+              "area": "frontend",
+              "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+              "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+              "severity": "INFO"
+            },
+            {
+              "area": "tests",
+              "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+              "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+              "severity": "INFO"
+            }
+          ],
+          "status": "APPROVED",
+          "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+          "task_id": "audit"
+        },
+        "state": "PATH_VALIDATED",
+        "status": "SUCCESS"
+      },
+      "status": "SUCCESS",
+      "state": "COMPLETED"
+    }
+  },
+  "waves": [
+    {
+      "wave_index": 0,
+      "name": "Wave 0",
+      "tasks": [
+        {
+          "task_id": "spec",
+          "worker_id": "agy2",
+          "adapter": "agy",
+          "dependencies": [],
+          "canonical_state": "INTEGRATED",
+          "display_state": "DONE",
+          "current_attempt_id": 1,
+          "attempts_count": 1,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "spec",
+              "worker_id": "agy2",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/spec/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+              "env_info": {
+                "workspace_id": "w29",
+                "pane_id": "w29:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+              },
+              "start_time": "2026-09-23T04:30:32.872691+00:00",
+              "end_time": "2026-09-23T04:31:40.400694+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [
+                "examples/minilinks/SPEC.md"
+              ],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "changed_files": [
+                  "examples/minilinks/SPEC.md"
+                ],
+                "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+                "status": "COMPLETED",
+                "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+                "task_id": "spec"
+              },
+              "state": "INTEGRATED",
+              "status": "SUCCESS",
+              "commit_hash": "b68b8b445da17bfc9d449c7cd8dfc7fc28b2fe18"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 1,
+            "task_id": "spec",
+            "worker_id": "agy2",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/spec/att-1",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+            "env_info": {
+              "workspace_id": "w29",
+              "pane_id": "w29:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+            },
+            "start_time": "2026-09-23T04:30:32.872691+00:00",
+            "end_time": "2026-09-23T04:31:40.400694+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [
+              "examples/minilinks/SPEC.md"
+            ],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "changed_files": [
+                "examples/minilinks/SPEC.md"
+              ],
+              "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+              "status": "COMPLETED",
+              "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+              "task_id": "spec"
+            },
+            "state": "INTEGRATED",
+            "status": "SUCCESS",
+            "commit_hash": "b68b8b445da17bfc9d449c7cd8dfc7fc28b2fe18"
+          },
+          "status": "SUCCESS",
+          "state": "INTEGRATED",
+          "attempt_id": 1,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/spec/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1",
+          "env_info": {
+            "workspace_id": "w29",
+            "pane_id": "w29:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/spec/att-1"
+          },
+          "start_time": "2026-09-23T04:30:32.872691+00:00",
+          "end_time": "2026-09-23T04:31:40.400694+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/SPEC.md"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/SPEC.md"
+            ],
+            "notes": "Defined is_favorite INTEGER DEFAULT 0 in SQLite schema and boolean serialization in JSON payloads; updated PATCH /api/bookmarks/<id> to accept is_favorite; updated GET /api/bookmarks to support ?favorites=true query parameter; specified frontend star toggle button (\u2605/\u2606) and filter bar favorites button; updated test specifications.",
+            "status": "COMPLETED",
+            "summary": "Updated examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature across database schema, REST API contract, backend modules, frontend UI/UX components, and test suites.",
+            "task_id": "spec"
+          },
+          "commit_hash": "b68b8b445da17bfc9d449c7cd8dfc7fc28b2fe18"
+        },
+        {
+          "task_id": "backend",
+          "worker_id": "agy3",
+          "adapter": "agy",
+          "dependencies": [
+            "spec"
+          ],
+          "canonical_state": "INTEGRATED",
+          "display_state": "DONE",
+          "current_attempt_id": 1,
+          "attempts_count": 1,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "backend",
+              "worker_id": "agy3",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/backend/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1",
+              "env_info": {
+                "workspace_id": "w2B",
+                "pane_id": "w2B:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1"
+              },
+              "start_time": "2026-09-23T04:31:40.543503+00:00",
+              "end_time": "2026-09-23T04:33:59.768675+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [
+                "examples/minilinks/app/database.py",
+                "examples/minilinks/app/server.py"
+              ],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "changed_files": [
+                  "examples/minilinks/app/database.py",
+                  "examples/minilinks/app/server.py"
+                ],
+                "notes": "Implemented the is_favorite feature following standard library only and zero external dependencies. SQLite migration handles existing databases backward-compatibly. Boolean types are strictly enforced in PATCH/POST payloads and serialized as native JSON booleans.",
+                "status": "COMPLETED",
+                "summary": "Implemented is_favorite feature in MiniLinks backend (database schema, table migration, filtering, updates, boolean serialization in REST API)",
+                "task_id": "backend"
+              },
+              "state": "INTEGRATED",
+              "status": "SUCCESS",
+              "commit_hash": "c39bf0ac94048d468a1e6e217a689da02a12161d"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 1,
+            "task_id": "backend",
+            "worker_id": "agy3",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/backend/att-1",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1",
+            "env_info": {
+              "workspace_id": "w2B",
+              "pane_id": "w2B:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1"
+            },
+            "start_time": "2026-09-23T04:31:40.543503+00:00",
+            "end_time": "2026-09-23T04:33:59.768675+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [
+              "examples/minilinks/app/database.py",
+              "examples/minilinks/app/server.py"
+            ],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "changed_files": [
+                "examples/minilinks/app/database.py",
+                "examples/minilinks/app/server.py"
+              ],
+              "notes": "Implemented the is_favorite feature following standard library only and zero external dependencies. SQLite migration handles existing databases backward-compatibly. Boolean types are strictly enforced in PATCH/POST payloads and serialized as native JSON booleans.",
+              "status": "COMPLETED",
+              "summary": "Implemented is_favorite feature in MiniLinks backend (database schema, table migration, filtering, updates, boolean serialization in REST API)",
+              "task_id": "backend"
+            },
+            "state": "INTEGRATED",
+            "status": "SUCCESS",
+            "commit_hash": "c39bf0ac94048d468a1e6e217a689da02a12161d"
+          },
+          "status": "SUCCESS",
+          "state": "INTEGRATED",
+          "attempt_id": 1,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/backend/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1",
+          "env_info": {
+            "workspace_id": "w2B",
+            "pane_id": "w2B:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend/att-1"
+          },
+          "start_time": "2026-09-23T04:31:40.543503+00:00",
+          "end_time": "2026-09-23T04:33:59.768675+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/app/database.py",
+            "examples/minilinks/app/server.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/app/database.py",
+              "examples/minilinks/app/server.py"
+            ],
+            "notes": "Implemented the is_favorite feature following standard library only and zero external dependencies. SQLite migration handles existing databases backward-compatibly. Boolean types are strictly enforced in PATCH/POST payloads and serialized as native JSON booleans.",
+            "status": "COMPLETED",
+            "summary": "Implemented is_favorite feature in MiniLinks backend (database schema, table migration, filtering, updates, boolean serialization in REST API)",
+            "task_id": "backend"
+          },
+          "commit_hash": "c39bf0ac94048d468a1e6e217a689da02a12161d"
+        },
+        {
+          "task_id": "frontend",
+          "worker_id": "agy4",
+          "adapter": "agy",
+          "dependencies": [
+            "spec"
+          ],
+          "canonical_state": "INTEGRATED",
+          "display_state": "DONE",
+          "current_attempt_id": 2,
+          "attempts_count": 2,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "frontend",
+              "worker_id": "agy4",
+              "branch": "factory/run-20260923-043032/frontend/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-1",
+              "start_time": "2026-09-23T04:31:40.544171+00:00",
+              "end_time": "2026-09-23T04:35:41.349235+00:00",
+              "exit_code": -1,
+              "timed_out": true,
+              "state": "TIMED_OUT",
+              "status": "TIMEOUT",
+              "error": "Worker timed out after 240s"
+            },
+            {
+              "attempt_id": 2,
+              "task_id": "frontend",
+              "worker_id": "agy4",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/frontend/att-2",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2",
+              "env_info": {
+                "workspace_id": "w2D",
+                "pane_id": "w2D:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2"
+              },
+              "start_time": "2026-09-23T04:42:35.782870+00:00",
+              "end_time": "2026-09-23T04:45:18.989518+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [
+                "examples/minilinks/web/app.js",
+                "examples/minilinks/web/index.html",
+                "examples/minilinks/web/style.css"
+              ],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "changed_files": [
+                  "examples/minilinks/web/index.html",
+                  "examples/minilinks/web/style.css",
+                  "examples/minilinks/web/app.js"
+                ],
+                "notes": "Implemented standard-compliant favorite/star bookmark UI following the MiniLinks product specification. The star toggle buttons dispatch PATCH requests with native boolean JSON payloads, update DOM state and in-memory caches, and automatically remove unfavorited cards when the favorites filter is active. Filter states combine seamlessly with query searches.",
+                "status": "COMPLETED",
+                "summary": "Implemented favorite/star bookmark UI in index.html, style.css, and app.js, including the Favorites filter button in search/filter controls, star toggle buttons (\u2605/\u2606) per bookmark card triggering PATCH /api/bookmarks/<id> with is_favorite updates, filtering by favorites, and dedicated star styling.",
+                "task_id": "frontend"
+              },
+              "state": "INTEGRATED",
+              "status": "SUCCESS",
+              "commit_hash": "ad13cd22399b7da5b6ac23bf63d6b1af8dfa0437"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 2,
+            "task_id": "frontend",
+            "worker_id": "agy4",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/frontend/att-2",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2",
+            "env_info": {
+              "workspace_id": "w2D",
+              "pane_id": "w2D:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2"
+            },
+            "start_time": "2026-09-23T04:42:35.782870+00:00",
+            "end_time": "2026-09-23T04:45:18.989518+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [
+              "examples/minilinks/web/app.js",
+              "examples/minilinks/web/index.html",
+              "examples/minilinks/web/style.css"
+            ],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "changed_files": [
+                "examples/minilinks/web/index.html",
+                "examples/minilinks/web/style.css",
+                "examples/minilinks/web/app.js"
+              ],
+              "notes": "Implemented standard-compliant favorite/star bookmark UI following the MiniLinks product specification. The star toggle buttons dispatch PATCH requests with native boolean JSON payloads, update DOM state and in-memory caches, and automatically remove unfavorited cards when the favorites filter is active. Filter states combine seamlessly with query searches.",
+              "status": "COMPLETED",
+              "summary": "Implemented favorite/star bookmark UI in index.html, style.css, and app.js, including the Favorites filter button in search/filter controls, star toggle buttons (\u2605/\u2606) per bookmark card triggering PATCH /api/bookmarks/<id> with is_favorite updates, filtering by favorites, and dedicated star styling.",
+              "task_id": "frontend"
+            },
+            "state": "INTEGRATED",
+            "status": "SUCCESS",
+            "commit_hash": "ad13cd22399b7da5b6ac23bf63d6b1af8dfa0437"
+          },
+          "status": "SUCCESS",
+          "state": "INTEGRATED",
+          "attempt_id": 2,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/frontend/att-2",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2",
+          "env_info": {
+            "workspace_id": "w2D",
+            "pane_id": "w2D:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-2"
+          },
+          "start_time": "2026-09-23T04:42:35.782870+00:00",
+          "end_time": "2026-09-23T04:45:18.989518+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/web/app.js",
+            "examples/minilinks/web/index.html",
+            "examples/minilinks/web/style.css"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/web/index.html",
+              "examples/minilinks/web/style.css",
+              "examples/minilinks/web/app.js"
+            ],
+            "notes": "Implemented standard-compliant favorite/star bookmark UI following the MiniLinks product specification. The star toggle buttons dispatch PATCH requests with native boolean JSON payloads, update DOM state and in-memory caches, and automatically remove unfavorited cards when the favorites filter is active. Filter states combine seamlessly with query searches.",
+            "status": "COMPLETED",
+            "summary": "Implemented favorite/star bookmark UI in index.html, style.css, and app.js, including the Favorites filter button in search/filter controls, star toggle buttons (\u2605/\u2606) per bookmark card triggering PATCH /api/bookmarks/<id> with is_favorite updates, filtering by favorites, and dedicated star styling.",
+            "task_id": "frontend"
+          },
+          "commit_hash": "ad13cd22399b7da5b6ac23bf63d6b1af8dfa0437"
+        },
+        {
+          "task_id": "backend_tests",
+          "worker_id": "agy5",
+          "adapter": "agy",
+          "dependencies": [
+            "backend"
+          ],
+          "canonical_state": "INTEGRATED",
+          "display_state": "DONE",
+          "current_attempt_id": 1,
+          "attempts_count": 1,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "backend_tests",
+              "worker_id": "agy5",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/backend_tests/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1",
+              "env_info": {
+                "workspace_id": "w2C",
+                "pane_id": "w2C:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1"
+              },
+              "start_time": "2026-09-23T04:33:59.892007+00:00",
+              "end_time": "2026-09-23T04:36:11.061250+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [
+                "examples/minilinks/tests/test_api.py",
+                "examples/minilinks/tests/test_persistence.py"
+              ],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "changed_files": [
+                  "examples/minilinks/tests/test_api.py",
+                  "examples/minilinks/tests/test_persistence.py"
+                ],
+                "notes": "Implemented full test coverage for the is_favorite feature in test_api.py and test_persistence.py using standard library unittest, urllib, and sqlite3. All tests adhere strictly to SPEC.md and REST API contracts, verifying default values, boolean serialization, payload validation, query filtering, SQLite column integrity, multi-cycle server restart persistence, and database schema migrations.",
+                "status": "COMPLETED",
+                "summary": "Added comprehensive test coverage for the is_favorite feature across test_api.py and test_persistence.py, including default favorite state, PATCH toggle between true and false, GET favorites filtering (with query combination and case-insensitivity), validation on invalid non-boolean values, and accurate persistence across SQLite server restarts.",
+                "task_id": "backend_tests"
+              },
+              "state": "INTEGRATED",
+              "status": "SUCCESS",
+              "commit_hash": "81bdb47a82aa3eccef48219315b61332dd1938b8"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 1,
+            "task_id": "backend_tests",
+            "worker_id": "agy5",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/backend_tests/att-1",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1",
+            "env_info": {
+              "workspace_id": "w2C",
+              "pane_id": "w2C:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1"
+            },
+            "start_time": "2026-09-23T04:33:59.892007+00:00",
+            "end_time": "2026-09-23T04:36:11.061250+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [
+              "examples/minilinks/tests/test_api.py",
+              "examples/minilinks/tests/test_persistence.py"
+            ],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "changed_files": [
+                "examples/minilinks/tests/test_api.py",
+                "examples/minilinks/tests/test_persistence.py"
+              ],
+              "notes": "Implemented full test coverage for the is_favorite feature in test_api.py and test_persistence.py using standard library unittest, urllib, and sqlite3. All tests adhere strictly to SPEC.md and REST API contracts, verifying default values, boolean serialization, payload validation, query filtering, SQLite column integrity, multi-cycle server restart persistence, and database schema migrations.",
+              "status": "COMPLETED",
+              "summary": "Added comprehensive test coverage for the is_favorite feature across test_api.py and test_persistence.py, including default favorite state, PATCH toggle between true and false, GET favorites filtering (with query combination and case-insensitivity), validation on invalid non-boolean values, and accurate persistence across SQLite server restarts.",
+              "task_id": "backend_tests"
+            },
+            "state": "INTEGRATED",
+            "status": "SUCCESS",
+            "commit_hash": "81bdb47a82aa3eccef48219315b61332dd1938b8"
+          },
+          "status": "SUCCESS",
+          "state": "INTEGRATED",
+          "attempt_id": 1,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/backend_tests/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1",
+          "env_info": {
+            "workspace_id": "w2C",
+            "pane_id": "w2C:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/backend_tests/att-1"
+          },
+          "start_time": "2026-09-23T04:33:59.892007+00:00",
+          "end_time": "2026-09-23T04:36:11.061250+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/tests/test_api.py",
+            "examples/minilinks/tests/test_persistence.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/tests/test_api.py",
+              "examples/minilinks/tests/test_persistence.py"
+            ],
+            "notes": "Implemented full test coverage for the is_favorite feature in test_api.py and test_persistence.py using standard library unittest, urllib, and sqlite3. All tests adhere strictly to SPEC.md and REST API contracts, verifying default values, boolean serialization, payload validation, query filtering, SQLite column integrity, multi-cycle server restart persistence, and database schema migrations.",
+            "status": "COMPLETED",
+            "summary": "Added comprehensive test coverage for the is_favorite feature across test_api.py and test_persistence.py, including default favorite state, PATCH toggle between true and false, GET favorites filtering (with query combination and case-insensitivity), validation on invalid non-boolean values, and accurate persistence across SQLite server restarts.",
+            "task_id": "backend_tests"
+          },
+          "commit_hash": "81bdb47a82aa3eccef48219315b61332dd1938b8"
+        },
+        {
+          "task_id": "integration",
+          "worker_id": "agy6",
+          "adapter": "agy",
+          "dependencies": [
+            "frontend",
+            "backend_tests"
+          ],
+          "canonical_state": "INTEGRATED",
+          "display_state": "DONE",
+          "current_attempt_id": 1,
+          "attempts_count": 1,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "integration",
+              "worker_id": "agy6",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/integration/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+              "env_info": {
+                "workspace_id": "w2E",
+                "pane_id": "w2E:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+              },
+              "start_time": "2026-09-23T04:45:19.103364+00:00",
+              "end_time": "2026-09-23T04:47:44.284560+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [
+                "examples/minilinks/scripts/smoke_test.py"
+              ],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "changed_files": [
+                  "examples/minilinks/scripts/smoke_test.py"
+                ],
+                "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+                "status": "COMPLETED",
+                "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+                "task_id": "integration"
+              },
+              "state": "INTEGRATED",
+              "status": "SUCCESS",
+              "commit_hash": "87b95a8c4e81ef45833d4325f77cc34c0ab8a186"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 1,
+            "task_id": "integration",
+            "worker_id": "agy6",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/integration/att-1",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+            "env_info": {
+              "workspace_id": "w2E",
+              "pane_id": "w2E:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+            },
+            "start_time": "2026-09-23T04:45:19.103364+00:00",
+            "end_time": "2026-09-23T04:47:44.284560+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [
+              "examples/minilinks/scripts/smoke_test.py"
+            ],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "changed_files": [
+                "examples/minilinks/scripts/smoke_test.py"
+              ],
+              "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+              "status": "COMPLETED",
+              "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+              "task_id": "integration"
+            },
+            "state": "INTEGRATED",
+            "status": "SUCCESS",
+            "commit_hash": "87b95a8c4e81ef45833d4325f77cc34c0ab8a186"
+          },
+          "status": "SUCCESS",
+          "state": "INTEGRATED",
+          "attempt_id": 1,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/integration/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1",
+          "env_info": {
+            "workspace_id": "w2E",
+            "pane_id": "w2E:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/integration/att-1"
+          },
+          "start_time": "2026-09-23T04:45:19.103364+00:00",
+          "end_time": "2026-09-23T04:47:44.284560+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [
+            "examples/minilinks/scripts/smoke_test.py"
+          ],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "changed_files": [
+              "examples/minilinks/scripts/smoke_test.py"
+            ],
+            "notes": "Updated deterministic smoke test to verify favorite status validation in Step 4, favorite toggling (False -> True -> False -> True) via PATCH in Step 8, favorites filtering via GET /api/bookmarks?favorites=true, and persistence checks in SQLite. All components in app, web, tests, and scripts adhere strictly to the product specification and Python stdlib without third-party dependencies.",
+            "status": "COMPLETED",
+            "summary": "Hardened integration verification by updating examples/minilinks/scripts/smoke_test.py to validate default is_favorite behavior on bookmark creation, favorite toggling via PATCH, favorites filtering via GET /api/bookmarks?favorites=true, and direct SQLite integrity checks.",
+            "task_id": "integration"
+          },
+          "commit_hash": "87b95a8c4e81ef45833d4325f77cc34c0ab8a186"
+        },
+        {
+          "task_id": "audit",
+          "worker_id": "agy7",
+          "adapter": "agy",
+          "dependencies": [
+            "integration"
+          ],
+          "canonical_state": "COMPLETED",
+          "display_state": "DONE",
+          "current_attempt_id": 1,
+          "attempts_count": 1,
+          "attempts": [
+            {
+              "attempt_id": 1,
+              "task_id": "audit",
+              "worker_id": "agy7",
+              "adapter": "agy",
+              "model": "gemini-3.8-flash-high",
+              "branch": "factory/run-20260923-043032/audit/att-1",
+              "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1",
+              "env_info": {
+                "workspace_id": "w2F",
+                "pane_id": "w2F:p1",
+                "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1"
+              },
+              "start_time": "2026-09-23T04:47:44.446256+00:00",
+              "end_time": "2026-09-23T04:49:28.611497+00:00",
+              "exit_code": 0,
+              "agy_status": "SUCCESS",
+              "changed_paths": [],
+              "path_violations": [],
+              "missing_expected": [],
+              "structured_output": {
+                "findings": [
+                  {
+                    "area": "backend",
+                    "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+                    "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+                    "severity": "INFO"
+                  },
+                  {
+                    "area": "backend",
+                    "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+                    "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+                    "severity": "INFO"
+                  },
+                  {
+                    "area": "frontend",
+                    "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+                    "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+                    "severity": "INFO"
+                  },
+                  {
+                    "area": "tests",
+                    "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+                    "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+                    "severity": "INFO"
+                  }
+                ],
+                "status": "APPROVED",
+                "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+                "task_id": "audit"
+              },
+              "state": "PATH_VALIDATED",
+              "status": "SUCCESS"
+            }
+          ],
+          "latest_result": {
+            "attempt_id": 1,
+            "task_id": "audit",
+            "worker_id": "agy7",
+            "adapter": "agy",
+            "model": "gemini-3.8-flash-high",
+            "branch": "factory/run-20260923-043032/audit/att-1",
+            "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1",
+            "env_info": {
+              "workspace_id": "w2F",
+              "pane_id": "w2F:p1",
+              "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1"
+            },
+            "start_time": "2026-09-23T04:47:44.446256+00:00",
+            "end_time": "2026-09-23T04:49:28.611497+00:00",
+            "exit_code": 0,
+            "agy_status": "SUCCESS",
+            "changed_paths": [],
+            "path_violations": [],
+            "missing_expected": [],
+            "structured_output": {
+              "findings": [
+                {
+                  "area": "backend",
+                  "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+                  "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+                  "severity": "INFO"
+                },
+                {
+                  "area": "backend",
+                  "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+                  "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+                  "severity": "INFO"
+                },
+                {
+                  "area": "frontend",
+                  "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+                  "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+                  "severity": "INFO"
+                },
+                {
+                  "area": "tests",
+                  "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+                  "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+                  "severity": "INFO"
+                }
+              ],
+              "status": "APPROVED",
+              "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+              "task_id": "audit"
+            },
+            "state": "PATH_VALIDATED",
+            "status": "SUCCESS"
+          },
+          "status": "SUCCESS",
+          "state": "PATH_VALIDATED",
+          "attempt_id": 1,
+          "model": "gemini-3.8-flash-high",
+          "branch": "factory/run-20260923-043032/audit/att-1",
+          "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1",
+          "env_info": {
+            "workspace_id": "w2F",
+            "pane_id": "w2F:p1",
+            "worktree_path": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/audit/att-1"
+          },
+          "start_time": "2026-09-23T04:47:44.446256+00:00",
+          "end_time": "2026-09-23T04:49:28.611497+00:00",
+          "exit_code": 0,
+          "agy_status": "SUCCESS",
+          "changed_paths": [],
+          "path_violations": [],
+          "missing_expected": [],
+          "structured_output": {
+            "findings": [
+              {
+                "area": "backend",
+                "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+                "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+                "severity": "INFO"
+              },
+              {
+                "area": "backend",
+                "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+                "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+                "severity": "INFO"
+              },
+              {
+                "area": "frontend",
+                "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+                "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+                "severity": "INFO"
+              },
+              {
+                "area": "tests",
+                "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+                "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+                "severity": "INFO"
+              }
+            ],
+            "status": "APPROVED",
+            "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+            "task_id": "audit"
+          }
+        }
+      ]
+    }
+  ],
+  "final_audit": {
+    "findings": [
+      {
+        "area": "backend",
+        "evidence": "examples/minilinks/app/server.py:438-440 reads complete static file into memory via f.read()",
+        "recommendation": "For current lightweight web assets (index.html, style.css, app.js), full memory reads are efficient. For future expansion with larger static assets, consider streaming file chunks to self.wfile using shutil.copyfileobj to optimize memory utilization.",
+        "severity": "INFO"
+      },
+      {
+        "area": "backend",
+        "evidence": "examples/minilinks/app/database.py:125 uses instr(LOWER(COALESCE(...)), ?) > 0 for case-insensitive search filtering",
+        "recommendation": "Using instr with lowercased values avoids SQLite LIKE wildcard escaping complications (% and _) while guaranteeing robust case-insensitive substring matching. Consider adding an index on LOWER(title) if the dataset grows significantly.",
+        "severity": "INFO"
+      },
+      {
+        "area": "frontend",
+        "evidence": "examples/minilinks/web/app.js:78-87 implements safeHref and normalizeUrl to sanitize URLs and prevent javascript: URI XSS vectors",
+        "recommendation": "Maintain this defense-in-depth sanitization pattern alongside textContent-based DOM rendering for user-supplied strings.",
+        "severity": "INFO"
+      },
+      {
+        "area": "tests",
+        "evidence": "examples/minilinks/tests/test_api.py:583 and test_persistence.py:159 use time.sleep(1.05) to ensure second-precision updated_at timestamps advance past boundary",
+        "recommendation": "While time.sleep(1.05) ensures deterministic assertions on second-resolution ISO-8601 timestamps, adopting microsecond resolution (e.g. datetime.now(timezone.utc).isoformat()) would allow removing sleeps to speed up test execution.",
+        "severity": "INFO"
+      }
+    ],
+    "status": "APPROVED",
+    "summary": "Comprehensive independent audit of MiniLinks in examples/minilinks/ confirms 100% compliance with product specification SPEC.md. All REST API endpoints (GET /health, GET /api/bookmarks, POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>), SQLite persistence with boolean serialization, directory traversal protection, responsive vanilla HTML/CSS/JS frontend, and deterministic test harness (test_api.py, test_persistence.py, smoke_test.py) meet all functional and non-functional requirements with zero external dependencies.",
+    "task_id": "audit"
+  },
+  "final_status": "COMPLETED",
+  "concurrency_evidence": {
+    "attempts": [
+      {
+        "task_id": "spec",
+        "attempt_id": 1,
+        "worker_id": "agy2",
+        "start": "2026-09-23T04:30:32.872691+00:00",
+        "end": "2026-09-23T04:31:40.400694+00:00"
+      },
+      {
+        "task_id": "backend",
+        "attempt_id": 1,
+        "worker_id": "agy3",
+        "start": "2026-09-23T04:31:40.543503+00:00",
+        "end": "2026-09-23T04:33:59.768675+00:00"
+      },
+      {
+        "task_id": "frontend",
+        "attempt_id": 1,
+        "worker_id": "agy4",
+        "start": "2026-09-23T04:31:40.544171+00:00",
+        "end": "2026-09-23T04:35:41.349235+00:00"
+      },
+      {
+        "task_id": "frontend",
+        "attempt_id": 2,
+        "worker_id": "agy4",
+        "start": "2026-09-23T04:42:35.782870+00:00",
+        "end": "2026-09-23T04:45:18.989518+00:00"
+      },
+      {
+        "task_id": "backend_tests",
+        "attempt_id": 1,
+        "worker_id": "agy5",
+        "start": "2026-09-23T04:33:59.892007+00:00",
+        "end": "2026-09-23T04:36:11.061250+00:00"
+      },
+      {
+        "task_id": "integration",
+        "attempt_id": 1,
+        "worker_id": "agy6",
+        "start": "2026-09-23T04:45:19.103364+00:00",
+        "end": "2026-09-23T04:47:44.284560+00:00"
+      },
+      {
+        "task_id": "audit",
+        "attempt_id": 1,
+        "worker_id": "agy7",
+        "start": "2026-09-23T04:47:44.446256+00:00",
+        "end": "2026-09-23T04:49:28.611497+00:00"
+      }
+    ],
+    "recorded_attempts_count": 7
+  },
+  "validation_results": {
+    "minilinks_unit_tests": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "examples/minilinks/tests",
+        "-v"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "test_concurrent_api_requests (test_api.TestMiniLinksAPI.test_concurrent_api_requests)\nVerifies multiple threads can query the API concurrently without deadlocks. ... ok\ntest_cors_options (test_api.TestMiniLinksAPI.test_cors_options)\nVerifies OPTIONS preflight request returns 204 with CORS headers. ... ok\ntest_create_bookmark_default_is_favorite (test_api.TestMiniLinksAPI.test_create_bookmark_default_is_favorite)\nVerifies newly created bookmarks have is_favorite=False by default. ... ok\ntest_create_bookmark_default_notes (test_api.TestMiniLinksAPI.test_create_bookmark_default_notes)\nVerifies POST /api/bookmarks handles omitted or None notes with empty string default. ... ok\ntest_create_bookmark_invalid_is_favorite (test_api.TestMiniLinksAPI.test_create_bookmark_invalid_is_favorite)\nVerifies POST /api/bookmarks rejects non-boolean is_favorite with 400 Bad Request. ... ok\ntest_create_bookmark_invalid_notes_or_payload (test_api.TestMiniLinksAPI.test_create_bookmark_invalid_notes_or_payload)\nVerifies POST /api/bookmarks returns 400 when notes is non-string or payload is malformed. ... ok\ntest_create_bookmark_missing_or_invalid_title (test_api.TestMiniLinksAPI.test_create_bookmark_missing_or_invalid_title)\nVerifies POST /api/bookmarks returns 400 when title is missing, empty, or non-string. ... ok\ntest_create_bookmark_missing_or_invalid_url (test_api.TestMiniLinksAPI.test_create_bookmark_missing_or_invalid_url)\nVerifies POST /api/bookmarks returns 400 when url is missing, empty, invalid scheme, or non-string. ... ok\ntest_create_bookmark_valid (test_api.TestMiniLinksAPI.test_create_bookmark_valid)\nVerifies POST /api/bookmarks creates a bookmark, returns 201, and writes to SQLite with is_favorite=False. ... ok\ntest_create_bookmark_with_explicit_is_favorite (test_api.TestMiniLinksAPI.test_create_bookmark_with_explicit_is_favorite)\nVerifies creating bookmarks with explicit boolean is_favorite (True or False). ... ok\ntest_delete_bookmark_success_and_subsequent_404 (test_api.TestMiniLinksAPI.test_delete_bookmark_success_and_subsequent_404)\nVerifies DELETE /api/bookmarks/<id> deletes a bookmark and subsequent calls return 404. ... ok\ntest_delete_bookmark_validation_errors (test_api.TestMiniLinksAPI.test_delete_bookmark_validation_errors)\nVerifies DELETE /api/bookmarks/<id> returns 404 for missing ID and 400 for invalid ID. ... ok\ntest_directory_traversal_protection (test_api.TestMiniLinksAPI.test_directory_traversal_protection)\nVerifies path traversal attempts are rejected with 403 or 404. ... ok\ntest_get_bookmark_by_id (test_api.TestMiniLinksAPI.test_get_bookmark_by_id)\nVerifies GET /api/bookmarks/<id> returns 200, 404 for missing, and 400 for invalid ID. ... ok\ntest_get_bookmarks_favorites_filter (test_api.TestMiniLinksAPI.test_get_bookmarks_favorites_filter)\nVerifies GET /api/bookmarks?favorites=true returns only favorite bookmarks and supports q combination. ... ok\ntest_health_check (test_api.TestMiniLinksAPI.test_health_check)\nVerifies GET /health returns 200 OK and status ok payload. ... ok\ntest_initial_bookmarks_empty (test_api.TestMiniLinksAPI.test_initial_bookmarks_empty)\nVerifies GET /api/bookmarks returns 200 and an empty list initially. ... ok\ntest_patch_invalid_is_favorite (test_api.TestMiniLinksAPI.test_patch_invalid_is_favorite)\nVerifies PATCH /api/bookmarks/<id> rejects non-boolean is_favorite with 400 Bad Request. ... ok\ntest_patch_toggle_is_favorite (test_api.TestMiniLinksAPI.test_patch_toggle_is_favorite)\nVerifies PATCH /api/bookmarks/<id> toggles is_favorite to true and false with boolean serialization. ... ok\ntest_search_filtering (test_api.TestMiniLinksAPI.test_search_filtering)\nVerifies GET /api/bookmarks?q= matches title, url, or notes case-insensitively. ... ok\ntest_static_file_serving (test_api.TestMiniLinksAPI.test_static_file_serving)\nVerifies static assets (HTML, CSS, JS) are served with correct MIME types. ... ok\ntest_unknown_endpoints (test_api.TestMiniLinksAPI.test_unknown_endpoints)\nVerifies unknown API endpoints return 404 JSON error. ... ok\ntest_update_bookmark_valid (test_api.TestMiniLinksAPI.test_update_bookmark_valid)\nVerifies PATCH /api/bookmarks/<id> updates fields and refreshes updated_at timestamp. ... ok\ntest_update_bookmark_validation_errors (test_api.TestMiniLinksAPI.test_update_bookmark_validation_errors)\nVerifies PATCH /api/bookmarks/<id> rejects invalid payloads and non-existent IDs. ... ok\ntest_concurrent_read_requests (test_persistence.TestMiniLinksPersistence.test_concurrent_read_requests)\nVerifies concurrent threads reading the SQLite database through the server do not deadlock. ... ok\ntest_deletion_and_addition_persistence_across_multiple_restarts (test_persistence.TestMiniLinksPersistence.test_deletion_and_addition_persistence_across_multiple_restarts)\nVerifies additions and deletions persist across multiple server restart cycles. ... ok\ntest_favorite_persistence_and_mutations_across_multiple_restarts (test_persistence.TestMiniLinksPersistence.test_favorite_persistence_and_mutations_across_multiple_restarts)\nVerifies favorite status toggles and mutations persist across three consecutive server restart lifecycles. ... ok\ntest_persistence_across_server_restart (test_persistence.TestMiniLinksPersistence.test_persistence_across_server_restart)\nValidates SQLite persistence across server lifecycle restarts: ... ok\ntest_preexisting_sqlite_database_loading (test_persistence.TestMiniLinksPersistence.test_preexisting_sqlite_database_loading)\nVerifies server initializes properly and serves is_favorite from a pre-existing SQLite database. ... ok\ntest_sqlite_backward_compatibility_migration (test_persistence.TestMiniLinksPersistence.test_sqlite_backward_compatibility_migration)\nVerifies database migration automatically adds is_favorite column when opening an older SQLite database. ... ok\n\n----------------------------------------------------------------------\nRan 30 tests in 37.451s\n\nOK\n",
+      "passed": true
+    },
+    "minilinks_smoke_test": {
+      "command": [
+        "python3",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "returncode": 0,
+      "stdout": "======================================================================\nMiniLinks 12-Step Smoke Test Verification Suite\n======================================================================\n[Step 1/12] Server Bootstrap: starting server on ephemeral port...\n  --> PASS: Server listening at http://127.0.0.1:44689 (db: /tmp/tmpbv7l5bpc/smoke_test.db)\n[Step 2/12] Health Check: GET /health...\n  --> PASS: Health check returned HTTP 200: {'status': 'ok'}\n[Step 3/12] Initial Empty State: GET /api/bookmarks...\n  --> PASS: Initial bookmarks list is empty []\n[Step 4/12] Create Bookmark (Valid): POST /api/bookmarks...\n  --> PASS: Created bookmark with ID 1 (is_favorite=False) at 2026-09-23T04:53:51Z\n[Step 5/12] Create Bookmark Validation Error: POST /api/bookmarks with invalid payload...\n  --> PASS: Rejected invalid creation payload with HTTP 400: Both 'title' and 'url' are required non-empty strings\n[Step 6/12] Verify Bookmark Listing: GET /api/bookmarks...\n  --> PASS: Listing returned exactly 1 bookmark matching ID 1\n[Step 7/12] Search Filtering: GET /api/bookmarks?q=Python and ?q=NonExistentTerm...\n  --> PASS: Search correctly filtered matching and non-matching queries\n[Step 8/12] Update Bookmark & Favorite: PATCH /api/bookmarks/<id>...\n  --> PASS: Updated bookmark notes and verified favorite toggling via PATCH; updated_at refreshed to 2026-09-23T04:53:52Z; favorites filter verified via GET\n[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...\n  --> PASS: Non-existent PATCH returned HTTP 404: Bookmark not found\n[Step 10/12] Delete Bookmark: DELETE /api/bookmarks/1...\n  --> PASS: Successfully deleted bookmark 1\n[Step 11/12] Delete Non-Existent Bookmark: DELETE /api/bookmarks/99999...\n  --> PASS: Non-existent DELETE returned HTTP 404: Bookmark not found\n[Step 12/12] Verify Static Asset Delivery: GET /, /style.css, /app.js...\n  --> PASS: All static assets (/, /style.css, /app.js) served with HTTP 200\n======================================================================\nSUCCESS: All 12 deterministic smoke test steps passed!\n======================================================================\nCleaning up server and temporary test directory...\nCleanup completed.\n",
+      "stderr": "",
+      "passed": true
+    },
+    "miniboard_regression_tests": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "test_cors_options_preflight (test_api.TestApiEndpoints.test_cors_options_preflight)\nOPTIONS request returns 204 No Content with CORS allow headers. ... ok\ntest_create_task_trims_whitespace (test_api.TestApiEndpoints.test_create_task_trims_whitespace)\nPOST /api/tasks trims leading and trailing whitespace from title. ... ok\ntest_create_task_validation_empty_or_whitespace_title (test_api.TestApiEndpoints.test_create_task_validation_empty_or_whitespace_title)\nPOST /api/tasks with empty or whitespace-only title must return 400 Bad Request. ... ok\ntest_create_task_validation_invalid_status (test_api.TestApiEndpoints.test_create_task_validation_invalid_status)\nPOST /api/tasks with status not in ('TODO', 'DOING', 'DONE') returns 400. ... ok\ntest_create_task_validation_malformed_json (test_api.TestApiEndpoints.test_create_task_validation_malformed_json)\nPOST /api/tasks with invalid JSON syntax must return 400 Bad Request. ... ok\ntest_create_task_validation_missing_body (test_api.TestApiEndpoints.test_create_task_validation_missing_body)\nPOST /api/tasks without body or content-length must fail with 400 Bad Request. ... ok\ntest_create_task_validation_missing_title (test_api.TestApiEndpoints.test_create_task_validation_missing_title)\nPOST /api/tasks without 'title' field must return 400 Bad Request. ... ok\ntest_create_task_validation_non_string_title (test_api.TestApiEndpoints.test_create_task_validation_non_string_title)\nPOST /api/tasks with non-string title must return 400 Bad Request. ... ok\ntest_create_task_with_default_status (test_api.TestApiEndpoints.test_create_task_with_default_status)\nPOST /api/tasks without status must default to 'TODO'. ... ok\ntest_create_task_with_explicit_valid_statuses (test_api.TestApiEndpoints.test_create_task_with_explicit_valid_statuses)\nPOST /api/tasks with explicit 'TODO', 'DOING', and 'DONE' statuses. ... ok\ntest_delete_task_invalid_id (test_api.TestApiEndpoints.test_delete_task_invalid_id)\nDELETE /api/tasks/<id> with non-integer ID returns 400 Bad Request. ... ok\ntest_delete_task_not_found (test_api.TestApiEndpoints.test_delete_task_not_found)\nDELETE /api/tasks/<id> on non-existent task returns 404 Not Found. ... ok\ntest_delete_task_success (test_api.TestApiEndpoints.test_delete_task_success)\nDELETE /api/tasks/<id> removes the task and returns {'status': 'deleted', 'id': <id>}. ... ok\ntest_get_single_task_invalid_id (test_api.TestApiEndpoints.test_get_single_task_invalid_id)\nGET /api/tasks/<id> with non-integer or non-positive ID returns 400 Bad Request. ... ok\ntest_get_single_task_not_found (test_api.TestApiEndpoints.test_get_single_task_not_found)\nGET /api/tasks/<id> with non-existent ID returns 404 Not Found. ... ok\ntest_get_single_task_success (test_api.TestApiEndpoints.test_get_single_task_success)\nGET /api/tasks/<id> retrieves an existing task by ID. ... ok\ntest_get_tasks_initial_empty_list (test_api.TestApiEndpoints.test_get_tasks_initial_empty_list)\nGET /api/tasks must return HTTP 200 and an empty JSON array [] initially. ... ok\ntest_get_tasks_ordering_and_content (test_api.TestApiEndpoints.test_get_tasks_ordering_and_content)\nGET /api/tasks returns all tasks ordered by id ASC. ... ok\ntest_health_check_returns_ok (test_api.TestApiEndpoints.test_health_check_returns_ok)\nGET /health must return HTTP 200 with JSON payload {'status': 'ok'}. ... ok\ntest_patch_task_both_title_and_status (test_api.TestApiEndpoints.test_patch_task_both_title_and_status)\nPATCH /api/tasks/<id> updates both title and status simultaneously. ... ok\ntest_patch_task_not_found (test_api.TestApiEndpoints.test_patch_task_not_found)\nPATCH /api/tasks/<id> with non-existent ID returns 404 Not Found. ... ok\ntest_patch_task_status_transition (test_api.TestApiEndpoints.test_patch_task_status_transition)\nPATCH /api/tasks/<id> updates status while preserving title. ... ok\ntest_patch_task_title (test_api.TestApiEndpoints.test_patch_task_title)\nPATCH /api/tasks/<id> updates title while preserving status. ... ok\ntest_patch_task_validation_errors (test_api.TestApiEndpoints.test_patch_task_validation_errors)\nPATCH /api/tasks/<id> invalid payloads return 400 Bad Request. ... ok\ntest_static_file_app_js_serves_javascript (test_api.TestApiEndpoints.test_static_file_app_js_serves_javascript)\nGET /app.js must serve app.js with Content-Type application/javascript or text/javascript. ... ok\ntest_static_file_directory_traversal_rejected (test_api.TestApiEndpoints.test_static_file_directory_traversal_rejected)\nDirectory traversal attempts (../ or ..%2F) must be rejected with 403 or 404. ... ok\ntest_static_file_index_html_serves_html (test_api.TestApiEndpoints.test_static_file_index_html_serves_html)\nGET /index.html must serve index.html with Content-Type text/html. ... ok\ntest_static_file_not_found (test_api.TestApiEndpoints.test_static_file_not_found)\nGET /nonexistent.txt must return 404 Not Found. ... ok\ntest_static_file_root_serves_html (test_api.TestApiEndpoints.test_static_file_root_serves_html)\nGET / must serve index.html with Content-Type text/html. ... ok\ntest_static_file_style_css_serves_css (test_api.TestApiEndpoints.test_static_file_style_css_serves_css)\nGET /style.css must serve style.css with Content-Type text/css. ... ok\ntest_unknown_api_endpoints_return_404_json (test_api.TestApiEndpoints.test_unknown_api_endpoints_return_404_json)\nUnknown /api endpoints must return 404 with JSON error payload. ... ok\ntest_persistence_across_multiple_server_cycles (test_persistence.TestPersistence.test_persistence_across_multiple_server_cycles)\nValidates persistence across three consecutive server restarts. ... ok\ntest_persistence_across_server_restart (test_persistence.TestPersistence.test_persistence_across_server_restart)\nValidates SQLite persistence across server lifecycle restarts: ... ok\ntest_sqlite_schema_and_constraints (test_persistence.TestPersistence.test_sqlite_schema_and_constraints)\nVerifies that SQLite schema conforms strictly to specification: ... ok\n\n----------------------------------------------------------------------\nRan 34 tests in 25.937s\n\nOK\n",
+      "passed": true
+    },
+    "factory_core_tests": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "factory_tests",
+        "-v"
+      ],
+      "returncode": 0,
+      "stdout": "[factory/run-20260923-045421/task_root/att-1 08a54e9] feat(task_root): Successfully finished task_root\n 1 file changed, 1 insertion(+)\n create mode 100644 factory_tests/fixtures/output_task_root_run-20260923-045421.txt\n[factory/run-20260923-045421/task_branch_b/att-1 a7a49cc] feat(task_branch_b): Successfully finished task_branch_b\n 1 file changed, 1 insertion(+)\n create mode 100644 factory_tests/fixtures/output_task_branch_b_run-20260923-045421.txt\n[factory/run-20260923-045421/task_branch_a/att-1 cc128af] feat(task_branch_a): Successfully finished task_branch_a\n 1 file changed, 1 insertion(+)\n create mode 100644 factory_tests/fixtures/output_task_branch_a_run-20260923-045421.txt\n[factory/run-20260923-045421/task_join/att-1 c90347f] feat(task_join): Successfully finished task_join\n 1 file changed, 1 insertion(+)\n create mode 100644 factory_tests/fixtures/output_task_join_run-20260923-045421.txt\n[main 7a32ad2] chore: setup conflict test fixture\n 1 file changed, 1 insertion(+)\n create mode 100644 factory_tests/fixtures/shared_conflict.txt\n[factory/run-20260923-045423/task_conflictor_2/att-1 4916360] feat(task_conflictor_2): Modified conflict file by task_conflictor_2\n 1 file changed, 1 insertion(+), 1 deletion(-)\n[factory/run-20260923-045423/task_conflictor_1/att-1 ee2b072] feat(task_conflictor_1): Modified conflict file by task_conflictor_1\n 1 file changed, 1 insertion(+), 1 deletion(-)\n",
+      "stderr": "test_invariant_enforced (test_factory_core.TestMutationSafety.test_invariant_enforced) ... ok\ntest_in_scope_path_accepted (test_factory_core.TestOutOfScopeDiffRejection.test_in_scope_path_accepted) ... ok\ntest_out_of_scope_path_detected (test_factory_core.TestOutOfScopeDiffRejection.test_out_of_scope_path_detected) ... ok\ntest_directory_glob_boundary (test_factory_core.TestPathAllowlist.test_directory_glob_boundary) ... ok\ntest_exact_path_match (test_factory_core.TestPathAllowlist.test_exact_path_match) ... ok\ntest_multi_pattern_matching (test_factory_core.TestPathAllowlist.test_multi_pattern_matching) ... ok\ntest_prefix_boundary_without_glob (test_factory_core.TestPathAllowlist.test_prefix_boundary_without_glob) ... ok\ntest_safe_paths (test_factory_core.TestPathSafety.test_safe_paths) ... ok\ntest_unsafe_escape_paths (test_factory_core.TestPathSafety.test_unsafe_escape_paths) ... ok\ntest_absolute_path_escape_rejected (test_factory_core.TestPlanValidation.test_absolute_path_escape_rejected) ... ok\ntest_dependency_cycle_rejected (test_factory_core.TestPlanValidation.test_dependency_cycle_rejected) ... ok\ntest_duplicate_task_ids_rejected (test_factory_core.TestPlanValidation.test_duplicate_task_ids_rejected) ... ok\ntest_missing_dependency_rejected (test_factory_core.TestPlanValidation.test_missing_dependency_rejected) ... ok\ntest_missing_required_top_level_fields (test_factory_core.TestPlanValidation.test_missing_required_top_level_fields) ... ok\ntest_unknown_worker_rejected (test_factory_core.TestPlanValidation.test_unknown_worker_rejected) ... ok\ntest_unsafe_path_escape_rejected (test_factory_core.TestPlanValidation.test_unsafe_path_escape_rejected) ... ok\ntest_valid_plan_passes (test_factory_core.TestPlanValidation.test_valid_plan_passes) ... ok\ntest_clean_owned_resources_idempotent (test_factory_core.TestResourceManagerSafety.test_clean_owned_resources_idempotent) ... ok\ntest_foreign_workspace_mutation_strictly_forbidden (test_factory_core.TestResourceManagerSafety.test_foreign_workspace_mutation_strictly_forbidden) ... ok\ntest_owned_workspace_cleanup_allowed (test_factory_core.TestResourceManagerSafety.test_owned_workspace_cleanup_allowed) ... ok\ntest_register_and_verify_ownership (test_factory_core.TestResourceManagerSafety.test_register_and_verify_ownership) ... ok\ntest_completed_tasks_correctly_identified (test_factory_core.TestResumeDecision.test_completed_tasks_correctly_identified) ... ok\ntest_failing_command (test_factory_core.TestValidationCommandExecution.test_failing_command) ... ok\ntest_passing_command (test_factory_core.TestValidationCommandExecution.test_passing_command) ... ok\ntest_timeout_marks_timed_out_and_cleans_workspace (test_v3_capabilities.TestV3AttemptIsolationAndTimeout.test_timeout_marks_timed_out_and_cleans_workspace) ... ok\ntest_run_scoped_resource_isolation (test_v3_capabilities.TestV3ConcurrentRunIsolation.test_run_scoped_resource_isolation) ... ok\ntest_dag_failure_propagation (test_v3_capabilities.TestV3DAGScheduler.test_dag_failure_propagation)\nValidates that if T1 fails, dependent T2 transitions to BLOCKED. ... ok\ntest_dag_fan_out_fan_in (test_v3_capabilities.TestV3DAGScheduler.test_dag_fan_out_fan_in)\nValidates diamond DAG: T1 -> (T2, T3) -> T4. ... ok\ntest_crash_after_commit_and_reconciliation_resume (test_v3_capabilities.TestV3FailpointAndResume.test_crash_after_commit_and_reconciliation_resume)\nSimulates crash after commit (Case B) and tests reconciliation resume to INTEGRATED. ... ok\ntest_merge_conflict_detected_and_aborted (test_v3_capabilities.TestV3GitConflictHandling.test_merge_conflict_detected_and_aborted)\nSimulates merge conflict between two branches modifying the same line. ... ok\ntest_canonical_to_display_state_mapping (test_v3_capabilities.TestV3StatusProjectionContract.test_canonical_to_display_state_mapping) ... ok\ntest_status_projection_structure (test_v3_capabilities.TestV3StatusProjectionContract.test_status_projection_structure) ... ok\ntest_symlink_pointing_outside_project_detected (test_v3_capabilities.TestV3SymlinkSecurity.test_symlink_pointing_outside_project_detected) ... ok\ntest_adapter_registry_lookup (test_v3_capabilities.TestV3WorkerAdapter.test_adapter_registry_lookup) ... ok\ntest_unknown_adapter_raises (test_v3_capabilities.TestV3WorkerAdapter.test_unknown_adapter_raises) ... ok\n\n----------------------------------------------------------------------\nRan 35 tests in 3.997s\n\nOK\n",
+      "passed": true
+    }
+  }
+}

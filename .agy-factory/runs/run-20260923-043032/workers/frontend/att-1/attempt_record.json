@@ -1,0 +1,14 @@
+{
+  "attempt_id": 1,
+  "task_id": "frontend",
+  "worker_id": "agy4",
+  "branch": "factory/run-20260923-043032/frontend/att-1",
+  "worktree": "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-043032/frontend/att-1",
+  "start_time": "2026-09-23T04:31:40.544171+00:00",
+  "end_time": "2026-09-23T04:35:41.349235+00:00",
+  "exit_code": -1,
+  "timed_out": true,
+  "state": "TIMED_OUT",
+  "status": "TIMEOUT",
+  "error": "Worker timed out after 240s"
+}

@@ -175,17 +175,19 @@ class TestV3WorkerAdapter(unittest.TestCase):
 
     def test_adapter_registry_lookup(self):
         mock_herdr = MockHerdrClient()
-        res_mgr = ResourceManager(mock_herdr)
-        worker_cfg = {"adapter": "fake_worker", "command": "fake"}
-        adapter = get_adapter("test_worker", worker_cfg, mock_herdr, res_mgr)
-        self.assertIsInstance(adapter, FakeWorkerAdapter)
+        with tempfile.TemporaryDirectory() as td:
+            res_mgr = ResourceManager(mock_herdr, state_file=pathlib.Path(td) / "owned.json")
+            worker_cfg = {"adapter": "fake_worker", "command": "fake"}
+            adapter = get_adapter("test_worker", worker_cfg, mock_herdr, res_mgr)
+            self.assertIsInstance(adapter, FakeWorkerAdapter)
 
     def test_unknown_adapter_raises(self):
         mock_herdr = MockHerdrClient()
-        res_mgr = ResourceManager(mock_herdr)
-        worker_cfg = {"adapter": "non_existent_adapter"}
-        with self.assertRaises(ValueError):
-            get_adapter("test_worker", worker_cfg, mock_herdr, res_mgr)
+        with tempfile.TemporaryDirectory() as td:
+            res_mgr = ResourceManager(mock_herdr, state_file=pathlib.Path(td) / "owned.json")
+            worker_cfg = {"adapter": "non_existent_adapter"}
+            with self.assertRaises(ValueError):
+                get_adapter("test_worker", worker_cfg, mock_herdr, res_mgr)
 
 
 class TestV3DAGScheduler(unittest.TestCase):
@@ -427,26 +429,27 @@ class TestV3ConcurrentRunIsolation(unittest.TestCase):
 
     def test_run_scoped_resource_isolation(self):
         mock_herdr = MockHerdrClient()
-        res_mgr = ResourceManager(mock_herdr)
+        with tempfile.TemporaryDirectory() as td:
+            res_mgr = ResourceManager(mock_herdr, state_file=pathlib.Path(td) / "owned.json")
 
-        run_a = "run-test-isolation-A"
-        run_b = "run-test-isolation-B"
+            run_a = "run-test-isolation-A"
+            run_b = "run-test-isolation-B"
 
-        res_mgr.record_workspace("ws-A-1", "pane-A-1", run_id=run_a)
-        res_mgr.record_workspace("ws-B-1", "pane-B-1", run_id=run_b)
+            res_mgr.record_workspace("ws-A-1", "pane-A-1", run_id=run_a)
+            res_mgr.record_workspace("ws-B-1", "pane-B-1", run_id=run_b)
 
-        self.assertIn("ws-A-1", res_mgr.state["runs"][run_a]["workspace_ids"])
-        self.assertIn("ws-B-1", res_mgr.state["runs"][run_b]["workspace_ids"])
+            self.assertIn("ws-A-1", res_mgr.state["runs"][run_a]["workspace_ids"])
+            self.assertIn("ws-B-1", res_mgr.state["runs"][run_b]["workspace_ids"])
 
-        # Clean only run_a
-        res_mgr.cleanup_owned_resources(run_id=run_a)
-        self.assertNotIn(run_a, res_mgr.state["runs"])
-        self.assertIn(run_b, res_mgr.state["runs"])
-        self.assertIn("ws-B-1", res_mgr.state["runs"][run_b]["workspace_ids"])
+            # Clean only run_a
+            res_mgr.cleanup_owned_resources(run_id=run_a)
+            self.assertNotIn(run_a, res_mgr.state["runs"])
+            self.assertIn(run_b, res_mgr.state["runs"])
+            self.assertIn("ws-B-1", res_mgr.state["runs"][run_b]["workspace_ids"])
 
-        # Clean run_b
-        res_mgr.cleanup_owned_resources(run_id=run_b)
-        self.assertNotIn(run_b, res_mgr.state["runs"])
+            # Clean run_b
+            res_mgr.cleanup_owned_resources(run_id=run_b)
+            self.assertNotIn(run_b, res_mgr.state["runs"])
 
 
 class TestV3SymlinkSecurity(unittest.TestCase):

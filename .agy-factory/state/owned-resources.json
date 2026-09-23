@@ -54,7 +54,14 @@
       "factory/run-20260922-234849/wave1_tests",
       "factory/run-20260922-234849/wave2_review",
       "factory/run-20260922-234849/wave3_audit",
-      "factory/run-20260923-042701/task_resilient/att-1"
+      "factory/run-20260923-042701/task_resilient/att-1",
+      "factory/run-20260923-043032/spec/att-1",
+      "factory/run-20260923-043032/backend/att-1",
+      "factory/run-20260923-043032/frontend/att-1",
+      "factory/run-20260923-043032/frontend/att-2",
+      "factory/run-20260923-043032/backend_tests/att-1",
+      "factory/run-20260923-043032/integration/att-1",
+      "factory/run-20260923-043032/audit/att-1"
     ],
     "worktrees": []
   },

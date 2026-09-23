@@ -281,13 +281,13 @@ class HerdrClient:
 class ResourceManager:
     """Manages project-owned resources and enforces strict ownership boundaries per run and overall."""
 
-    def __init__(self, herdr: HerdrClient):
+    def __init__(self, herdr: HerdrClient, state_file: pathlib.Path = None):
         self.herdr = herdr
-        self.state_file = OWNED_RESOURCES_PATH
+        self.state_file = state_file or OWNED_RESOURCES_PATH
         self._load_or_init()
 
     def _load_or_init(self):
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
         if self.state_file.exists():
             try:
                 with open(self.state_file, "r", encoding="utf-8") as f:
