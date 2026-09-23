@@ -878,6 +878,7 @@ class TaskExecutor:
             template_path = PROJECT_ROOT / "prompts" / "worker-base.md"
             with open(template_path, "r", encoding="utf-8") as f:
                 template = f.read()
+            patterns_str = "\n".join(f"- `{p}`" for p in self.allowed_paths)
             task_desc = self.task.get("description", f"Implement task {self.task_id}")
             return template.format(
                 worktree_path=str(worktree_path),

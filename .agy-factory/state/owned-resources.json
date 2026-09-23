@@ -7,8 +7,12 @@
     "herdr_socket": "/root/.config/herdr/herdr.sock"
   },
   "owned": {
-    "workspace_ids": [],
-    "pane_ids": [],
+    "workspace_ids": [
+      "fake-ws-task_resilient-a1"
+    ],
+    "pane_ids": [
+      "fake-ws-task_resilient-a1:p1"
+    ],
     "branches": [
       "factory/run-20260922-223803/wave0_spec",
       "factory/run-20260922-223803/wave1_backend",
@@ -53,9 +57,27 @@
       "factory/run-20260922-234849/wave1_frontend",
       "factory/run-20260922-234849/wave1_tests",
       "factory/run-20260922-234849/wave2_review",
-      "factory/run-20260922-234849/wave3_audit"
+      "factory/run-20260922-234849/wave3_audit",
+      "factory/run-20260923-042701/task_resilient/att-1"
     ],
-    "worktrees": []
+    "worktrees": [
+      "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-042701/task_resilient/att-1"
+    ]
   },
-  "runs": {}
+  "runs": {
+    "run-20260923-042701": {
+      "workspace_ids": [
+        "fake-ws-task_resilient-a1"
+      ],
+      "pane_ids": [
+        "fake-ws-task_resilient-a1:p1"
+      ],
+      "branches": [
+        "factory/run-20260923-042701/task_resilient/att-1"
+      ],
+      "worktrees": [
+        "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-042701/task_resilient/att-1"
+      ]
+    }
+  }
 }
