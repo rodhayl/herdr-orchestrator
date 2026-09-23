@@ -9,6 +9,7 @@
   // Application State
   let bookmarksState = [];
   let currentSearchQuery = '';
+  let isFavoritesFilterActive = false;
   let activeEditingId = null;
   let activeDeletingId = null;
   let searchDebounceTimer = null;
@@ -21,9 +22,10 @@
   const notificationIcon = document.getElementById('notification-icon');
   const notificationCloseBtn = document.getElementById('notification-close');
 
-  // DOM Elements - Header & Search
+  // DOM Elements - Header, Search & Filter Controls
   const searchInput = document.getElementById('search-input');
   const searchClearBtn = document.getElementById('search-clear-btn');
+  const filterFavoritesBtn = document.getElementById('filter-favorites-btn');
   const bookmarksCount = document.getElementById('bookmarks-count');
   const bookmarksList = document.getElementById('bookmarks-list');
 
@@ -55,7 +57,7 @@
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
-    fetchBookmarks();
+    fetchBookmarks('', false);
   });
 
   /**
@@ -107,7 +109,7 @@
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
         currentSearchQuery = query.trim();
-        fetchBookmarks(currentSearchQuery);
+        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
       }, 250);
     });
 
@@ -116,7 +118,7 @@
       if (e.key === 'Enter') {
         clearTimeout(searchDebounceTimer);
         currentSearchQuery = searchInput.value.trim();
-        fetchBookmarks(currentSearchQuery);
+        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
       }
     });
 
@@ -126,7 +128,7 @@
         searchClearBtn.classList.add('hidden');
         clearTimeout(searchDebounceTimer);
         currentSearchQuery = '';
-        fetchBookmarks('');
+        fetchBookmarks('', isFavoritesFilterActive);
       }
     });
 
@@ -135,9 +137,14 @@
       searchInput.value = '';
       searchClearBtn.classList.add('hidden');
       currentSearchQuery = '';
-      fetchBookmarks('');
+      fetchBookmarks('', isFavoritesFilterActive);
       searchInput.focus();
     });
+
+    // Favorites filter button click
+    if (filterFavoritesBtn) {
+      filterFavoritesBtn.addEventListener('click', handleToggleFavoritesFilter);
+    }
 
     // Create bookmark form submission
     bookmarkForm.addEventListener('submit', handleCreateBookmark);
@@ -175,14 +182,43 @@
   }
 
   /**
-   * Fetch bookmarks from REST API with optional search query
+   * Toggle favorites filter state and reload bookmarks
    */
-  async function fetchBookmarks(query = '') {
+  function handleToggleFavoritesFilter() {
+    isFavoritesFilterActive = !isFavoritesFilterActive;
+    updateFavoritesFilterUI();
+    fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
+  }
+
+  /**
+   * Update favorites filter button visual indicator
+   */
+  function updateFavoritesFilterUI() {
+    if (!filterFavoritesBtn) return;
+    filterFavoritesBtn.classList.toggle('active', isFavoritesFilterActive);
+    filterFavoritesBtn.setAttribute('aria-pressed', String(isFavoritesFilterActive));
+    const starIcon = filterFavoritesBtn.querySelector('.filter-star-icon');
+    if (starIcon) {
+      starIcon.textContent = isFavoritesFilterActive ? '★' : '☆';
+    }
+  }
+
+  /**
+   * Fetch bookmarks from REST API with optional search query and favorites filter
+   */
+  async function fetchBookmarks(query = '', favoritesOnly = false) {
     setLoadingState(true);
     try {
-      const endpoint = query
-        ? `/api/bookmarks?q=${encodeURIComponent(query)}`
-        : '/api/bookmarks';
+      const params = new URLSearchParams();
+      if (query) {
+        params.set('q', query);
+      }
+      if (favoritesOnly) {
+        params.set('favorites', 'true');
+      }
+
+      const queryString = params.toString();
+      const endpoint = queryString ? `/api/bookmarks?${queryString}` : '/api/bookmarks';
 
       const response = await fetch(endpoint, {
         headers: {
@@ -197,7 +233,7 @@
       }
 
       bookmarksState = Array.isArray(data) ? data : [];
-      renderBookmarks(bookmarksState, query);
+      renderBookmarks(bookmarksState, query, favoritesOnly);
     } catch (err) {
       console.error('Error fetching bookmarks:', err);
       showNotification(err.message || 'Unable to load bookmarks', 'error');
@@ -252,15 +288,19 @@
       bookmarkForm.reset();
       showNotification('Bookmark added successfully', 'success');
 
-      // Clear search query so the new bookmark is immediately visible
+      // Clear search query and reset favorites filter so the new bookmark is immediately visible
       if (currentSearchQuery) {
         searchInput.value = '';
         searchClearBtn.classList.add('hidden');
         currentSearchQuery = '';
       }
+      if (isFavoritesFilterActive) {
+        isFavoritesFilterActive = false;
+        updateFavoritesFilterUI();
+      }
 
       // Refresh listing
-      await fetchBookmarks('');
+      await fetchBookmarks('', false);
     } catch (err) {
       console.error('Error creating bookmark:', err);
       showNotification(err.message || 'Failed to create bookmark', 'error');
@@ -344,7 +384,7 @@
       closeEditModal();
 
       // Refresh list to keep timestamps & filtering consistent
-      await fetchBookmarks(currentSearchQuery);
+      await fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
     } catch (err) {
       console.error('Error updating bookmark:', err);
       showNotification(err.message || 'Failed to update bookmark', 'error');
@@ -410,10 +450,10 @@
 
       // Update in-memory state and count
       bookmarksState = bookmarksState.filter(bm => bm.id !== id);
-      updateBookmarksCount(bookmarksState.length, currentSearchQuery);
+      updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive);
 
       if (bookmarksState.length === 0) {
-        renderEmptyState(currentSearchQuery);
+        renderEmptyState(currentSearchQuery, isFavoritesFilterActive);
       }
     } catch (err) {
       console.error('Error deleting bookmark:', err);
@@ -426,12 +466,12 @@
   /**
    * Render bookmarks into container
    */
-  function renderBookmarks(bookmarks, query = '') {
+  function renderBookmarks(bookmarks, query = '', favoritesOnly = false) {
     bookmarksList.innerHTML = '';
-    updateBookmarksCount(bookmarks.length, query);
+    updateBookmarksCount(bookmarks.length, query, favoritesOnly);
 
     if (bookmarks.length === 0) {
-      renderEmptyState(query);
+      renderEmptyState(query, favoritesOnly);
       return;
     }
 
@@ -445,13 +485,18 @@
    * Construct DOM elements for a bookmark card safely without XSS risk
    */
   function createBookmarkCard(bookmark) {
+    const isFav = Boolean(bookmark.is_favorite);
+
     const article = document.createElement('article');
-    article.className = 'bookmark-card';
+    article.className = `bookmark-card${isFav ? ' is-favorite' : ''}`;
     article.setAttribute('data-id', bookmark.id);
 
     // Card Header
     const cardHeader = document.createElement('div');
     cardHeader.className = 'card-header';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'card-title-row';
 
     const titleH3 = document.createElement('h3');
     titleH3.className = 'card-title';
@@ -464,7 +509,27 @@
     titleLink.textContent = bookmark.title;
 
     titleH3.appendChild(titleLink);
-    cardHeader.appendChild(titleH3);
+    titleRow.appendChild(titleH3);
+
+    // Favorite / Star toggle button (★ / ☆)
+    const favBtn = document.createElement('button');
+    favBtn.type = 'button';
+    favBtn.id = `favorite-btn-${bookmark.id}`;
+    favBtn.className = `favorite-toggle-btn${isFav ? ' is-favorite active' : ''}`;
+    favBtn.setAttribute('data-id', bookmark.id);
+    favBtn.setAttribute('aria-label', isFav ? 'Remove from favorites' : 'Mark as favorite');
+    favBtn.setAttribute('aria-pressed', String(isFav));
+    favBtn.title = isFav ? 'Remove from favorites' : 'Mark as favorite';
+    favBtn.textContent = isFav ? '★' : '☆';
+
+    favBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleToggleFavorite(bookmark.id, favBtn, article);
+    });
+
+    titleRow.appendChild(favBtn);
+    cardHeader.appendChild(titleRow);
 
     // Visible URL Link with truncation
     const urlLink = document.createElement('a');
@@ -496,6 +561,7 @@
 
     if (bookmark.updated_at && bookmark.updated_at !== bookmark.created_at) {
       const updatedSpan = document.createElement('span');
+      updatedSpan.className = 'meta-updated';
       updatedSpan.textContent = `Updated: ${formatTimestamp(bookmark.updated_at)}`;
       metaBlock.appendChild(updatedSpan);
     }
@@ -544,14 +610,112 @@
   }
 
   /**
+   * Toggle favorite/star status via PATCH /api/bookmarks/:id
+   */
+  async function handleToggleFavorite(id, favBtn, cardElement) {
+    const currentBookmark = bookmarksState.find(b => b.id === id);
+    const currentStatus = currentBookmark ? Boolean(currentBookmark.is_favorite) : favBtn.classList.contains('is-favorite');
+    const nextStatus = !currentStatus;
+
+    favBtn.disabled = true;
+
+    try {
+      const response = await fetch(`/api/bookmarks/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ is_favorite: nextStatus }),
+      });
+
+      const updated = await parseJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error((updated && updated.error) || `Failed to update favorite status (HTTP ${response.status})`);
+      }
+
+      const newFavState = Boolean(updated.is_favorite);
+
+      // Update in-memory state
+      if (currentBookmark) {
+        currentBookmark.is_favorite = newFavState;
+        if (updated.updated_at) {
+          currentBookmark.updated_at = updated.updated_at;
+        }
+      }
+
+      // Update button visual state
+      favBtn.classList.toggle('is-favorite', newFavState);
+      favBtn.classList.toggle('active', newFavState);
+      favBtn.setAttribute('aria-pressed', String(newFavState));
+      favBtn.setAttribute('aria-label', newFavState ? 'Remove from favorites' : 'Mark as favorite');
+      favBtn.title = newFavState ? 'Remove from favorites' : 'Mark as favorite';
+      favBtn.textContent = newFavState ? '★' : '☆';
+
+      // Update card container class and timestamp
+      if (cardElement) {
+        cardElement.classList.toggle('is-favorite', newFavState);
+
+        if (updated.updated_at && updated.updated_at !== updated.created_at) {
+          let updatedSpan = cardElement.querySelector('.meta-updated');
+          if (updatedSpan) {
+            updatedSpan.textContent = `Updated: ${formatTimestamp(updated.updated_at)}`;
+          } else {
+            const metaBlock = cardElement.querySelector('.card-meta');
+            if (metaBlock) {
+              updatedSpan = document.createElement('span');
+              updatedSpan.className = 'meta-updated';
+              updatedSpan.textContent = `Updated: ${formatTimestamp(updated.updated_at)}`;
+              metaBlock.appendChild(updatedSpan);
+            }
+          }
+        }
+      }
+
+      showNotification(
+        newFavState ? 'Bookmark added to favorites' : 'Bookmark removed from favorites',
+        'success',
+        2000
+      );
+
+      // If favorites filter is currently active and item was unfavorited, remove card from view
+      if (isFavoritesFilterActive && !newFavState) {
+        if (cardElement) {
+          cardElement.remove();
+        }
+        bookmarksState = bookmarksState.filter(b => b.id !== id);
+        updateBookmarksCount(bookmarksState.length, currentSearchQuery, isFavoritesFilterActive);
+
+        if (bookmarksState.length === 0) {
+          renderEmptyState(currentSearchQuery, isFavoritesFilterActive);
+        }
+      }
+    } catch (err) {
+      console.error('Error updating favorite status:', err);
+      showNotification(err.message || 'Failed to update favorite status', 'error');
+    } finally {
+      favBtn.disabled = false;
+    }
+  }
+
+  /**
    * Render empty state message
    */
-  function renderEmptyState(query = '') {
+  function renderEmptyState(query = '', favoritesOnly = false) {
     bookmarksList.innerHTML = '';
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
 
-    if (query) {
+    if (query && favoritesOnly) {
+      emptyState.innerHTML = `
+        <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        <h3 class="empty-state-title">No favorite bookmarks found</h3>
+        <p class="empty-state-text">No favorite bookmarks matched your search for "<strong>${escapeHtml(query)}</strong>".</p>
+      `;
+    } else if (query) {
       emptyState.innerHTML = `
         <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8"></circle>
@@ -559,6 +723,14 @@
         </svg>
         <h3 class="empty-state-title">No bookmarks found</h3>
         <p class="empty-state-text">No bookmarks matched your search for "<strong>${escapeHtml(query)}</strong>". Try checking for spelling errors or searching for a different keyword.</p>
+      `;
+    } else if (favoritesOnly) {
+      emptyState.innerHTML = `
+        <svg class="empty-state-icon" viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        <h3 class="empty-state-title">No favorite bookmarks yet</h3>
+        <p class="empty-state-text">Click the star icon (☆) on any bookmark card to add it to your favorites.</p>
       `;
     } else {
       emptyState.innerHTML = `
@@ -589,9 +761,13 @@
   /**
    * Update bookmarks count indicator
    */
-  function updateBookmarksCount(count, query = '') {
-    if (query) {
+  function updateBookmarksCount(count, query = '', favoritesOnly = false) {
+    if (query && favoritesOnly) {
+      bookmarksCount.textContent = `${count} favorite ${count === 1 ? 'match' : 'matches'}`;
+    } else if (query) {
       bookmarksCount.textContent = `${count} ${count === 1 ? 'match' : 'matches'}`;
+    } else if (favoritesOnly) {
+      bookmarksCount.textContent = `${count} ${count === 1 ? 'favorite' : 'favorites'}`;
     } else {
       bookmarksCount.textContent = `${count} ${count === 1 ? 'bookmark' : 'bookmarks'}`;
     }
