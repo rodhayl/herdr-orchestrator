@@ -2082,7 +2082,10 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
     requires = set(task_def.get("requires", []))
 
     if profiles:
-        priority_pids = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+        if explicit_class:
+            priority_pids = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+        else:
+            priority_pids = PROFILE_TASK_TYPE_PREFERENCES.get(task_type) or ROUTING_PRIORITY_MATRIX.get((task_type, execution_class), [])
         all_pids = list(profiles.keys())
         ordered_pids = [p for p in priority_pids if p in all_pids]
         for p in all_pids:
@@ -2373,7 +2376,10 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
             except Exception:
                 pass
 
-    pref_list = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+    if explicit_class:
+        pref_list = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+    else:
+        pref_list = PROFILE_TASK_TYPE_PREFERENCES.get(task_type) or ROUTING_PRIORITY_MATRIX.get((task_type, execution_class), [])
     ordered_pids = [p for p in pref_list if p in profiles]
     for p in profiles:
         if p not in ordered_pids:
@@ -3900,13 +3906,25 @@ def generate_status_projection(run_id: str = None) -> dict:
     return projection
 
 
-def summarize_execution_metrics(run_id: str = None, profile_id: str = None) -> dict:
+def summarize_execution_metrics(run_id: str = None, profile_id: str = None, telemetry_file: pathlib.Path = None) -> dict:
     """
     Summarizes execution telemetry across runs or for a specific run/profile.
     Strictly observational: metrics do not influence routing decisions.
     """
     records = []
-    if run_id:
+    if telemetry_file and pathlib.Path(telemetry_file).exists():
+        tf = pathlib.Path(telemetry_file)
+        try:
+            with open(tf, "r", encoding="utf-8") as f:
+                if tf.suffix == ".json":
+                    records = json.load(f)
+                else:
+                    for line in f:
+                        if line.strip():
+                            records.append(json.loads(line.strip()))
+        except Exception:
+            pass
+    elif run_id:
         rf = RUNS_DIR / run_id / "metrics.json"
         if rf.exists():
             try:

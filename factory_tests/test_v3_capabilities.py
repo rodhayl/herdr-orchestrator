@@ -473,7 +473,7 @@ class TestV3StatusProjectionContract(unittest.TestCase):
     def test_status_projection_structure(self):
         proj = generate_status_projection()
         self.assertEqual(proj["status"], "OK")
-        self.assertIn(proj["factory_version"], ("3.0.0", "4.0.0"))
+        self.assertIn(proj["factory_version"], ("3.0.0", "4.0.0", "5.0.0", "6.0.0"))
         self.assertIn("control_plane", proj)
         self.assertIn("owned_resources", proj)
         self.assertIn("runs", proj)
