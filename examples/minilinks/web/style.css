@@ -12,6 +12,11 @@
   --success-light: #f0fdf4;
   --info: #0284c7;
   --info-light: #f0f9ff;
+  --star-color: #f59e0b;
+  --star-hover: #d97706;
+  --star-light: #fef3c7;
+  --star-inactive: #94a3b8;
+  --star-inactive-hover: #64748b;
   --bg: #f8fafc;
   --surface: #ffffff;
   --surface-alt: #f1f5f9;
@@ -176,10 +181,25 @@ body {
   color: var(--text);
 }
 
-/* Search Bar */
+/* Search and Filter Controls */
+.search-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  max-width: 580px;
+}
+
+@media (max-width: 639px) {
+  .search-filter-controls {
+    flex-direction: row;
+    width: 100%;
+  }
+}
+
 .search-container {
   flex: 1;
-  max-width: 480px;
+  min-width: 0;
 }
 
 .search-input-wrapper {
@@ -231,6 +251,74 @@ body {
 
 .search-clear-btn:hover {
   color: var(--text);
+}
+
+/* Filter Bar & Favorites Filter Button */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.filter-favorites-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-muted);
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+  line-height: 1.25;
+  user-select: none;
+}
+
+.filter-favorites-btn:hover {
+  color: var(--text);
+  background-color: var(--surface-alt);
+  border-color: #cbd5e1;
+}
+
+.filter-favorites-btn .filter-star-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--star-inactive);
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.filter-favorites-btn:hover .filter-star-icon {
+  color: var(--star-color);
+  transform: scale(1.15);
+}
+
+.filter-favorites-btn.active {
+  background-color: var(--star-light);
+  color: #92400e;
+  border-color: #fcd34d;
+  font-weight: 600;
+  box-shadow: 0 1px 2px 0 rgba(245, 158, 11, 0.1);
+}
+
+.filter-favorites-btn.active .filter-star-icon {
+  color: var(--star-hover);
+  transform: scale(1.1);
+}
+
+.filter-favorites-btn.active:hover {
+  background-color: #fde68a;
+  border-color: #f59e0b;
+}
+
+.filter-favorites-btn:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
 }
 
 /* Main Layout */
@@ -439,15 +527,36 @@ body {
   transform: translateY(-2px);
 }
 
+.bookmark-card.is-favorite {
+  border-color: #fde68a;
+}
+
+.bookmark-card.is-favorite:hover {
+  border-color: #fcd34d;
+}
+
 .card-header {
   margin-bottom: 0.5rem;
+}
+
+.card-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.625rem;
+  margin-bottom: 0.25rem;
+}
+
+.card-title-row .card-title {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .card-title {
   font-size: 1.1rem;
   font-weight: 600;
   line-height: 1.35;
-  margin-bottom: 0.25rem;
   word-break: break-word;
 }
 
@@ -462,6 +571,56 @@ body {
 .card-title-link:hover {
   color: var(--primary-hover);
   text-decoration: underline;
+}
+
+/* Favorite / Star Toggle Button */
+.favorite-toggle-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1.35rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--radius-sm);
+  color: var(--star-inactive);
+  transition: color 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  flex-shrink: 0;
+  margin-top: -0.1rem;
+}
+
+.favorite-toggle-btn:hover {
+  color: var(--star-color);
+  background-color: rgba(245, 158, 11, 0.12);
+  transform: scale(1.2);
+}
+
+.favorite-toggle-btn:active {
+  transform: scale(0.92);
+}
+
+.favorite-toggle-btn.is-favorite {
+  color: var(--star-color);
+}
+
+.favorite-toggle-btn.is-favorite:hover {
+  color: var(--star-hover);
+  background-color: rgba(245, 158, 11, 0.18);
+  transform: scale(1.2);
+}
+
+.favorite-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+.favorite-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .card-url-link {
