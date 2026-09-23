@@ -151,7 +151,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 360
+      "timeout": 600
     },
     {
       "task_id": "integration_hardening",
@@ -173,7 +173,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 360
+      "timeout": 600
     },
     {
       "task_id": "audit",
@@ -193,7 +193,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
-      "timeout": 360
+      "timeout": 600
     }
   ],
   "post_validation": [
