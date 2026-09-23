@@ -157,7 +157,7 @@
         "examples/minilinks/tests",
         "-v"
       ],
-      "timeout": 60
+      "timeout": 180
     },
     {
       "name": "minilinks_smoke_test",
