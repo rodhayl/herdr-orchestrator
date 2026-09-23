@@ -5,7 +5,7 @@ import json
 import mimetypes
 from pathlib import Path
 import threading
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 try:
@@ -412,7 +412,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
         if "tags" in body:
             tags_val = body["tags"]
             if not isinstance(tags_val, list) or any(not isinstance(t, str) for t in tags_val):
-                self.send_json_error(400, "tags must be an array of strings if provided")
+                self.send_json_error(400, "Invalid update payload")
                 return
             clean_tags = tags_val
 
