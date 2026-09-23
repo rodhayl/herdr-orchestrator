@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-09-23T04:15:25+00:00",
+  "starting_commit": "8ee4f6c",
+  "verified_claims": {
+    "factory_core_tests": {
+      "command": "python3 -m unittest discover -s factory_tests -v",
+      "tests_run": 24,
+      "passed": 24,
+      "status": "PASS"
+    },
+    "miniboard_unit_tests": {
+      "command": "python3 -m unittest discover -s tests -v",
+      "tests_run": 34,
+      "passed": 34,
+      "status": "PASS"
+    },
+    "miniboard_smoke_test": {
+      "command": "python3 scripts/smoke_test.py",
+      "steps_run": 12,
+      "passed": 12,
+      "status": "PASS"
+    },
+    "minilinks_unit_tests": {
+      "command": "python3 -m unittest discover -s examples/minilinks/tests -v",
+      "tests_run": 22,
+      "passed": 22,
+      "status": "PASS"
+    },
+    "minilinks_smoke_test": {
+      "command": "python3 examples/minilinks/scripts/smoke_test.py",
+      "steps_run": 12,
+      "passed": 12,
+      "status": "PASS"
+    }
+  },
+  "herdr_baseline": {
+    "control_plane": "wK:p1",
+    "preexisting_workspaces": ["wT", "wQ", "wE", "wP", "w8", "wA", "wS", "wK", "wN", "wC", "wD"],
+    "owned_workspaces": []
+  },
+  "host_cleanliness": {
+    "venv_present": false,
+    "external_dependencies": "none",
+    "working_tree_clean": true
+  }
+}
