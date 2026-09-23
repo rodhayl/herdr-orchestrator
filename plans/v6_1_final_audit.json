@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "v6_1_final_audit",
+  "name": "Factory v6.1 Production Certification Independent Final Audit",
+  "version": "6.1.0",
+  "tasks": [
+    {
+      "task_id": "v6_1_audit",
+      "task_type": "audit",
+      "execution_class": "deep",
+      "requires": [
+        "review",
+        "audit"
+      ],
+      "review_only": true,
+      "allowed_paths": [],
+      "expected_files": [],
+      "description": "Perform an objective, independent audit of Factory v6.1.0 production certification closure. Verify: 1. Full truth reconciliation of run-20260923-153816. 2. First-class execution provenance (REAL, MOCK, TRANSPORT_ONLY). 3. Fail-closed real-certification guard (assert_real_certifiable). 4. Harness-specific read-only authentication discovery for AGY, Droid, Codex, Claude, OpenCode. 5. Codex TOML reasoning effort quoting. 6. Redaction of secret keys/tokens across manifests and events. 7. Separation of real vs mock metrics. 8. Real mixed-harness execution run (AGY + OpenCode). Do NOT modify code.",
+      "timeout": 360
+    }
+  ]
+}
