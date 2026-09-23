@@ -10,7 +10,7 @@ Executes an end-to-end verification scenario against an ephemeral server instanc
   Step 5  - Create Bookmark Validation Error
   Step 6  - Verify Bookmark Listing
   Step 7  - Search Filtering
-  Step 8  - Update Bookmark
+  Step 8  - Update Bookmark & Favorite
   Step 9  - Update Non-Existent Bookmark
   Step 10 - Delete Bookmark
   Step 11 - Delete Non-Existent Bookmark
@@ -47,8 +47,12 @@ else:
     sys.path.insert(0, str(_minilinks_dir))
 
 try:
+    from app import database
     from app.server import MiniLinksServer, create_server
+    if not hasattr(database, "create_bookmark"):
+        raise ImportError("Imported wrong database module")
 except (ImportError, AttributeError):
+    from examples.minilinks.app import database
     from examples.minilinks.app.server import MiniLinksServer, create_server
 
 
@@ -149,6 +153,12 @@ def run_smoke_test() -> None:
         assert payload.get("notes") == "Official Docs", (
             f"Unexpected notes: {payload.get('notes')}"
         )
+        assert payload.get("is_favorite") is False, (
+            f"Expected is_favorite to default to False, got {payload.get('is_favorite')}"
+        )
+        assert isinstance(payload.get("is_favorite"), bool), (
+            f"Expected is_favorite to be boolean, got {type(payload.get('is_favorite'))}"
+        )
         created_at = payload.get("created_at")
         updated_at = payload.get("updated_at")
         assert created_at and isinstance(created_at, str), f"Missing created_at: {created_at}"
@@ -158,14 +168,15 @@ def run_smoke_test() -> None:
         conn = sqlite3.connect(temp_db)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, title, url FROM bookmarks WHERE id = ?", (bm_id,))
+            cursor.execute("SELECT id, title, url, notes, is_favorite FROM bookmarks WHERE id = ?", (bm_id,))
             row = cursor.fetchone()
             assert row is not None, f"Bookmark {bm_id} not found in sqlite3 database"
             assert row[1] == "Python Docs"
+            assert row[4] == 0, f"Expected is_favorite=0 in sqlite3, got {row[4]}"
         finally:
             conn.close()
 
-        print(f"  --> PASS: Created bookmark with ID {bm_id} at {created_at}")
+        print(f"  --> PASS: Created bookmark with ID {bm_id} (is_favorite=False) at {created_at}")
 
         # Step 5: Create Bookmark Validation Error
         print("[Step 5/12] Create Bookmark Validation Error: POST /api/bookmarks with invalid payload...")
@@ -190,6 +201,9 @@ def run_smoke_test() -> None:
         assert item.get("title") == "Python Docs", f"Unexpected title: {item.get('title')}"
         assert item.get("url") == "https://docs.python.org", f"Unexpected url: {item.get('url')}"
         assert item.get("notes") == "Official Docs", f"Unexpected notes: {item.get('notes')}"
+        assert item.get("is_favorite") is False, (
+            f"Expected is_favorite False, got {item.get('is_favorite')}"
+        )
         print(f"  --> PASS: Listing returned exactly 1 bookmark matching ID {bm_id}")
 
         # Step 7: Search Filtering
@@ -210,11 +224,14 @@ def run_smoke_test() -> None:
         )
         print("  --> PASS: Search correctly filtered matching and non-matching queries")
 
-        # Step 8: Update Bookmark
-        print("[Step 8/12] Update Bookmark: PATCH /api/bookmarks/<id>...")
+        # Step 8: Update Bookmark & Favorite
+        print("[Step 8/12] Update Bookmark & Favorite: PATCH /api/bookmarks/<id>...")
         # Brief pause to ensure updated_at timestamp increments past current second
         time.sleep(1.05)
-        patch_payload = {"notes": "Updated Documentation Notes"}
+        patch_payload = {
+            "notes": "Updated Documentation Notes",
+            "is_favorite": True,
+        }
         status, payload, _ = http_request(
             base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload=patch_payload
         )
@@ -223,11 +240,82 @@ def run_smoke_test() -> None:
         assert payload.get("notes") == "Updated Documentation Notes", (
             f"Expected updated notes, got {payload.get('notes')}"
         )
+        assert payload.get("is_favorite") is True, (
+            f"Expected is_favorite to be True, got {payload.get('is_favorite')}"
+        )
+        assert isinstance(payload.get("is_favorite"), bool), (
+            f"Expected is_favorite to be boolean, got {type(payload.get('is_favorite'))}"
+        )
         new_updated_at = payload.get("updated_at")
         assert new_updated_at and new_updated_at != updated_at, (
             f"Expected refreshed updated_at ({new_updated_at} != {updated_at})"
         )
-        print(f"  --> PASS: Updated bookmark notes; updated_at refreshed to {new_updated_at}")
+
+        # Also verify GET /api/bookmarks?favorites=true returns the bookmark
+        status_fav, payload_fav, _ = http_request(
+            base_url, "GET", "/api/bookmarks?favorites=true"
+        )
+        assert status_fav == 200, f"Expected HTTP 200 for favorites query, got {status_fav}"
+        assert isinstance(payload_fav, list) and len(payload_fav) == 1, (
+            f"Expected 1 favorite bookmark, got {payload_fav}"
+        )
+        assert payload_fav[0].get("id") == bm_id, (
+            f"Expected favorite bookmark ID {bm_id}, got {payload_fav[0].get('id')}"
+        )
+        assert payload_fav[0].get("is_favorite") is True
+
+        # Verify favorite toggling to False via PATCH
+        status_unfav, payload_unfav, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"is_favorite": False}
+        )
+        assert status_unfav == 200, f"Expected HTTP 200, got {status_unfav}"
+        assert payload_unfav.get("is_favorite") is False
+        assert isinstance(payload_unfav.get("is_favorite"), bool)
+
+        # Verify GET /api/bookmarks?favorites=true returns empty list after toggling to False
+        status_empty_fav, payload_empty_fav, _ = http_request(
+            base_url, "GET", "/api/bookmarks?favorites=true"
+        )
+        assert status_empty_fav == 200, f"Expected HTTP 200, got {status_empty_fav}"
+        assert isinstance(payload_empty_fav, list) and len(payload_empty_fav) == 0, (
+            f"Expected 0 favorite bookmarks after unfavoriting, got {payload_empty_fav}"
+        )
+
+        # Toggle favorite back to True via PATCH
+        status_refav, payload_refav, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"is_favorite": True}
+        )
+        assert status_refav == 200, f"Expected HTTP 200, got {status_refav}"
+        assert payload_refav.get("is_favorite") is True
+        assert isinstance(payload_refav.get("is_favorite"), bool)
+
+        # Re-verify GET /api/bookmarks?favorites=true returns the bookmark again
+        status_fav2, payload_fav2, _ = http_request(
+            base_url, "GET", "/api/bookmarks?favorites=true"
+        )
+        assert status_fav2 == 200, f"Expected HTTP 200 for favorites query, got {status_fav2}"
+        assert isinstance(payload_fav2, list) and len(payload_fav2) == 1, (
+            f"Expected 1 favorite bookmark, got {payload_fav2}"
+        )
+        assert payload_fav2[0].get("id") == bm_id
+        assert payload_fav2[0].get("is_favorite") is True
+
+        # Verify sqlite3 persistence directly
+        conn = sqlite3.connect(temp_db)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, notes, is_favorite FROM bookmarks WHERE id = ?", (bm_id,))
+            row = cursor.fetchone()
+            assert row is not None, f"Bookmark {bm_id} not found in sqlite3 database"
+            assert row[1] == "Updated Documentation Notes"
+            assert row[2] == 1, f"Expected is_favorite=1 in database, got {row[2]}"
+        finally:
+            conn.close()
+
+        print(
+            f"  --> PASS: Updated bookmark notes and verified favorite toggling via PATCH; "
+            f"updated_at refreshed to {new_updated_at}; favorites filter verified via GET"
+        )
 
         # Step 9: Update Non-Existent Bookmark
         print("[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...")
