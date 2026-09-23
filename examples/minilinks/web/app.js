@@ -61,7 +61,7 @@
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
-    fetchBookmarks('', false);
+    fetchBookmarks('', false, false);
   });
 
   /**
