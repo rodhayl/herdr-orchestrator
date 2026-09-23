@@ -7,8 +7,14 @@
     "herdr_socket": "/root/.config/herdr/herdr.sock"
   },
   "owned": {
-    "workspace_ids": [],
-    "pane_ids": [],
+    "workspace_ids": [
+      "w4C",
+      "w4D"
+    ],
+    "pane_ids": [
+      "w4C:p1",
+      "w4D:p1"
+    ],
     "branches": [
       "factory/run-20260922-223803/wave0_spec",
       "factory/run-20260922-223803/wave1_backend",
@@ -62,9 +68,31 @@
       "factory/run-20260923-043032/backend_tests/att-1",
       "factory/run-20260923-043032/integration/att-1",
       "factory/run-20260923-043032/audit/att-1",
-      "factory/run-20260923-065724/v4_audit/att-1"
+      "factory/run-20260923-065724/v4_audit/att-1",
+      "factory/run-20260923-222722/cert_spec/att-1",
+      "factory/run-20260923-222722/cert_support/att-1"
     ],
-    "worktrees": []
+    "worktrees": [
+      "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-222722/cert_spec/att-1",
+      "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-222722/cert_support/att-1"
+    ]
   },
-  "runs": {}
+  "runs": {
+    "run-20260923-222722": {
+      "workspace_ids": [
+        "w4C"
+      ],
+      "pane_ids": [
+        "w4C:p1"
+      ],
+      "branches": [
+        "factory/run-20260923-222722/cert_spec/att-1",
+        "factory/run-20260923-222722/cert_support/att-1"
+      ],
+      "worktrees": [
+        "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-222722/cert_spec/att-1",
+        "/root/agy-herdr-factory-poc/.agy-factory/worktrees/run-20260923-222722/cert_support/att-1"
+      ]
+    }
+  }
 }

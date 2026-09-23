@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "================================================================================"
-echo "AGY-Herdr Software Factory (v6.0.0) — Portable Clean-Checkout Smoke Test"
+echo "AGY-Herdr Software Factory (v6.1.0) — Portable Clean-Checkout Smoke Test"
 echo "================================================================================"
 
 TMP_CHECKOUT="$(mktemp -d /tmp/factory-portable-smoke-XXXXXX)"
