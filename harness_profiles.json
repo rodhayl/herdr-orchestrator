@@ -1,0 +1,225 @@
+{
+  "$schema": "./schemas/harness-profiles.schema.json",
+  "schema_version": "5.0.0",
+  "description": "Certified Execution Profiles for AGY-Herdr Software Factory v5.0.0",
+  "profiles": {
+    "agy-spec-high": {
+      "id": "agy-spec-high",
+      "name": "AGY Specification (Gemini 3.8 Flash High)",
+      "description": "Product specification and architecture planning profile using AGY worker agy2",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy2",
+      "worker_identity": "agy2",
+      "model": "gemini-3.8-flash",
+      "effort": "high",
+      "capabilities": [
+        "planning",
+        "specification",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy2_home",
+        "cli_model_arg": "gemini-3.8-flash-high"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T06:27:58Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-backend-high": {
+      "id": "agy-backend-high",
+      "name": "AGY Backend (Gemini 3.8 Flash High)",
+      "description": "Backend implementation and storage engineering profile using AGY worker agy3",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy3",
+      "worker_identity": "agy3",
+      "model": "gemini-3.8-flash",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "backend",
+        "debugging"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy3_home",
+        "cli_model_arg": "gemini-3.8-flash-high"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T06:31:20Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-frontend-high": {
+      "id": "agy-frontend-high",
+      "name": "AGY Frontend (Gemini 3.8 Flash High)",
+      "description": "Frontend UI and client implementation profile using AGY worker agy4",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy4",
+      "worker_identity": "agy4",
+      "model": "gemini-3.8-flash",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "frontend"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy4_home",
+        "cli_model_arg": "gemini-3.8-flash-high"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T06:29:59Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-tests-medium": {
+      "id": "agy-tests-medium",
+      "name": "AGY Tests (Gemini 3.8 Flash Medium)",
+      "description": "Test suite authoring and smoke harness verification profile using AGY worker agy5",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy5",
+      "worker_identity": "agy5",
+      "model": "gemini-3.8-flash",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "testing"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy5_home",
+        "cli_model_arg": "gemini-3.8-flash-medium"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T06:35:07Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-integration-high": {
+      "id": "agy-integration-high",
+      "name": "AGY Integration (Gemini 3.8 Flash High)",
+      "description": "Integration hardening and merge conflict resolution profile using AGY worker agy6",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy6",
+      "worker_identity": "agy6",
+      "model": "gemini-3.8-flash",
+      "effort": "high",
+      "capabilities": [
+        "integration",
+        "debugging",
+        "conflict_resolution"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy6_home",
+        "cli_model_arg": "gemini-3.8-flash-high"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T06:38:06Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-audit-high": {
+      "id": "agy-audit-high",
+      "name": "AGY Audit (Claude Sonnet 4.6)",
+      "description": "Independent review and audit profile using AGY worker agy7",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy7",
+      "worker_identity": "agy7",
+      "model": "claude-sonnet-4-6",
+      "effort": "high",
+      "capabilities": [
+        "review",
+        "audit"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy7_home",
+        "cli_model_arg": "claude-sonnet-4-6"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T07:02:44Z",
+        "notes": "Verified in independent audit run"
+      }
+    },
+    "droid-backend-deep": {
+      "id": "droid-backend-deep",
+      "name": "Droid Backend Deep (Qwen 3.8 Max xHigh)",
+      "description": "Factory CLI / Droid autonomous backend coding profile with xhigh reasoning effort",
+      "adapter": "droid",
+      "harness": "droid",
+      "enabled": true,
+      "command": "/root/.local/bin/droid",
+      "worker_identity": "droid",
+      "model": "qwen3.8-max",
+      "effort": "xhigh",
+      "capabilities": [
+        "coding",
+        "backend",
+        "testing",
+        "debugging",
+        "mechanical_change"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "autonomy": "low"
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires FACTORY_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "codex-frontend-high": {
+      "id": "codex-frontend-high",
+      "name": "Codex Frontend High (GPT-5.6 Luna High)",
+      "description": "OpenAI Codex CLI execution profile pinned to GPT-5.6 Luna with high reasoning effort",
+      "adapter": "codex",
+      "harness": "codex",
+      "enabled": true,
+      "command": "/usr/local/bin/codex",
+      "worker_identity": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "frontend",
+        "debugging",
+        "testing",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "network_access": false,
+        "ephemeral": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires OpenAI/Codex authentication in ~/.codex/auth.json or OPENAI_API_KEY. Fully certified in deterministic test harness."
+      }
+    }
+  }
+}

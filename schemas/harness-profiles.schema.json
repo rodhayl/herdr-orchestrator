@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HarnessProfilesConfiguration",
+  "description": "Defines executable execution profiles for the AGY-Herdr Software Factory v5",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profiles"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "5.0.0"
+      ]
+    },
+    "description": {
+      "type": "string"
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/HarnessProfile"
+      }
+    }
+  },
+  "definitions": {
+    "HarnessProfile": {
+      "type": "object",
+      "required": [
+        "id",
+        "adapter",
+        "harness",
+        "enabled",
+        "command",
+        "worker_identity",
+        "model",
+        "effort",
+        "capabilities"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]+$"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "agy",
+            "droid",
+            "codex",
+            "claude",
+            "opencode",
+            "fake_worker"
+          ]
+        },
+        "harness": {
+          "type": "string",
+          "enum": [
+            "agy",
+            "droid",
+            "codex",
+            "claude",
+            "opencode",
+            "fake"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "worker_identity": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "native": {
+          "type": "object",
+          "description": "Adapter-specific native configuration options"
+        },
+        "certification": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "CERTIFIED",
+                "AVAILABLE",
+                "AUTH_BLOCKED",
+                "UNAVAILABLE",
+                "PROFILE_INVALID",
+                "EXPERIMENTAL"
+              ]
+            },
+            "last_certified_timestamp": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
