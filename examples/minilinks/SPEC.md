@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   - Tags are stripped of leading/trailing whitespace, and empty strings are pruned. Duplicate tags within the same bookmark are deduplicated while preserving order.
   - Stored in SQLite as a JSON array string `TEXT DEFAULT '[]'`. In all API responses, it is serialized as a native JSON array of strings (`[]` when empty).
 - `is_favorite`: Stored as SQLite `INTEGER` (`0` for `false`, `1` for `true`) with default `0`. In JSON API request and response payloads, it is represented and serialized as a native boolean (`true` or `false`). Non-boolean values in API payloads (such as strings or arbitrary numbers other than strict boolean deserialization) must be rejected with `400 Bad Request`.
-- `archived`: Stored as SQLite `INTEGER` (`0` for `false` / active, `1` for `true` / archived) with default `0`. In JSON API request and response payloads, it is represented and serialized as a native boolean (`true` or `false`). Non-boolean values in API payloads (such as strings or numbers) must be rejected with `400 Bad Request`.
+- `archived`: Stored as SQLite `INTEGER` (`0` for `false` / active, `1` for `true` / archived) with default `0`. In JSON API request and response payloads, it is represented and serialized as a native boolean (`true` or `false`). Non-boolean values in API payloads (such as strings, numbers `1`/`0`, arrays, or objects) must be rejected with `400 Bad Request`.
 - `created_at`: Set automatically at insert time in ISO 8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`); never mutated on updates.
 - `updated_at`: Set automatically at insert time; updated to the current ISO 8601 UTC timestamp on every modification (`PATCH`, archive, restore).
 
@@ -151,10 +151,10 @@ The `archived` attribute provides soft-archival capabilities for bookmarks, allo
    - If omitted from the request payload: defaults to `false` (`archived = 0` in SQLite).
    - If explicitly provided as `false`: saved as `0` in SQLite.
    - If explicitly provided as `true`: saved as `1` in SQLite, creating the bookmark directly in archived status.
-   - If provided as any non-boolean type (e.g., string `"true"`, string `"false"`, number `1`, array, or object): rejected with `400 Bad Request` (`{"error": "archived must be a boolean if provided"}`).
+   - If provided as any non-boolean type (e.g., string `"true"`, string `"false"`, number `1`, number `0`, array, or object): rejected with `400 Bad Request` (`{"error": "archived must be a boolean if provided"}`).
 4. **Update Semantics**:
-   - In `PATCH /api/bookmarks/<id>`, `archived` can be updated directly via boolean payload (e.g. `{"archived": true}` or `{"archived": false}`).
-   - Dedicated action endpoints `POST /api/bookmarks/<id>/archive` and `POST /api/bookmarks/<id>/restore` provide convenient toggle actions without requiring a request body.
+   - In `PATCH /api/bookmarks/<id>`, `archived` can be updated directly via boolean payload (e.g., `{"archived": true}` or `{"archived": false}`).
+   - Dedicated action endpoints `POST /api/bookmarks/<id>/archive` and `POST /api/bookmarks/<id>/restore` provide convenient action triggers without requiring a request body.
    - Mutating the archive state updates the bookmark's `updated_at` ISO 8601 timestamp.
    - Non-boolean values supplied in `PATCH` are rejected with `400 Bad Request` (`{"error": "Invalid update payload"}`).
 5. **Archive Filtering & Default Visibility**:
@@ -321,7 +321,7 @@ Creates a new bookmark.
       - `notes` is provided but is not a string (e.g. `{"notes": 123}`).
       - `tags` is provided but is not an array of strings.
       - `is_favorite` is provided but is not a boolean (e.g. `{"is_favorite": "true"}`).
-      - `archived` is provided but is not a boolean (e.g. `{"archived": "false"}` or `{"archived": 1}`).
+      - `archived` is provided but is not a boolean (e.g. `{"archived": "false"}`, `{"archived": 1}`, or `{"archived": null}`).
     - Body Examples:
       ```json
       {
@@ -540,9 +540,9 @@ The REST API supports combining query parameters on `GET /api/bookmarks`:
    - `favorites=true`: Restricts results to bookmarks where `is_favorite = 1`.
    - `tag=<tag>`: Restricts results to bookmarks containing `<tag>` in their `tags` array.
    - `archived=<value>`:
-     - Omitted or `false`: Restricts results to `archived = 0` (active only).
-     - `true`: Restricts results to `archived = 1` (archived only).
-     - `all`: Removes archive filtering; returns both active and archived bookmarks.
+     - Omitted, empty, or `false`: Restricts results to `archived = 0` (active unarchived bookmarks only).
+     - `true` (or `1`): Restricts results to `archived = 1` (archived bookmarks only).
+     - `all` (or `*`): Removes archive filtering; returns both active and archived bookmarks.
 2. **Logical Conjunction**:
    - All active filter criteria are combined using logical `AND`.
    - Example: `GET /api/bookmarks?archived=true&favorites=true&q=python` returns bookmarks that are archived (`archived = 1`) **AND** favorited (`is_favorite = 1`) **AND** contain `"python"` in title, url, notes, or tags.
@@ -710,21 +710,29 @@ The archive feature allows users to declutter their active bookmarks collection 
     <span class="filter-btn-label">Archived</span>
   </button>
   ```
-- **Toggle Behavior**:
-  - Clicking the `#filter-archived-btn` button toggles the internal frontend state variable `isArchivedFilterActive = !isArchivedFilterActive`.
+- **Toggle Behavior & State Management**:
+  - The UI tracks archive filter state via `isArchivedFilterActive` (boolean).
+  - Clicking `#filter-archived-btn` toggles `isArchivedFilterActive = !isArchivedFilterActive`.
   - When `isArchivedFilterActive` is `true`:
     - The button receives the `.active` CSS class and `aria-pressed="true"`.
-    - Dispatches `GET /api/bookmarks?archived=true` (preserving `q` search term and `favorites` filter if active).
-    - The bookmarks list renders only archived bookmarks.
+    - Styling transitions to an active indigo highlight (`background-color: #e0e7ff; color: #3730a3; border-color: #a5b4fc;`).
+    - Dispatches `GET /api/bookmarks?archived=true`, preserving active `q` (search term) and `favorites` parameters if set.
+    - The card grid updates to display exclusively archived bookmarks.
   - When `isArchivedFilterActive` is `false`:
     - The `.active` CSS class is removed and `aria-pressed="false"`.
-    - Dispatches default `GET /api/bookmarks` (which returns only active, unarchived bookmarks).
+    - Dispatches default `GET /api/bookmarks` (which returns only active, unarchived bookmarks with `archived = 0`).
+    - The card grid returns to displaying active bookmarks.
+- **Support for Multi-View Query Filtering**:
+  - In addition to binary toggling, the REST API contract supports `?archived=all` (returning both active and archived bookmarks simultaneously).
+  - When all bookmarks are returned in a combined view, archived bookmarks are immediately distinguished from active bookmarks via visual card cues.
 - **Result Count Indicator**:
-  - The counter `#bookmarks-count` accurately reflects the number of items displayed in the current view (e.g., `"3 bookmarks"`, `"1 favorite match"`, etc.).
+  - The counter `#bookmarks-count` dynamically updates to indicate both the count and the context of the displayed items:
+    - Active view: `"X bookmarks"` (or `"X favorites"` if favorites filter is active).
+    - Archived view: `"X archived bookmarks"`.
 
 #### 6.5.2 Bookmark Card Archive / Restore Button
 - **Button Construction**:
-  Each rendered bookmark card includes an archive action button in its footer (`.card-footer`):
+  Each rendered bookmark card includes a dedicated archive action button in its footer (`.card-footer`):
   ```javascript
   const isArchived = Boolean(bookmark.archived);
   const archiveBtn = document.createElement('button');
@@ -736,20 +744,32 @@ The archive feature allows users to declutter their active bookmarks collection 
   `;
   archiveBtn.title = isArchived ? 'Restore bookmark' : 'Archive bookmark';
   ```
-- **Action Execution**:
-  - Clicking the button calls `handleToggleArchive(bookmark.id, isArchived)`.
+- **Action Execution & API Dispatch**:
+  - Clicking the button invokes `handleToggleArchive(bookmark.id, isArchived)`.
   - If the bookmark is currently active (`isArchived === false`):
     - Dispatches `POST /api/bookmarks/<id>/archive`.
-    - Upon HTTP 200 response, displays a toast notification: `"Bookmark moved to archive"`.
+    - On HTTP 200 response: displays a success toast notification `"Bookmark moved to archive"`.
   - If the bookmark is currently archived (`isArchived === true`):
     - Dispatches `POST /api/bookmarks/<id>/restore`.
-    - Upon HTTP 200 response, displays a toast notification: `"Bookmark restored from archive"`.
-  - Immediately reloads or synchronizes the bookmarks list via `fetchBookmarks(...)` so cards seamlessly appear or disappear in accordance with the active filter mode.
+    - On HTTP 200 response: displays a success toast notification `"Bookmark restored from archive"`.
+  - On error: displays an error toast notification with the server error message.
+  - On completion: automatically synchronizes the bookmarks list via `fetchBookmarks(...)` so cards seamlessly appear or disappear in accordance with the active filter mode.
 
-#### 6.5.3 Card Visual Indicators
-- **Card Action State**: The button text dynamically switches between `"Archive"` (with package icon `📦`) for active bookmarks and `"Restore"` (with outbox icon `📤`) for archived bookmarks.
-- **Button Class**: Archived bookmark buttons carry the `.is-archived` class, providing clear visual differentiation.
-- **Empty States**: If no bookmarks are found in the archived view, the UI renders a dedicated empty state guiding the user back or informing them that no archived items exist.
+#### 6.5.3 Card Visual Indicators & Styling
+- **Action State Label & Icon**:
+  - Active bookmark: displays package icon `📦` with label `"Archive"` and title `"Archive bookmark"`.
+  - Archived bookmark: displays outbox icon `📤` with label `"Restore"` and title `"Restore bookmark"`.
+- **Button Modifier Class**:
+  - Archived bookmark buttons carry the `.is-archived` modifier class (`.btn-archive.is-archived`), providing immediate visual distinction.
+- **Card Container Styling**:
+  - In views displaying archived items (such as `?archived=true` or `?archived=all`), cards with `archived: true` exhibit distinct visual indicators:
+    - Visual differentiation via `.is-archived` styling on the action button (`📤 Restore`).
+    - Visual differentiation preventing accidental interaction with unarchived collections.
+- **Empty States for Archived View**:
+  - When the archived filter is active and no archived bookmarks exist, the UI renders a dedicated empty state:
+    - Icon: `📦`
+    - Title: `"No archived bookmarks"`
+    - Subtitle: `"Bookmarks you archive will appear here. Archive bookmarks you don't need right now to keep your collection clean."`
 
 ---
 
