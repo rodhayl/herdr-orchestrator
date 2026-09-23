@@ -489,7 +489,7 @@ class AgyAdapter(WorkerAdapter):
             sf.write(f"""#!/bin/bash
 set -o pipefail
 cd "{worktree_path}"
-"{worker_cmd}" --mode accept-edits --add-dir "{worktree_path}" \\
+"{worker_cmd}" --mode accept-edits --dangerously-skip-permissions --add-dir "{worktree_path}" \\
   -p "$(< "{prompt_file}")" \\
   --model "{model}" \\
   --output-format json \\
