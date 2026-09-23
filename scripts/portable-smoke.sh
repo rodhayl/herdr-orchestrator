@@ -25,7 +25,7 @@ echo "Exporting commit $CURRENT_COMMIT to clean sandbox..."
 git archive HEAD | tar -x -C "$TMP_CHECKOUT"
 
 # Verify excluded runtime directories do not exist in clean sandbox
-for d in .tools .agy-factory .venv; do
+for d in .tools .venv .agy-factory/worktrees .agy-factory/tmp .agy-factory/cache; do
     if [[ -d "$TMP_CHECKOUT/$d" ]]; then
         echo "ERROR: Disallowed runtime directory $d leaked into clean checkout!"
         exit 1
