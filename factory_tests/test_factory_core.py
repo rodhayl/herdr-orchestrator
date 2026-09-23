@@ -190,8 +190,7 @@ class TestResourceManagerSafety(unittest.TestCase):
         self.mock_herdr = MockHerdrClient()
 
         # Patch state file path for testing
-        self.res_mgr = ResourceManager(self.mock_herdr)
-        self.res_mgr.state_file = self.temp_state_file
+        self.res_mgr = ResourceManager(self.mock_herdr, state_file=self.temp_state_file)
         self.res_mgr.state = {
             "control_plane": {"workspace_id": "wK", "pane_id": "wK:p1"},
             "owned": {

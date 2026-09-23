@@ -61,7 +61,8 @@
       "factory/run-20260923-043032/frontend/att-2",
       "factory/run-20260923-043032/backend_tests/att-1",
       "factory/run-20260923-043032/integration/att-1",
-      "factory/run-20260923-043032/audit/att-1"
+      "factory/run-20260923-043032/audit/att-1",
+      "factory/run-20260923-065724/v4_audit/att-1"
     ],
     "worktrees": []
   },
