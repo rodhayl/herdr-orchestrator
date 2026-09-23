@@ -23,7 +23,7 @@ BOARD_CONFIG="$PROJECT_ROOT/.agy-factory/board/config.toml"
 if [[ ! -f "$BOARD_CONFIG" ]]; then
     cat << 'EOF' > "$BOARD_CONFIG"
 # Project-local herdr-board configuration
-# Managed by AGY-Herdr Software Factory v4.0.0
+# Managed by AGY-Herdr Software Factory v5.0.0
 
 [server]
 host = "127.0.0.1"

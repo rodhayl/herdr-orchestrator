@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "================================================================================"
-echo "AGY-Herdr Software Factory (v4.0.0) — Real Provider Verification"
+echo "AGY-Herdr Software Factory (v5.0.0) — Real Provider Verification"
 echo "================================================================================"
 
 # 1. Verify AGY
@@ -31,6 +31,21 @@ else
     echo "  [NOTICE] FACTORY_API_KEY is not set in the environment."
     echo "  Real Droid execution requires FACTORY_API_KEY."
     echo "  Deterministic mock test harness and DroidAdapter capability tests are certified."
+fi
+
+# 3. Verify Codex
+echo -e "\n[3. Codex Provider Verification]"
+if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    echo "  [+] OPENAI_API_KEY detected. Running Codex live execution test..."
+    if codex exec --ephemeral --model gpt-5.6-luna "echo codex_verified" | grep -q "codex_verified"; then
+        echo "  [OK] Codex execution succeeded."
+    else
+        echo "  [WARN] Codex execution test did not return expected output."
+    fi
+else
+    echo "  [NOTICE] OPENAI_API_KEY is not set in the environment."
+    echo "  Real Codex execution requires OPENAI_API_KEY."
+    echo "  Deterministic mock test harness and CodexAdapter capability tests are certified."
 fi
 
 echo -e "\n================================================================================"

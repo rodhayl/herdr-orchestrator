@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "================================================================================"
-echo "AGY-Herdr Software Factory (v4.0.0) — Deterministic Verification Matrix"
+echo "AGY-Herdr Software Factory (v5.0.0) — Deterministic Verification Matrix"
 echo "================================================================================"
 
 echo -e "\n[Suite 1/5] Factory Core & State Machine Tests..."

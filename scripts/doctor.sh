@@ -10,9 +10,10 @@ import sys, os, json, subprocess, pathlib, hashlib
 
 project_root = pathlib.Path(sys.argv[1])
 lock_file = project_root / "toolchain.lock.json"
+profiles_file = project_root / "harness_profiles.json"
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v4.0.0) — Environment Diagnostics (doctor)")
+print("AGY-Herdr Software Factory (v5.0.0) — Environment Diagnostics (doctor)")
 print("=" * 80)
 
 structural_ok = True
@@ -96,6 +97,29 @@ else:
     print(f"  [FAIL] Droid CLI not found")
     structural_ok = False
 
+# Codex CLI
+codex_ver, _, codex_code = run_cmd(["codex", "--version"])
+if codex_code == 0:
+    print(f"  [OK] Codex CLI: Version {codex_ver}")
+else:
+    print(f"  [FAIL] Codex CLI not found")
+    structural_ok = False
+
+# Claude Code CLI (Read-only future inspection)
+claude_ver, _, claude_code = run_cmd(["claude", "--version"])
+if claude_code == 0:
+    print(f"  [INFO] Claude Code CLI: Version {claude_ver} (detected on host, planned for v6)")
+else:
+    print(f"  [INFO] Claude Code CLI: Not installed")
+
+# OpenCode CLI (Read-only future inspection)
+opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
+opencode_ver, _, opencode_code = run_cmd([opencode_cmd, "--version"])
+if opencode_code == 0:
+    print(f"  [INFO] OpenCode CLI: Version {opencode_ver} (detected on host, planned for v6)")
+else:
+    print(f"  [INFO] OpenCode CLI: Not installed")
+
 # Rust / Cargo
 rust_ver, _, rcode = run_cmd(["rustc", "--version"])
 if rcode == 0:
@@ -125,8 +149,37 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
 else:
     print(f"  [OK] herdr-board Compatibility: {board_status}")
 
-# 3. Authenticated Real-Provider Prerequisites
-print("\n[3. AUTHENTICATED REAL-PROVIDER PREREQUISITES]")
+# Harness Profiles Validation
+print("\n[3. HARNESS PROFILES GOVERNANCE]")
+if profiles_file.exists():
+    try:
+        with open(profiles_file, "r", encoding="utf-8") as f:
+            pdata = json.load(f)
+        profiles = pdata.get("profiles", {})
+        print(f"  [OK] harness_profiles.json: Loaded ({len(profiles)} certified profiles)")
+        
+        # Validate profile structure
+        sys.path.insert(0, str(project_root))
+        from tools.factory import validate_all_profiles
+        val_results = validate_all_profiles(profiles_file)
+        has_profile_errors = False
+        for pid, errs in val_results.items():
+            if errs:
+                print(f"  [FAIL] Profile '{pid}': {', '.join(errs)}")
+                has_profile_errors = True
+        if not has_profile_errors:
+            print(f"  [OK] All {len(profiles)} execution profiles validated against governance rules.")
+        else:
+            structural_ok = False
+    except Exception as e:
+        print(f"  [FAIL] harness_profiles.json error: {e}")
+        structural_ok = False
+else:
+    print("  [FAIL] harness_profiles.json not found")
+    structural_ok = False
+
+# 4. Authenticated Real-Provider Prerequisites
+print("\n[4. AUTHENTICATED REAL-PROVIDER PREREQUISITES]")
 
 # AGY Authentication Check
 agy_test_out, agy_test_err, agy_test_code = run_cmd(["agy", "models"])
@@ -144,9 +197,19 @@ else:
     print("  [WARN] Droid Provider Authentication: FACTORY_API_KEY environment variable is NOT set.")
     print("         Real Droid worker execution requires FACTORY_API_KEY.")
     print("         Deterministic tests and mock DroidAdapter harness remain fully functional.")
-    auth_warnings.append("FACTORY_API_KEY not set")
+    auth_warnings.append("FACTORY_API_KEY not set (Droid AUTH_BLOCKED)")
 
-# 4. Final Verdict
+# Codex Authentication Check
+openai_api_key = os.environ.get("OPENAI_API_KEY")
+if openai_api_key:
+    print("  [OK] Codex Provider Authentication: OPENAI_API_KEY is present")
+else:
+    print("  [WARN] Codex Provider Authentication: OPENAI_API_KEY environment variable is NOT set.")
+    print("         Real Codex worker execution requires OPENAI_API_KEY.")
+    print("         Deterministic tests and mock CodexAdapter harness remain fully functional.")
+    auth_warnings.append("OPENAI_API_KEY not set (Codex AUTH_BLOCKED)")
+
+# 5. Final Verdict
 print("\n" + "=" * 80)
 if structural_ok:
     print("DOCTOR STATUS: STRUCTURAL PREREQUISITES SATISFIED (READY FOR FACTORY WORK)")

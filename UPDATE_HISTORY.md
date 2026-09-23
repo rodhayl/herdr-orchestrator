@@ -60,3 +60,36 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - [x] Created `scripts/update-package.sh` supporting `--check` and `--apply`.
 - [x] Recorded `herdr_board` status as `BLOCKED_EXTERNAL_COMPATIBILITY`.
 - [x] Recorded `droid` provider status with authentication requirement disclosure.
+
+---
+
+## [2026-09-23T08:09:25Z] v5.0.0 Harness Profile Architecture & Codex Integration
+
+### 1. Context & Trigger
+- **Trigger**: Implementation of v5.0.0 execution profile system and CodexAdapter integration.
+- **Operator**: Antigravity Orchestrator (Gemini 3.8 Flash High).
+- **Previous Stack (v4.0.0)**:
+  - Factory Engine: `4.0.0`
+  - Registered Adapters: `AgyAdapter`, `DroidAdapter`
+  - Routing: Raw worker identity routing
+
+### 2. Discovered Installed Stack
+- **Herdr CLI**: `0.9.1` (protocol 22)
+- **AGY CLI**: `1.2.9` (authenticated, `gemini-3.8-flash`)
+- **Droid CLI**: `0.225.1` (installed, `FACTORY_API_KEY` required for live provider execution)
+- **Codex CLI**: `0.155.1` (installed, `OPENAI_API_KEY` required for live provider execution)
+- **Claude Code CLI**: `2.1.263` (detected on host, planned for v6)
+- **OpenCode CLI**: `1.18.31` (detected on host, planned for v6)
+- **herdr-board**: Upstream release `v0.17.0` (retained `BLOCKED_EXTERNAL_COMPATIBILITY`)
+
+### 3. Decisions & Actions Taken
+- [x] Upgraded Factory Engine from `4.0.0` to `5.0.0` in `factory.json` and `toolchain.lock.json`.
+- [x] Implemented `CodexAdapter` registered in `ADAPTER_REGISTRY`.
+- [x] Created `harness_profiles.json` and JSON schema `schemas/harness-profiles.schema.json`.
+- [x] Created comprehensive documentation in `HARNESS_PROFILES.md`.
+- [x] Refactored Factory deterministic router to route by execution profiles according to capability priority.
+- [x] Implemented `route explain` CLI command with `--json` output.
+- [x] Updated `herdr-board` projection to project profile, harness, model, and effort metadata onto Kanban cards.
+- [x] Updated `scripts/doctor.sh`, `scripts/update-package.sh`, and `scripts/verify-real.sh` to v5.0.0.
+- [x] Applied updated `toolchain.lock.json` recording 8 certified profiles, Codex CLI, and detected future harnesses.
+

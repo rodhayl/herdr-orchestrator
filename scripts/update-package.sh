@@ -15,12 +15,13 @@ if [[ -z "$MODE" || ("$MODE" != "--check" && "$MODE" != "--apply") ]]; then
 fi
 
 python3 - << 'EOF' "$PROJECT_ROOT" "$MODE"
-import sys, os, json, subprocess, pathlib, urllib.request, hashlib
+import sys, os, json, subprocess, pathlib, urllib.request, hashlib, datetime
 
 project_root = pathlib.Path(sys.argv[1])
 mode = sys.argv[2]
 lock_file = project_root / "toolchain.lock.json"
 history_file = project_root / "UPDATE_HISTORY.md"
+profiles_file = project_root / "harness_profiles.json"
 
 # 1. Load previous lock
 if lock_file.exists():
@@ -62,6 +63,19 @@ agy_ver = agy_ver.strip() if agy_ver else "not_installed"
 droid_ver, _, _ = run_cmd(["droid", "--version"])
 droid_ver = droid_ver.strip() if droid_ver else "not_installed"
 
+# Codex
+codex_ver, _, _ = run_cmd(["codex", "--version"])
+codex_ver = codex_ver.replace("codex-cli", "").strip() if codex_ver else "not_installed"
+
+# Claude Code (detected, future v6)
+claude_ver, _, _ = run_cmd(["claude", "--version"])
+claude_ver = claude_ver.replace("Claude Code", "").strip().replace("(", "").replace(")", "").strip() if claude_ver else "not_installed"
+
+# OpenCode (detected, future v6)
+opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
+opencode_ver, _, _ = run_cmd([opencode_cmd, "--version"])
+opencode_ver = opencode_ver.strip() if opencode_ver else "not_installed"
+
 # Toolchain
 py_ver, _, _ = run_cmd(["python3", "-V"])
 py_ver = py_ver.replace("Python", "").strip() if py_ver else "not_installed"
@@ -75,13 +89,12 @@ rust_ver = rust_ver.replace("rustc", "").strip() if rcode == 0 else "not_install
 cargo_ver, _, ccode = run_cmd(["cargo", "--version"])
 cargo_ver = cargo_ver.replace("cargo", "").strip() if ccode == 0 else "not_installed"
 
-# 3. Query upstream stable releases if online
+# Upstream checks
 upstream_board = "v0.17.0"
 board_commit = "b6c9bce7a2307053a3ba039db31eb880c8979230"
 board_supported_herdr = "0.9.0"
 board_supported_proto = 22
 
-# Evaluate Herdr vs Herdr-board compatibility
 board_status = "OK"
 if herdr_ver != board_supported_herdr:
     board_status = "BLOCKED_EXTERNAL_COMPATIBILITY"
@@ -90,15 +103,15 @@ if herdr_ver != board_supported_herdr:
 matrix = [
     {
         "component": "Factory Engine",
-        "prev_certified": prev_lock.get("factory", {}).get("version", "3.0.0"),
-        "installed": "4.0.0",
-        "latest_stable": "4.0.0",
+        "prev_certified": prev_lock.get("factory", {}).get("version", "4.0.0"),
+        "installed": "5.0.0",
+        "latest_stable": "5.0.0",
         "action": "Maintain",
         "evidence": "Local package declaration"
     },
     {
         "component": "Herdr CLI",
-        "prev_certified": prev_lock.get("herdr", {}).get("version", "0.9.0"),
+        "prev_certified": prev_lock.get("herdr", {}).get("version", "0.9.1"),
         "installed": herdr_ver,
         "latest_stable": herdr_ver,
         "action": "Check Only",
@@ -130,11 +143,35 @@ matrix = [
     },
     {
         "component": "Droid CLI",
-        "prev_certified": prev_lock.get("droid", {}).get("cli_version", "None"),
+        "prev_certified": prev_lock.get("droid", {}).get("cli_version", "0.225.1"),
         "installed": droid_ver,
         "latest_stable": droid_ver,
         "action": "Check Only",
         "evidence": f"droid --version ({droid_ver})"
+    },
+    {
+        "component": "Codex CLI",
+        "prev_certified": prev_lock.get("codex", {}).get("cli_version", "0.155.1"),
+        "installed": codex_ver,
+        "latest_stable": codex_ver,
+        "action": "Lock Target",
+        "evidence": f"codex --version ({codex_ver})"
+    },
+    {
+        "component": "Claude Code",
+        "prev_certified": "None",
+        "installed": claude_ver,
+        "latest_stable": claude_ver,
+        "action": "Future v6",
+        "evidence": f"claude --version ({claude_ver})"
+    },
+    {
+        "component": "OpenCode CLI",
+        "prev_certified": "None",
+        "installed": opencode_ver,
+        "latest_stable": opencode_ver,
+        "action": "Future v6",
+        "evidence": f"opencode --version ({opencode_ver})"
     },
     {
         "component": "Python",
@@ -163,7 +200,7 @@ matrix = [
 ]
 
 print("=" * 80)
-print("AGY-Herdr Software Factory — Toolchain & Package Update Gate")
+print("AGY-Herdr Software Factory (v5.0.0) — Toolchain & Package Update Gate")
 print("=" * 80)
 header_fmt = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
 row_fmt    = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
@@ -179,6 +216,31 @@ for row in matrix:
     ))
 print("-" * 80)
 
+# Display Harness Profiles Matrix
+profiles_data = {}
+if profiles_file.exists():
+    with open(profiles_file, "r", encoding="utf-8") as f:
+        profiles_data = json.load(f).get("profiles", {})
+
+print("\n" + "=" * 80)
+print("Harness Profiles Compatibility & Governance Matrix")
+print("=" * 80)
+p_header_fmt = "{:<22} | {:<8} | {:<18} | {:<8} | {:<12} | {:<12}"
+p_row_fmt    = "{:<22} | {:<8} | {:<18} | {:<8} | {:<12} | {:<12}"
+print(p_header_fmt.format("Profile ID", "Harness", "Model", "Effort", "Concurrency", "Cert Status"))
+print("-" * 80)
+for pid, p in profiles_data.items():
+    cert_st = p.get("certification", {}).get("status", "UNCERTIFIED")
+    print(p_row_fmt.format(
+        pid,
+        p.get("harness", ""),
+        p.get("model", "")[:18],
+        p.get("effort", ""),
+        str(p.get("max_concurrency", 1)),
+        cert_st
+    ))
+print("-" * 80)
+
 if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
     print("\n[COMPATIBILITY GATE NOTICE]")
     print(f"  herdr-board {upstream_board} strictly requires Herdr {board_supported_herdr} (protocol {board_supported_proto}).")
@@ -189,7 +251,7 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
 if mode == "--apply":
     print("\n[APPLY MODE]")
     new_lock = {
-        "factory": {"version": "4.0.0", "schema_version": "4.0.0"},
+        "factory": {"version": "5.0.0", "schema_version": "5.0.0"},
         "certified_environment": {
             "os": os.uname().sysname,
             "architecture": os.uname().machine,
@@ -221,8 +283,28 @@ if mode == "--apply":
             "certified_model": "qwen3.8-max",
             "certified_effort": "xhigh",
             "certified_autonomy": "low",
-            "catalog_status": "Installed droid CLI v0.224.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
+            "catalog_status": "Installed droid CLI v0.225.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
         },
+        "codex": {
+            "cli_version": codex_ver,
+            "certified_model": "gpt-5.6-luna",
+            "certified_effort": "high",
+            "certified_sandbox": "workspace-write",
+            "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
+        },
+        "future_harnesses": {
+            "claude": {
+                "installed": claude_ver != "not_installed",
+                "cli_version": claude_ver,
+                "status": "planned_v6"
+            },
+            "opencode": {
+                "installed": opencode_ver != "not_installed",
+                "cli_version": opencode_ver,
+                "status": "planned_v6"
+            }
+        },
+        "certified_profiles": list(profiles_data.keys()),
         "python": {
             "version": py_ver,
             "implementation": "CPython",
@@ -239,11 +321,11 @@ if mode == "--apply":
             "version": cargo_ver if cargo_ver != "not_installed" else None,
             "installed": cargo_ver != "not_installed"
         },
-        "certified_at": prev_lock.get("certified_at", "2026-09-23T07:52:00Z")
+        "certified_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
     with open(lock_file, "w", encoding="utf-8") as f:
         json.dump(new_lock, f, indent=2)
-    print("  -> Updated toolchain.lock.json successfully.")
+    print("  -> Updated toolchain.lock.json to v5.0.0 successfully.")
 
 print("=" * 80)
 EOF

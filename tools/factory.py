@@ -13,6 +13,7 @@ Zero third-party Python dependencies (Python 3 standard library only).
 
 import argparse
 import concurrent.futures
+import copy
 import datetime
 import fnmatch
 import glob
@@ -298,7 +299,7 @@ class ResourceManager:
             self.state = {}
 
         if "control_plane" not in self.state:
-            self.state["control_plane"] = self.herdr.control_plane
+            self.state["control_plane"] = getattr(self.herdr, "control_plane", "wK:p1")
         if "owned" not in self.state:
             self.state["owned"] = {
                 "workspace_ids": [],
@@ -313,21 +314,29 @@ class ResourceManager:
     def save(self):
         atomic_write_json(self.state_file, self.state)
 
-    def record_workspace(self, workspace_id: str, pane_id: str, run_id: str = None):
-        if workspace_id not in self.state["owned"]["workspace_ids"]:
+    def record_workspace(self, workspace_id: str = None, pane_id: str = None, run_id: str = None):
+        if workspace_id and workspace_id not in self.state["owned"]["workspace_ids"]:
             self.state["owned"]["workspace_ids"].append(workspace_id)
-        if pane_id not in self.state["owned"]["pane_ids"]:
+        if pane_id and pane_id not in self.state["owned"]["pane_ids"]:
             self.state["owned"]["pane_ids"].append(pane_id)
 
         if run_id:
             if run_id not in self.state["runs"]:
                 self.state["runs"][run_id] = {"workspace_ids": [], "pane_ids": [], "branches": [], "worktrees": []}
-            if workspace_id not in self.state["runs"][run_id]["workspace_ids"]:
+            if workspace_id and workspace_id not in self.state["runs"][run_id]["workspace_ids"]:
                 self.state["runs"][run_id]["workspace_ids"].append(workspace_id)
-            if pane_id not in self.state["runs"][run_id]["pane_ids"]:
+            if pane_id and pane_id not in self.state["runs"][run_id]["pane_ids"]:
                 self.state["runs"][run_id]["pane_ids"].append(pane_id)
 
         self.save()
+
+    def register_owned_workspace(self, workspace_id: str, run_id: str = None):
+        if workspace_id:
+            self.record_workspace(workspace_id, None, run_id=run_id)
+
+    def register_owned_pane(self, pane_id: str, run_id: str = None):
+        if pane_id:
+            self.record_workspace(None, pane_id, run_id=run_id)
 
     def record_worktree(self, path: str, branch: str, run_id: str = None):
         if path not in self.state["owned"]["worktrees"]:
@@ -834,14 +843,334 @@ echo $? > "{status_file_path}"
                 pass
 
 
+class CodexAdapter(WorkerAdapter):
+    """
+    Worker adapter for OpenAI Codex non-interactive execution.
+    Pins execution to gpt-5.6-luna with high reasoning effort.
+    Executes in isolated worktree and registered Herdr workspace/pane.
+    Flags:
+      codex exec \\
+        --model gpt-5.6-luna \\
+        -c model_reasoning_effort=high \\
+        --sandbox workspace-write \\
+        --approve-for-me \\
+        --ephemeral \\
+        --output-schema <schema> \\
+        -o <output_json>
+    """
+
+    def __init__(self, worker_id: str, worker_config: dict, herdr_client: HerdrClient, resource_manager: ResourceManager):
+        super().__init__(worker_id, worker_config, herdr_client, resource_manager)
+        self.command = worker_config.get("command", "/usr/local/bin/codex")
+        self.profile_home = pathlib.Path(worker_config.get("profile_home", "/root/.codex"))
+        self.default_model = worker_config.get("default_model", "gpt-5.6-luna")
+        self.reasoning_effort = worker_config.get("reasoning_effort", "high")
+        self.native_cfg = worker_config.get("native", {})
+
+    def prepare_environment(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path) -> dict:
+        label = f"factory_{task_id}_att_{attempt_id}"
+        ws_id, pane_id = self.herdr.create_workspace(cwd=str(worktree_path), label=label)
+        self.res_mgr.register_owned_workspace(ws_id)
+        self.res_mgr.register_owned_pane(pane_id)
+        return {
+            "workspace_id": ws_id,
+            "pane_id": pane_id,
+            "worktree_path": str(worktree_path)
+        }
+
+    def execute(self, run_id: str, task_id: str, attempt_id: int,
+                worktree_path: pathlib.Path, prompt_file: pathlib.Path,
+                schema_file: pathlib.Path, timeout: int,
+                task_attempt_dir: pathlib.Path, env_info: dict,
+                model: str = None, effort: str = None) -> dict:
+        output_json_path = task_attempt_dir / "worker_output.json"
+        status_file_path = task_attempt_dir / "worker_status.txt"
+        pane_id = env_info.get("pane_id")
+
+        model = model or self.default_model
+        effort = effort or self.reasoning_effort
+        sandbox = self.native_cfg.get("sandbox", "workspace-write")
+
+        # Deterministic test harness mode
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+            behavior = os.environ.get("CODEX_TEST_BEHAVIOR", "SUCCESS")
+            return self._handle_test_behavior(
+                behavior, run_id, task_id, attempt_id, worktree_path,
+                output_json_path, status_file_path, timeout, env_info,
+                model=model, effort=effort, sandbox=sandbox
+            )
+
+        # Live authentication check
+        has_auth = bool(os.environ.get("OPENAI_API_KEY"))
+        if not has_auth:
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "error": "Codex authentication missing (no OPENAI_API_KEY environment variable). Set OPENAI_API_KEY to enable live Codex execution.",
+                "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort, "sandbox": sandbox}
+            }
+
+        # Build wrapper script for live codex execution
+        script_path = task_attempt_dir / "run_codex.sh"
+        cmd = [
+            f'"{self.command}"',
+            "exec",
+            f"--model {model}",
+            f"-c model_reasoning_effort={effort}",
+            f"--sandbox {sandbox}",
+            "--approve-for-me",
+            "--ephemeral",
+            f'--output-schema "{schema_file}"',
+            f'-o "{output_json_path}"'
+        ]
+        script_body = (
+            f"#!/usr/bin/env bash\n"
+            f"cd \"{worktree_path}\"\n"
+            f"{' '.join(cmd)} < \"{prompt_file}\"\n"
+            f"echo $? > \"{status_file_path}\"\n"
+        )
+        script_path.write_text(script_body, encoding="utf-8")
+        os.chmod(script_path, 0o755)
+
+        if pane_id:
+            self.herdr.run_in_pane(pane_id, f'bash "{script_path}"')
+        else:
+            subprocess.Popen(["bash", str(script_path)], cwd=str(worktree_path))
+
+        start_wait = time.time()
+        while time.time() - start_wait < timeout:
+            if status_file_path.exists() and status_file_path.stat().st_size > 0:
+                break
+            time.sleep(1)
+
+        if not status_file_path.exists() or status_file_path.stat().st_size == 0:
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {
+                "exit_code": -1,
+                "timed_out": True,
+                "error": f"Codex worker timed out after {timeout}s",
+                "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+            }
+
+        try:
+            exit_code = int(status_file_path.read_text().strip())
+        except Exception:
+            exit_code = -1
+
+        raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+        parsed = self._parse_codex_output(raw_output, run_id, task_id, attempt_id, model=model, effort=effort, sandbox=sandbox)
+
+        return {
+            "exit_code": exit_code,
+            "timed_out": False,
+            "raw_output": raw_output,
+            "data": parsed.get("task_data", {}),
+            "provenance": parsed.get("provenance", {})
+        }
+
+    def _parse_codex_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
+                            model: str = "gpt-5.6-luna", effort: str = "high", sandbox: str = "workspace-write") -> dict:
+        result = {
+            "task_data": {},
+            "provenance": {
+                "model": model,
+                "reasoning_effort": effort,
+                "sandbox": sandbox
+            }
+        }
+        raw_output = raw_output.strip()
+        if not raw_output:
+            return result
+
+        envelope = {}
+        try:
+            envelope = json.loads(raw_output)
+        except Exception:
+            for line in reversed(raw_output.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        envelope = json.loads(line)
+                        break
+                    except Exception:
+                        pass
+
+        if isinstance(envelope, dict):
+            if "session_id" in envelope:
+                result["provenance"]["session_id"] = envelope["session_id"]
+            if "duration_ms" in envelope:
+                result["provenance"]["duration_ms"] = envelope["duration_ms"]
+            if "turns" in envelope:
+                result["provenance"]["turns"] = envelope["turns"]
+            if "model" in envelope:
+                result["provenance"]["model"] = envelope["model"]
+            if "reasoning_effort" in envelope:
+                result["provenance"]["reasoning_effort"] = envelope["reasoning_effort"]
+
+            if envelope.get("is_error") is True:
+                result["task_data"] = {
+                    "status": "FAILED",
+                    "error": envelope.get("error") or envelope.get("result", "Codex execution error")
+                }
+                return result
+
+            # Parse inner task result
+            inner_text = envelope.get("result")
+            inner_json = None
+            if isinstance(inner_text, dict):
+                inner_json = inner_text
+            elif isinstance(inner_text, str):
+                m = re.search(r"(\{[\s\S]*\})", inner_text)
+                if m:
+                    try:
+                        inner_json = json.loads(m.group(1))
+                    except Exception:
+                        pass
+            elif not inner_text and "status" in envelope:
+                inner_json = envelope
+
+            if inner_json:
+                if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                    return result
+                if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                    return result
+                result["task_data"] = inner_json
+                return result
+
+        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
+        if m:
+            try:
+                result["task_data"] = json.loads(m.group(1))
+            except Exception:
+                pass
+        return result
+
+    def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
+                              worktree_path: pathlib.Path, output_json_path: pathlib.Path,
+                              status_file_path: pathlib.Path, timeout: int, env_info: dict,
+                              model: str = "gpt-5.6-luna", effort: str = "high", sandbox: str = "workspace-write") -> dict:
+        if behavior == "TIMEOUT":
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {"exit_code": -1, "timed_out": True, "error": f"Codex worker timed out after {timeout}s"}
+        elif behavior == "ERROR":
+            err_envelope = {"is_error": True, "error": "Simulated Codex failure", "result": "Execution error"}
+            output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
+            status_file_path.write_text("1\n")
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "raw_output": json.dumps(err_envelope),
+                "data": {"status": "FAILED", "error": "Simulated Codex failure"},
+                "provenance": {
+                    "session_id": "codex-test-session-err",
+                    "model": model,
+                    "reasoning_effort": effort,
+                    "sandbox": sandbox
+                }
+            }
+        elif behavior == "MALFORMED":
+            output_json_path.write_text("NOT_JSON_AT_ALL", encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": "NOT_JSON_AT_ALL",
+                "data": {},
+                "provenance": {}
+            }
+        elif behavior == "ATTEMPT_MISMATCH":
+            envelope = {
+                "is_error": False,
+                "session_id": "codex-test-session-mismatch",
+                "result": json.dumps({
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "attempt_id": attempt_id + 99,
+                    "status": "COMPLETED",
+                    "summary": "Mismatched attempt",
+                    "changed_files": []
+                })
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            parsed = self._parse_codex_output(json.dumps(envelope), run_id, task_id, attempt_id, model=model, effort=effort, sandbox=sandbox)
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": parsed.get("task_data", {}),
+                "provenance": parsed.get("provenance", {})
+            }
+        else:  # SUCCESS
+            out_file = worktree_path / f"output_{task_id}_{run_id}.txt"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(f"Codex finished {task_id} att-{attempt_id}\n", encoding="utf-8")
+            rel_file = str(out_file.relative_to(worktree_path))
+
+            inner_data = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "summary": f"Successfully finished {task_id} via Codex",
+                "changed_files": [rel_file]
+            }
+            envelope = {
+                "is_error": False,
+                "session_id": f"codex-sess-{task_id}-{attempt_id}",
+                "duration_ms": 3800,
+                "turns": 2,
+                "model": model,
+                "reasoning_effort": effort,
+                "result": json.dumps(inner_data)
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": inner_data,
+                "provenance": {
+                    "session_id": f"codex-sess-{task_id}-{attempt_id}",
+                    "duration_ms": 3800,
+                    "turns": 2,
+                    "model": model,
+                    "reasoning_effort": effort,
+                    "sandbox": sandbox
+                }
+            }
+
+    def cancel(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> bool:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                return self.herdr.close_workspace(ws_id)
+            except Exception:
+                return False
+        return True
+
+    def cleanup_attempt(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> None:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                self.res_mgr.clean_workspace(ws_id)
+            except Exception:
+                pass
+
+
 ADAPTER_REGISTRY = {
     "agy": AgyAdapter,
     "antigravity_cli": AgyAdapter,
     "droid": DroidAdapter,
     "droid_cli": DroidAdapter,
-    "factory_cli": DroidAdapter
+    "factory_cli": DroidAdapter,
+    "codex": CodexAdapter,
+    "codex_cli": CodexAdapter
 }
-
 
 
 def register_adapter(name: str, adapter_cls: type):
@@ -864,8 +1193,34 @@ def get_adapter(worker_id: str, worker_config: dict, herdr: HerdrClient, res_mgr
 
 
 # ==============================================================================
-# Capability Taxonomy & Deterministic Router
+# Harness Profiles Data Model, Validation & Execution Profile Routing
 # ==============================================================================
+
+HARNESS_PROFILES_PATH = PROJECT_ROOT / "harness_profiles.json"
+
+SUPPORTED_HARNESS_EFFORTS = {
+    "agy": {"low", "medium", "high"},
+    "droid": {"none", "low", "medium", "high", "xhigh"},
+    "codex": {"low", "medium", "high", "xhigh"},
+    "claude": {"low", "medium", "high", "max"},
+    "opencode": {"default", "fast", "deep"}
+}
+
+ALLOWED_CODEX_SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
+
+PROFILE_TASK_TYPE_PREFERENCES = {
+    "specification": ["agy-spec-high"],
+    "planning": ["agy-spec-high"],
+    "backend": ["droid-backend-deep", "agy-backend-high"],
+    "frontend": ["codex-frontend-high", "agy-frontend-high"],
+    "testing": ["agy-tests-medium", "agy-backend-high"],
+    "debugging": ["droid-backend-deep", "agy-backend-high", "agy-integration-high"],
+    "mechanical_change": ["droid-backend-deep"],
+    "integration": ["agy-integration-high", "agy-backend-high"],
+    "conflict_resolution": ["agy-integration-high"],
+    "review": ["agy-review-high", "agy-audit-high"],
+    "audit": ["agy-audit-high"]
+}
 
 WORKER_CAPABILITIES = {
     "agy": {"implementation", "review", "planning", "testing"},
@@ -875,14 +1230,15 @@ WORKER_CAPABILITIES = {
     "agy5": {"coding", "testing"},
     "agy6": {"integration", "debugging", "conflict_resolution"},
     "agy7": {"review", "audit"},
-    "droid": {"coding", "backend", "testing", "debugging", "mechanical_change"}
+    "droid": {"coding", "backend", "testing", "debugging", "mechanical_change"},
+    "codex": {"coding", "frontend", "debugging", "testing", "review"}
 }
 
 TASK_TYPE_PREFERENCES = {
     "specification": ["agy2"],
     "planning": ["agy2"],
     "backend": ["droid", "agy3"],
-    "frontend": ["agy4", "droid"],
+    "frontend": ["codex", "agy4"],
     "testing": ["agy5", "droid"],
     "debugging": ["droid", "agy3", "agy6"],
     "mechanical_change": ["droid"],
@@ -893,14 +1249,83 @@ TASK_TYPE_PREFERENCES = {
 }
 
 
-def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy_workers: set = None) -> tuple:
+def load_harness_profiles(profiles_path: pathlib.Path = None) -> dict:
+    path = profiles_path or HARNESS_PROFILES_PATH
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("profiles", {})
+    except Exception:
+        return {}
+
+
+def validate_profile(profile_id: str, profile: dict) -> list:
+    errors = []
+    if not re.match(r"^[a-z0-9][a-z0-9._-]*$", profile_id):
+        errors.append(f"Profile ID '{profile_id}' violates naming pattern: must start with alphanumeric and contain only [a-z0-9._-]")
+
+    if profile.get("id") != profile_id:
+        errors.append(f"Profile 'id' field '{profile.get('id')}' does not match key '{profile_id}'")
+
+    adapter = profile.get("adapter")
+    if adapter not in ADAPTER_REGISTRY:
+        errors.append(f"Profile '{profile_id}' references unknown adapter '{adapter}'")
+
+    harness = profile.get("harness")
+    effort = profile.get("effort")
+    if harness in SUPPORTED_HARNESS_EFFORTS:
+        allowed_efforts = SUPPORTED_HARNESS_EFFORTS[harness]
+        if effort not in allowed_efforts:
+            errors.append(f"Profile '{profile_id}' has invalid effort '{effort}' for harness '{harness}' (allowed: {allowed_efforts})")
+    elif harness is not None:
+        errors.append(f"Profile '{profile_id}' references unknown harness '{harness}'")
+
+    if harness == "codex":
+        native = profile.get("native", {})
+        sandbox = native.get("sandbox")
+        if sandbox and sandbox not in ALLOWED_CODEX_SANDBOXES:
+            errors.append(f"Profile '{profile_id}' declares invalid Codex sandbox '{sandbox}' (allowed: {ALLOWED_CODEX_SANDBOXES})")
+
+    if "model" not in profile or not profile["model"]:
+        errors.append(f"Profile '{profile_id}' must specify a non-empty 'model'")
+
+    if "capabilities" not in profile or not isinstance(profile["capabilities"], list):
+        errors.append(f"Profile '{profile_id}' must define 'capabilities' list")
+
+    return errors
+
+
+def validate_all_profiles(profiles_path: pathlib.Path = None) -> dict:
+    profiles = load_harness_profiles(profiles_path)
+    results = {}
+    for pid, pdata in profiles.items():
+        results[pid] = validate_profile(pid, pdata)
+    return results
+
+
+def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
+                        busy_workers: set = None, busy_profiles: set = None,
+                        profiles_path: pathlib.Path = None) -> tuple:
     """
-    Deterministically routes a task to an eligible worker based on capabilities and preferences.
+    Deterministically routes a task to an eligible worker based on execution profiles and capabilities.
+    Section 20 priority order:
+      specification: agy-spec-high
+      backend:       droid-backend-deep -> agy-backend-high
+      frontend:      codex-frontend-high -> agy-frontend-high
+      testing:       agy-tests-medium -> agy-backend-high
+      review:        agy-review-high -> agy-audit-high
+      audit:         agy-audit-high
+      integration:   agy-integration-high -> agy-backend-high
+
     Returns: (worker_id, routing_metadata, status)
       where status is 'ROUTED', 'BUSY', or 'BLOCKED'
     """
-    busy_workers = busy_workers or set()
+    busy_workers = set(busy_workers or set())
+    busy_profiles = set(busy_profiles or set())
     worker_registry = factory_config.get("worker_registry", {})
+    profiles = load_harness_profiles(profiles_path)
 
     # 1. Explicit worker assignment (legacy and backward-compatibility mode)
     explicit_wid = task_def.get("worker_id") or task_def.get("worker")
@@ -914,6 +1339,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
                 "routing_mode": "explicit",
                 "task_type": task_def.get("task_type", "explicit"),
                 "required_capabilities": task_def.get("requires", []),
+                "requirements": task_def.get("requires", []),
                 "eligible_candidates": [explicit_wid],
                 "busy_candidates": [explicit_wid] if is_busy else [],
                 "selected_worker": explicit_wid,
@@ -930,20 +1356,172 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
             }
             return None, metadata, "BLOCKED"
 
-    # 2. Capability-based deterministic routing
-    task_type = task_def.get("task_type")
+    # 2. Execution Profile Routing (v5 mode if profiles loaded)
+    task_type = task_def.get("task_type", "implementation")
     requires = set(task_def.get("requires", []))
 
+    if profiles:
+        priority_pids = PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+        all_pids = list(profiles.keys())
+        ordered_pids = [p for p in priority_pids if p in all_pids]
+        for p in all_pids:
+            if p not in ordered_pids:
+                ordered_pids.append(p)
+
+        invalid_profiles = []
+        auth_blocked_profiles = []
+        capability_matched_profiles = []
+
+        is_test_harness = os.environ.get("FACTORY_TEST_HARNESS") == "1"
+
+        for pid in ordered_pids:
+            p = profiles[pid]
+            if not p.get("enabled", True):
+                continue
+
+            # Validation check (exclude drifted profiles)
+            errs = validate_profile(pid, p)
+            if errs:
+                invalid_profiles.append({"profile_id": pid, "errors": errs})
+                continue
+
+            # Capabilities check
+            p_caps = set(p.get("capabilities", []))
+            if not requires.issubset(p_caps):
+                continue
+
+            capability_matched_profiles.append(pid)
+
+            # Auth check
+            harness = p.get("harness")
+            if not is_test_harness:
+                if harness == "droid" and not os.environ.get("FACTORY_API_KEY"):
+                    auth_blocked_profiles.append(pid)
+                    continue
+                if harness == "codex":
+                    has_auth = bool(os.environ.get("OPENAI_API_KEY"))
+                    if not has_auth:
+                        auth_blocked_profiles.append(pid)
+                        continue
+
+        if not capability_matched_profiles:
+            metadata = {
+                "routing_mode": "execution_profile",
+                "task_type": task_type,
+                "required_capabilities": list(requires),
+                "requirements": list(requires),
+                "eligible_candidates": [],
+                "eligible_profiles": [],
+                "busy_candidates": [],
+                "busy_profiles": [],
+                "invalid_profiles": invalid_profiles,
+                "auth_blocked_profiles": auth_blocked_profiles,
+                "selected_worker": None,
+                "selected_adapter": None,
+                "selection_reason": f"No worker satisfies required capabilities: {list(requires)}"
+            }
+            return None, metadata, "BLOCKED"
+
+        # Eligible profiles that are valid and authenticated
+        eligible_profiles = [p for p in capability_matched_profiles if p not in auth_blocked_profiles]
+
+        if not eligible_profiles:
+            metadata = {
+                "routing_mode": "execution_profile",
+                "task_type": task_type,
+                "required_capabilities": list(requires),
+                "requirements": list(requires),
+                "eligible_candidates": [],
+                "eligible_profiles": [],
+                "busy_candidates": [],
+                "busy_profiles": [],
+                "invalid_profiles": invalid_profiles,
+                "auth_blocked_profiles": auth_blocked_profiles,
+                "selected_worker": None,
+                "selected_adapter": None,
+                "selection_reason": f"All capable profiles ({', '.join(capability_matched_profiles)}) are blocked by authentication"
+            }
+            return None, metadata, "BLOCKED"
+
+        # Candidate lists for compatibility with v4/v5
+        eligible_candidates = []
+        for pid in eligible_profiles:
+            wid = profiles[pid].get("worker_identity", pid)
+            if wid not in eligible_candidates:
+                eligible_candidates.append(wid)
+
+        available_profiles = []
+        busy_candidates_list = []
+        busy_profiles_list = []
+        for pid in eligible_profiles:
+            p = profiles[pid]
+            wid = p.get("worker_identity", pid)
+            is_busy = (pid in busy_profiles) or (wid in busy_workers)
+            if is_busy:
+                if wid not in busy_candidates_list:
+                    busy_candidates_list.append(wid)
+                if pid not in busy_profiles_list:
+                    busy_profiles_list.append(pid)
+            else:
+                available_profiles.append(pid)
+
+        if not available_profiles:
+            metadata = {
+                "routing_mode": "execution_profile",
+                "task_type": task_type,
+                "required_capabilities": list(requires),
+                "requirements": list(requires),
+                "eligible_candidates": eligible_candidates,
+                "eligible_profiles": eligible_profiles,
+                "busy_candidates": busy_candidates_list,
+                "busy_profiles": busy_profiles_list or list(busy_profiles),
+                "invalid_profiles": invalid_profiles,
+                "auth_blocked_profiles": auth_blocked_profiles,
+                "selected_worker": None,
+                "selected_adapter": None,
+                "selection_reason": f"All eligible candidates ({', '.join(eligible_profiles)}) are busy"
+            }
+            return None, metadata, "BUSY"
+
+        selected_pid = available_profiles[0]
+        sp = profiles[selected_pid]
+        wid = sp.get("worker_identity", selected_pid)
+        adapter = sp.get("adapter", "agy")
+        model = sp.get("model")
+        effort = sp.get("effort")
+
+        metadata = {
+            "routing_mode": "execution_profile",
+            "task_type": task_type,
+            "required_capabilities": list(requires),
+            "requirements": list(requires),
+            "eligible_candidates": eligible_candidates,
+            "eligible_profiles": eligible_profiles,
+            "busy_candidates": busy_candidates_list,
+            "busy_profiles": list(busy_profiles),
+            "invalid_profiles": invalid_profiles,
+            "auth_blocked_profiles": auth_blocked_profiles,
+            "selected_profile_id": selected_pid,
+            "selected_worker": wid,
+            "worker_identity": wid,
+            "selected_adapter": adapter,
+            "harness": sp.get("harness", adapter),
+            "model": model,
+            "effort": effort,
+            "native": sp.get("native", {}),
+            "selection_reason": f"Selected preferred available profile '{selected_pid}' from eligible pool {eligible_profiles}"
+        }
+        return wid, metadata, "ROUTED"
+
+    # Fallback to legacy v4 routing if no profiles available
     priority_order = TASK_TYPE_PREFERENCES.get(task_type, [])
     all_workers = list(worker_registry.keys())
 
-    # Build preference-ordered candidate list
     ordered_candidates = [w for w in priority_order if w in all_workers]
     for w in all_workers:
         if w not in ordered_candidates:
             ordered_candidates.append(w)
 
-    # Filter candidates that satisfy ALL required capabilities
     eligible = []
     for wid in ordered_candidates:
         w_cfg = worker_registry.get(wid, {})
@@ -960,6 +1538,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
             "routing_mode": "deterministic_capability",
             "task_type": task_type,
             "required_capabilities": list(requires),
+            "requirements": list(requires),
             "eligible_candidates": [],
             "busy_candidates": [],
             "selected_worker": None,
@@ -976,6 +1555,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
             "routing_mode": "deterministic_capability",
             "task_type": task_type,
             "required_capabilities": list(requires),
+            "requirements": list(requires),
             "eligible_candidates": eligible,
             "busy_candidates": busy_candidates,
             "selected_worker": None,
@@ -990,13 +1570,155 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
         "routing_mode": "deterministic_capability",
         "task_type": task_type,
         "required_capabilities": list(requires),
+        "requirements": list(requires),
         "eligible_candidates": eligible,
         "busy_candidates": busy_candidates,
         "selected_worker": selected,
+        "worker_identity": selected,
         "selected_adapter": adapter,
         "selection_reason": f"Selected preferred available candidate '{selected}' from eligible pool {eligible}"
     }
     return selected, metadata, "ROUTED"
+
+
+def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib.Path = None, run_id: str = None) -> dict:
+    """
+    Non-mutating routing evaluation engine. Explains deterministic candidate ranking,
+    capability matching, authentication status, busy state, and final profile decision.
+    """
+    if isinstance(plan_file_or_data, (str, pathlib.Path)):
+        with open(plan_file_or_data, "r", encoding="utf-8") as f:
+            plan_data = json.load(f)
+    else:
+        plan_data = plan_file_or_data
+
+    target_task = None
+    for t in plan_data.get("tasks", []):
+        if t.get("task_id") == task_id:
+            target_task = t
+            break
+
+    if not target_task:
+        raise ValueError(f"Task '{task_id}' not found in plan")
+
+    task_type = target_task.get("task_type", "implementation")
+    requires = target_task.get("requires", [])
+    requires_set = set(requires)
+
+    profiles = load_harness_profiles(profiles_path)
+    factory_config = {}
+    if FACTORY_CONFIG_PATH.exists():
+        try:
+            with open(FACTORY_CONFIG_PATH, "r", encoding="utf-8") as f:
+                factory_config = json.load(f)
+        except Exception:
+            pass
+
+    # Determine busy state if run_id provided
+    busy_workers = set()
+    busy_profiles = set()
+    if run_id:
+        run_manifest = RUNS_DIR / run_id / "manifest.json"
+        if run_manifest.exists():
+            try:
+                with open(run_manifest, "r", encoding="utf-8") as f:
+                    mdata = json.load(f)
+                for tid, trec in mdata.get("tasks", {}).items():
+                    if trec.get("canonical_state") in ("DISPATCHING", "RUNNING", "PATH_VALIDATING", "VALIDATING", "COMMITTING", "COMMITTED", "INTEGRATING"):
+                        if trec.get("worker_id"):
+                            busy_workers.add(trec["worker_id"])
+                        if trec.get("profile_id"):
+                            busy_profiles.add(trec["profile_id"])
+            except Exception:
+                pass
+
+    pref_list = PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+    ordered_pids = [p for p in pref_list if p in profiles]
+    for p in profiles:
+        if p not in ordered_pids:
+            ordered_pids.append(p)
+
+    profile_evaluations = []
+    eligible_pool = []
+
+    for rank, pid in enumerate(ordered_pids, start=1):
+        p = profiles[pid]
+        p_caps = set(p.get("capabilities", []))
+        caps_match = requires_set.issubset(p_caps)
+        missing_caps = list(requires_set - p_caps)
+
+        harness = p.get("harness")
+        is_test_harness = os.environ.get("FACTORY_TEST_HARNESS") == "1"
+        if is_test_harness:
+            auth_status = "HARNESS_OVERRIDE"
+        elif harness == "droid":
+            auth_status = "AVAILABLE" if os.environ.get("FACTORY_API_KEY") else "AUTH_BLOCKED"
+        elif harness == "codex":
+            auth_status = "AVAILABLE" if os.environ.get("OPENAI_API_KEY") else "AUTH_BLOCKED"
+        else:
+            auth_status = "AVAILABLE"
+
+        errs = validate_profile(pid, p)
+        is_valid = len(errs) == 0
+
+        wid = p.get("worker_identity", pid)
+        is_busy = (pid in busy_profiles) or (wid in busy_workers)
+        busy_status = "BUSY" if is_busy else "IDLE"
+
+        if not is_valid:
+            eligibility = "INVALID"
+            reason = f"Profile failed validation: {'; '.join(errs)}"
+        elif not caps_match:
+            eligibility = "CAPABILITY_MISMATCH"
+            reason = f"Missing capabilities: {missing_caps}"
+        elif auth_status == "AUTH_BLOCKED":
+            eligibility = "AUTH_BLOCKED"
+            reason = "Authentication missing (FACTORY_API_KEY or OPENAI_API_KEY unset)"
+        elif is_busy:
+            eligibility = "BUSY"
+            reason = f"Worker '{wid}' or profile '{pid}' is currently busy"
+        else:
+            eligibility = "ELIGIBLE"
+            reason = "Matches all required capabilities, valid, authenticated, and idle"
+            eligible_pool.append(pid)
+
+        profile_evaluations.append({
+            "priority_rank": rank,
+            "profile_id": pid,
+            "name": p.get("name", pid),
+            "harness": harness,
+            "adapter": p.get("adapter"),
+            "model": p.get("model"),
+            "effort": p.get("effort"),
+            "capability_match": caps_match,
+            "missing_capabilities": missing_caps,
+            "auth_status": auth_status,
+            "busy_status": busy_status,
+            "eligibility": eligibility,
+            "eligibility_reason": reason
+        })
+
+    wid, meta, status = resolve_task_worker(
+        task_id, target_task, factory_config,
+        busy_workers=busy_workers, busy_profiles=busy_profiles,
+        profiles_path=profiles_path
+    )
+
+    final_decision = {
+        "status": status,
+        "selected_profile": meta.get("selected_profile_id"),
+        "selected_worker": wid,
+        "selected_adapter": meta.get("selected_adapter"),
+        "reason": meta.get("selection_reason", "")
+    }
+
+    return {
+        "task_id": task_id,
+        "task_type": task_type,
+        "required_capabilities": requires,
+        "profiles": profile_evaluations,
+        "final_decision": final_decision
+    }
 
 
 # ==============================================================================
@@ -1089,6 +1811,11 @@ class HerdrBoardProjector:
                 canonical_state = tinfo.get("canonical_state", tinfo.get("status", "PENDING"))
                 target_col = self.STATE_TO_COLUMN.get(canonical_state, "Backlog")
 
+                profile_id = tinfo.get("profile_id") or tinfo.get("profile") or tinfo.get("worker_id")
+                harness = tinfo.get("harness") or tinfo.get("adapter", "agy")
+                model = tinfo.get("model", "unknown")
+                effort = tinfo.get("effort", "standard")
+
                 card = {
                     "card_id": card_id,
                     "run_id": r_id,
@@ -1096,6 +1823,10 @@ class HerdrBoardProjector:
                     "column": target_col,
                     "canonical_state": canonical_state,
                     "worker_id": tinfo.get("worker_id"),
+                    "profile": profile_id,
+                    "harness": harness,
+                    "model": model,
+                    "effort": effort,
                     "adapter": tinfo.get("adapter"),
                     "attempt_id": tinfo.get("current_attempt_id", 0),
                     "task_type": tinfo.get("task_type"),
@@ -1103,6 +1834,7 @@ class HerdrBoardProjector:
                     "branch": tinfo.get("branch"),
                     "commit": tinfo.get("commit_hash"),
                     "reason": tinfo.get("error") or tinfo.get("block_reason"),
+                    "description": f"Task: {tid}\nProfile: {profile_id}\nHarness: {harness}\nModel: {model} ({effort})\nState: {canonical_state}",
                     "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
                 self.cards[card_id] = card
@@ -1361,9 +2093,12 @@ class TaskExecutor:
         if not self.worker_id:
             raise ValueError(f"Task '{self.task_id}' cannot be executed without an assigned worker_id")
 
-        self.worker_config = factory_config["worker_registry"][self.worker_id]
+        self.worker_config = copy.deepcopy(factory_config.get("worker_registry", {}).get(self.worker_id, {}))
         self.adapter = get_adapter(self.worker_id, self.worker_config, herdr, res_mgr)
-        self.model = self.task.get("model") or self.worker_config.get("default_model") or factory_config.get("default_model", "gemini-3.8-flash-high")
+        self.profile_id = self.task.get("profile_id") or self.routing_provenance.get("selected_profile_id")
+        self.harness = self.task.get("harness") or self.routing_provenance.get("harness") or self.worker_config.get("adapter", "agy")
+        self.model = self.task.get("model") or self.routing_provenance.get("model") or self.worker_config.get("default_model") or factory_config.get("default_model", "gemini-3.8-flash-high")
+        self.effort = self.task.get("effort") or self.routing_provenance.get("effort") or self.worker_config.get("reasoning_effort", "high")
 
         self.allowed_paths = plan_task.get("allowed_paths", [])
         self.expected_files = plan_task.get("expected_files", [])
@@ -1485,7 +2220,8 @@ class TaskExecutor:
             timeout=self.timeout,
             task_attempt_dir=attempt_dir,
             env_info=env_info,
-            model=self.model
+            model=self.model,
+            effort=self.effort
         )
 
         end_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1509,6 +2245,10 @@ class TaskExecutor:
                 "attempt_id": attempt_id,
                 "task_id": self.task_id,
                 "worker_id": self.worker_id,
+                "profile_id": self.profile_id,
+                "harness": self.harness,
+                "model": self.model,
+                "effort": self.effort,
                 "adapter": self.worker_config.get("adapter", "agy"),
                 "routing_provenance": self.routing_provenance,
                 "branch": attempt_branch,
@@ -1582,10 +2322,13 @@ class TaskExecutor:
             "attempt_id": attempt_id,
             "task_id": self.task_id,
             "worker_id": self.worker_id,
+            "profile_id": self.profile_id,
+            "harness": self.harness,
+            "model": self.model,
+            "effort": self.effort,
             "adapter": self.worker_config.get("adapter", "agy"),
             "routing_provenance": self.routing_provenance,
             "provenance": raw_res.get("provenance", {}),
-            "model": self.model,
             "branch": attempt_branch,
             "worktree": str(worktree_path),
             "env_info": env_info,
@@ -1624,7 +2367,7 @@ class TaskExecutor:
             return head_commit
 
         summary = self.latest_result.get("structured_output", {}).get("summary", f"Implemented {self.task_id}")
-        msg = f"feat({self.task_id}): {summary}\n\nTask: {self.task_id}\nAttempt: {attempt_id}\nWorker: {self.worker_id}\nModel: {self.model}"
+        msg = f"feat({self.task_id}): {summary}\n\nTask: {self.task_id}\nAttempt: {attempt_id}\nProfile: {self.profile_id}\nWorker: {self.worker_id}\nHarness: {self.harness}\nModel: {self.model}\nEffort: {self.effort}"
         subprocess.run(["git", "commit", "-m", msg], cwd=str(worktree_path), check=True)
         commit_hash = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(worktree_path), capture_output=True, text=True).stdout.strip()
         self.state = "COMMITTED"
@@ -2011,6 +2754,7 @@ class FactoryOrchestrator:
                 if ready_tasks and len(active_executors) < max_concurrency:
                     current_base_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
                     busy_workers = {ex.worker_id for _, (t, ex, a) in active_executors.items()}
+                    busy_profiles = {getattr(ex, "profile_id", None) for _, (t, ex, a) in active_executors.items() if getattr(ex, "profile_id", None)}
 
                     for tid in ready_tasks:
                         if len(active_executors) >= max_concurrency:
@@ -2024,7 +2768,8 @@ class FactoryOrchestrator:
                             tid,
                             tdef,
                             self.factory_config,
-                            busy_workers=busy_workers
+                            busy_workers=busy_workers,
+                            busy_profiles=busy_profiles
                         )
 
                         if route_status == "BLOCKED":
@@ -2039,11 +2784,25 @@ class FactoryOrchestrator:
 
                         # Successfully routed
                         tinfo["worker_id"] = wid
+                        tinfo["profile_id"] = route_meta.get("selected_profile_id")
+                        tinfo["profile"] = route_meta.get("selected_profile_id")
+                        tinfo["harness"] = route_meta.get("harness")
+                        tinfo["model"] = route_meta.get("model")
+                        tinfo["effort"] = route_meta.get("effort")
                         tinfo["adapter"] = route_meta.get("selected_adapter")
                         tinfo["routing_provenance"] = route_meta
+
                         tdef["worker_id"] = wid
+                        tdef["profile_id"] = route_meta.get("selected_profile_id")
+                        tdef["profile"] = route_meta.get("selected_profile_id")
+                        tdef["harness"] = route_meta.get("harness")
+                        tdef["model"] = route_meta.get("model")
+                        tdef["effort"] = route_meta.get("effort")
                         tdef["routing_provenance"] = route_meta
+
                         busy_workers.add(wid)
+                        if route_meta.get("selected_profile_id"):
+                            busy_profiles.add(route_meta.get("selected_profile_id"))
 
                         tinfo["canonical_state"] = "DISPATCHING"
                         tinfo["attempts_count"] = tinfo.get("attempts_count", 0) + 1
@@ -2294,7 +3053,7 @@ def generate_status_projection(run_id: str = None) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v4.0.0)")
+    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v5.0.0)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Preflight
@@ -2323,6 +3082,24 @@ def main():
     board_sync = board_sub.add_parser("sync", help="Synchronize factory state to Kanban board")
     board_sync.add_argument("--run", type=str, help="Specific run ID to sync")
     board_status = board_sub.add_parser("status", help="Get Kanban board projection status")
+
+    # Profile
+    profile_parser = subparsers.add_parser("profile", help="Inspect and validate execution profiles")
+    profile_sub = profile_parser.add_subparsers(dest="profile_action", required=True)
+    profile_sub.add_parser("list", help="List all execution profiles")
+    p_show = profile_sub.add_parser("show", help="Show details for a specific profile")
+    p_show.add_argument("profile_id", type=str, help="Profile ID to inspect")
+    p_val = profile_sub.add_parser("validate", help="Validate profiles against schema and rules")
+    p_val.add_argument("profile_id", nargs="?", default=None, help="Optional profile ID to validate")
+
+    # Route
+    route_parser = subparsers.add_parser("route", help="Inspect and explain deterministic routing")
+    route_sub = route_parser.add_subparsers(dest="route_action", required=True)
+    r_exp = route_sub.add_parser("explain", help="Explain routing decision for a task")
+    r_exp.add_argument("plan", type=str, help="Path to plan JSON")
+    r_exp.add_argument("task", type=str, help="Task ID to explain")
+    r_exp.add_argument("--json", action="store_true", help="Output JSON explanation")
+    r_exp.add_argument("--run", type=str, default=None, help="Optional run ID for live busy state context")
 
     # Cleanup
     cl_parser = subparsers.add_parser("cleanup", help="Safely clean owned workspaces, worktrees, and ephemeral files")
@@ -2415,6 +3192,71 @@ def main():
         elif args.board_action == "status":
             res = projector.get_status()
             print(json.dumps(res, indent=2))
+
+    elif args.command == "profile":
+        if args.profile_action == "list":
+            profiles = load_harness_profiles()
+            print(f"{'Profile ID':<24} {'Harness':<10} {'Adapter':<10} {'Model':<20} {'Effort':<8} {'Status':<12}")
+            print("-" * 90)
+            for pid, p in profiles.items():
+                cert = p.get("certification", {})
+                status = cert.get("status", "UNCERTIFIED")
+                print(f"{pid:<24} {p.get('harness', ''):<10} {p.get('adapter', ''):<10} {p.get('model', ''):<20} {p.get('effort', ''):<8} {status:<12}")
+        elif args.profile_action == "show":
+            profiles = load_harness_profiles()
+            if args.profile_id not in profiles:
+                print(f"Error: Unknown profile '{args.profile_id}'", file=sys.stderr)
+                sys.exit(1)
+            print(json.dumps(profiles[args.profile_id], indent=2))
+        elif args.profile_action == "validate":
+            results = validate_all_profiles()
+            if args.profile_id:
+                if args.profile_id not in results:
+                    print(f"Error: Unknown profile '{args.profile_id}'", file=sys.stderr)
+                    sys.exit(1)
+                errs = results[args.profile_id]
+                if errs:
+                    print(f"Validation FAILED for profile '{args.profile_id}':", file=sys.stderr)
+                    for e in errs:
+                        print(f"  - {e}", file=sys.stderr)
+                    sys.exit(1)
+                else:
+                    print(f"Profile '{args.profile_id}' is VALID.")
+            else:
+                any_err = False
+                for pid, errs in results.items():
+                    if errs:
+                        any_err = True
+                        print(f"FAILED: {pid}: {', '.join(errs)}", file=sys.stderr)
+                    else:
+                        print(f"OK:     {pid}")
+                if any_err:
+                    sys.exit(1)
+
+    elif args.command == "route":
+        if args.route_action == "explain":
+            plan_path = pathlib.Path(args.plan)
+            if not plan_path.is_absolute():
+                plan_path = PROJECT_ROOT / plan_path
+            if not plan_path.exists():
+                print(f"Error: Plan file {plan_path} does not exist", file=sys.stderr)
+                sys.exit(1)
+            explanation = explain_task_routing(plan_path, args.task, run_id=args.run)
+            if args.json:
+                print(json.dumps(explanation, indent=2))
+            else:
+                print(f"Routing Explanation for Task: {explanation['task_id']} (Type: {explanation['task_type']})")
+                print(f"Required Capabilities: {', '.join(explanation['required_capabilities'])}")
+                print("\nCandidate Profiles Evaluation:")
+                print(f"{'Rank':<5} {'Profile ID':<24} {'Harness':<10} {'Caps Match':<12} {'Auth':<14} {'Busy':<8} {'Eligibility':<16}")
+                print("-" * 95)
+                for p in explanation["profiles"]:
+                    cm = "YES" if p["capability_match"] else "NO"
+                    print(f"{p['priority_rank']:<5} {p['profile_id']:<24} {p['harness']:<10} {cm:<12} {p['auth_status']:<14} {p['busy_status']:<8} {p['eligibility']:<16}")
+                print(f"\nFinal Decision: {explanation['final_decision']['status']}")
+                print(f"Selected Profile: {explanation['final_decision']['selected_profile']}")
+                print(f"Selected Worker:  {explanation['final_decision']['selected_worker']}")
+                print(f"Reason: {explanation['final_decision']['reason']}")
 
     elif args.command == "cleanup":
         herdr = HerdrClient(PROJECT_ROOT)

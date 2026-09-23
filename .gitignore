@@ -7,3 +7,5 @@ __pycache__/
 .agy-factory/worktrees/
 .agy-factory/tmp/
 .agy-factory/cache/
+.agy-factory/board/
+.agy-factory/runs/

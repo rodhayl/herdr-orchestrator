@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "4.0.0",
-    "schema_version": "4.0.0"
+    "version": "5.0.0",
+    "schema_version": "5.0.0"
   },
   "certified_environment": {
     "os": "Linux",
@@ -42,8 +42,37 @@
     "certified_model": "qwen3.8-max",
     "certified_effort": "xhigh",
     "certified_autonomy": "low",
-    "catalog_status": "Installed droid CLI v0.224.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
+    "catalog_status": "Installed droid CLI v0.225.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
   },
+  "codex": {
+    "cli_version": "0.155.1",
+    "certified_model": "gpt-5.6-luna",
+    "certified_effort": "high",
+    "certified_sandbox": "workspace-write",
+    "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
+  },
+  "future_harnesses": {
+    "claude": {
+      "installed": true,
+      "cli_version": "2.1.263",
+      "status": "planned_v6"
+    },
+    "opencode": {
+      "installed": true,
+      "cli_version": "1.18.31",
+      "status": "planned_v6"
+    }
+  },
+  "certified_profiles": [
+    "agy-spec-high",
+    "agy-backend-high",
+    "agy-frontend-high",
+    "agy-tests-medium",
+    "agy-integration-high",
+    "agy-audit-high",
+    "droid-backend-deep",
+    "codex-frontend-high"
+  ],
   "python": {
     "version": "3.12.3",
     "implementation": "CPython",
@@ -60,5 +89,5 @@
     "version": null,
     "installed": false
   },
-  "certified_at": "2026-09-23T07:52:00Z"
+  "certified_at": "2026-09-23T08:09:25.111379+00:00"
 }

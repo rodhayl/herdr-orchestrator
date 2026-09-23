@@ -97,17 +97,34 @@ The output of `./scripts/update-package.sh --check` produces an explicit compati
 
 | Component | Previous Certified | Installed Now | Latest Stable | Compatible Target | Action | Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Factory Engine** | `4.0.0` | `4.0.0` | `4.0.0` | `4.0.0` | None | Local repo `factory.json` |
+| **Factory Engine** | `4.0.0` | `5.0.0` | `5.0.0` | `5.0.0` | Maintain | Local repo `factory.json` |
 | **Herdr CLI** | `0.9.1` | `0.9.1` | `0.9.1` | `0.9.1` | Check Only | `herdr --version` |
-| **Herdr Protocol**| `22` | `22` | `22` | `22` | Check Only | `herdr api snapshot` |
+| **Herdr Protocol**| `22` | `22` | `22` | `22` | Check Only | Socket snapshot (`protocol 22`) |
 | **herdr-board** | `v0.17.0` | None | `v0.17.0` | None | Blocked | `v0.17.0` requires Herdr `0.9.0` |
 | **AGY CLI** | `1.2.9` | `1.2.9` | `1.2.9` | `1.2.9` | Check Only | `agy --version` |
-| **AGY Model** | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | Retain | `agy models` |
-| **Droid CLI** | `0.224.1` | `0.224.1` | `0.224.1` | `0.224.1` | Check Only | `droid --version` |
+| **AGY Model** | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | `gemini-3.8-flash-high` | Certified | `agy models` |
+| **Droid CLI** | `0.225.1` | `0.225.1` | `0.225.1` | `0.225.1` | Check Only | `droid --version` |
 | **Droid Model** | `qwen3.8-max` (xhigh) | Unauthenticated | Catalog | Requires Auth | Adapter Ready | Missing `FACTORY_API_KEY` |
+| **Codex CLI** | `0.155.1` | `0.155.1` | `0.155.1` | `0.155.1` | Lock Target | `codex --version` |
+| **Codex Model** | `gpt-5.6-luna` (high) | Unauthenticated | Catalog | Requires Auth | Adapter Ready | Missing `OPENAI_API_KEY` |
+| **Claude Code** | None | `2.1.263` | `2.1.263` | Future v6 | Documented | `claude --version` |
+| **OpenCode CLI**| None | `1.18.31` | `1.18.31` | Future v6 | Documented | `opencode --version` |
 | **Python** | `3.12.3` | `3.12.3` | `3.12.3` | `3.12.3` | Retain | `python3 -V` (stdlib only) |
 | **Git** | `2.43.0` | `2.43.0` | `2.43.0` | `2.43.0` | Retain | `git --version` |
 | **Rust / Cargo** | None | None | `1.85.0` | None | Host Pre-req | `rustc` not installed |
+
+### Harness Profiles Matrix (v5.0.0)
+
+| Profile ID | Harness | Model | Effort | Concurrency | Certification Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `agy-spec-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-backend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-frontend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-tests-medium` | `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
+| `agy-integration-high`| `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
+| `agy-audit-high` | `agy` | `claude-sonnet-4-6` | `high` | 1 | CERTIFIED |
+| `droid-backend-deep` | `droid` | `qwen3.8-max` | `xhigh` | 1 | AUTH_BLOCKED |
+| `codex-frontend-high`| `codex` | `gpt-5.6-luna` | `high` | 1 | AUTH_BLOCKED |
 
 ---
 
@@ -170,3 +187,15 @@ If an update fails validation:
 ## 10. Audit History (`UPDATE_HISTORY.md`)
 
 Every execution of `./scripts/update-package.sh --apply` or significant compatibility evaluation appends a structured record to `UPDATE_HISTORY.md`. No entries may be deleted.
+
+---
+
+## 11. Harness Profile Governance
+
+Execution Profiles decouple task definitions and routing decisions from raw worker names:
+1. **Schema Compliance**: All profiles in `harness_profiles.json` must strictly conform to `schemas/harness-profiles.schema.json`.
+2. **Explicit Semantics**: Every profile declares harness-specific parameters (e.g., AGY `thinking_budget`, Droid `autonomy`, Codex `sandbox_mode`, Claude `budget_tokens`).
+3. **Compatibility Probing**: Profile validity is audited automatically during `./scripts/update-package.sh --check` and `./scripts/doctor.sh`.
+4. **Concurrency Bounds**: Each profile configures `max_concurrency` (default: 1) to prevent resource starvation.
+5. **No Speculative Rerouting**: The router operates strictly on capability ranking across certified profiles; if a preferred profile's provider is unauthenticated or busy, it falls back to the next certified profile in order.
+
