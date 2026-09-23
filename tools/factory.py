@@ -495,8 +495,7 @@ class AgyAdapter(WorkerAdapter):
         output_json_path = task_attempt_dir / "output.json"
         status_file_path = task_attempt_dir / "exit_code.txt"
         worker_cmd = self.worker_config.get("command", "agy")
-        # In AGY CLI, --effort is only supported for reasoning-effort models (e.g. Gemini), not for Claude Sonnet 4.6
-        effort_arg = f'--effort "{effort}" \\' if (effort and not model.startswith("claude")) else ""
+        effort_line = f'  --effort "{effort}" \\\n' if (effort and not model.startswith("claude")) else ""
 
         # Support test injection in test harness
         test_behavior = os.environ.get("AGY_TEST_BEHAVIOR")
@@ -515,8 +514,7 @@ cd "{worktree_path}"
 "{worker_cmd}" --mode accept-edits --dangerously-skip-permissions --add-dir "{worktree_path}" \\
   -p "$(< "{prompt_file}")" \\
   --model "{model}" \\
-  {effort_arg}
-  --output-format json \\
+{effort_line}  --output-format json \\
   --json-schema "$(< "{schema_file}")" \\
   > "{output_json_path}" 2>&1
 echo $? > "{status_file_path}"
