@@ -78,6 +78,14 @@ if [[ ! -f "$OWNED_FILE" ]]; then
 }
 EOF
     echo "  [+] Initialized .agy-factory/state/owned-resources.json"
+# 5. Ensure project-local git author identity is set without modifying global config
+if ! git config user.name >/dev/null 2>&1; then
+    git config user.name "AGY Factory"
+    echo "  [+] Configured project-local git user.name"
+fi
+if ! git config user.email >/dev/null 2>&1; then
+    git config user.email "factory@local"
+    echo "  [+] Configured project-local git user.email"
 fi
 
 echo "=== Bootstrap Completed Successfully ==="
