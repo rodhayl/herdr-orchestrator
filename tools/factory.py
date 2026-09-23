@@ -592,6 +592,13 @@ def register_adapter(name: str, adapter_cls: type):
 def get_adapter(worker_id: str, worker_config: dict, herdr: HerdrClient, res_mgr: ResourceManager) -> WorkerAdapter:
     adapter_name = worker_config.get("adapter") or worker_config.get("invocation_adapter", "agy")
     if adapter_name not in ADAPTER_REGISTRY:
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+            try:
+                from factory_tests.test_v3_capabilities import FakeWorkerAdapter
+                register_adapter("fake_worker", FakeWorkerAdapter)
+            except Exception:
+                pass
+    if adapter_name not in ADAPTER_REGISTRY:
         raise ValueError(f"Unknown worker adapter '{adapter_name}' declared for worker '{worker_id}'")
     cls = ADAPTER_REGISTRY[adapter_name]
     return cls(worker_id, worker_config, herdr, res_mgr)
@@ -792,9 +799,9 @@ class TaskExecutor:
         self.res_mgr = res_mgr
         self.factory_config = factory_config
 
-        worker_cfg = factory_config["worker_registry"][self.worker_id]
-        self.adapter = get_adapter(self.worker_id, worker_cfg, herdr, res_mgr)
-        self.model = self.task.get("model") or worker_cfg.get("default_model") or factory_config.get("default_model", "gemini-3.8-flash-high")
+        self.worker_config = factory_config["worker_registry"][self.worker_id]
+        self.adapter = get_adapter(self.worker_id, self.worker_config, herdr, res_mgr)
+        self.model = self.task.get("model") or self.worker_config.get("default_model") or factory_config.get("default_model", "gemini-3.8-flash-high")
 
         self.allowed_paths = plan_task.get("allowed_paths", [])
         self.expected_files = plan_task.get("expected_files", [])
@@ -871,11 +878,11 @@ class TaskExecutor:
             template_path = PROJECT_ROOT / "prompts" / "worker-base.md"
             with open(template_path, "r", encoding="utf-8") as f:
                 template = f.read()
-            patterns_str = "\n".join(f"- `{p}`" for p in self.allowed_paths)
+            task_desc = self.task.get("description", f"Implement task {self.task_id}")
             return template.format(
                 worktree_path=str(worktree_path),
                 allowed_patterns=patterns_str,
-                task_description=self.task["description"] + context_content,
+                task_description=task_desc + context_content,
                 target_files_guidance=target_files_guidance,
                 task_id=self.task_id
             )
@@ -1056,10 +1063,6 @@ class TaskExecutor:
         self.state = "COMMITTED"
         self.latest_result["state"] = self.state
         self.latest_result["commit_hash"] = commit_hash
-
-        # Check failpoint after commit
-        check_failpoint("FAIL_AFTER_COMMIT", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id, "commit": commit_hash})
-
         return commit_hash
 
 
@@ -1483,6 +1486,10 @@ class FactoryOrchestrator:
                             # Commit verified changes
                             commit_hash = executor.commit_work(att_id)
                             res["commit_hash"] = commit_hash
+                            tinfo["canonical_state"] = "COMMITTED"
+                            self.save_manifest()
+                            check_failpoint("FAIL_AFTER_COMMIT", self.run_dir, {"task_id": tid, "attempt_id": att_id, "commit": commit_hash})
+
                             tinfo["canonical_state"] = "INTEGRATING"
                             self.save_manifest()
 
