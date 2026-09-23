@@ -243,16 +243,18 @@ def get_bookmarks(
         # Archive filter handling
         if archived is not None:
             if isinstance(archived, bool):
-                conditions.append("COALESCE(archived, 0) = ?" )
+                conditions.append("COALESCE(archived, 0) = ?")
                 params.append(1 if archived else 0)
             elif isinstance(archived, str):
                 arch_lower = archived.strip().lower()
                 if arch_lower in ("true", "1"):
                     conditions.append("COALESCE(archived, 0) = 1")
-                elif arch_lower in ("false", "0"):
-                    conditions.append("COALESCE(archived, 0) = 0")
                 elif arch_lower in ("all", "*"):
                     pass  # Include both archived and unarchived
+                else:
+                    # 'false', '0', empty, or unrecognized values default to
+                    # active-only visibility per spec (default behavior).
+                    conditions.append("COALESCE(archived, 0) = 0")
 
         if tag_filter:
             tag_lower = tag_filter.lower()
