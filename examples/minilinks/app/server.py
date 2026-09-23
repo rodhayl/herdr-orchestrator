@@ -240,6 +240,17 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                     self.send_json_error(400, "Invalid bookmark ID")
                     return
 
+                # The request body is ignored for action endpoints; drain any
+                # supplied bytes so keep-alive connections stay synchronized.
+                content_length_header = self.headers.get("Content-Length")
+                if content_length_header:
+                    try:
+                        pending = int(content_length_header)
+                    except ValueError:
+                        pending = 0
+                    if pending > 0:
+                        self.rfile.read(pending)
+
                 existing = database.get_bookmark_by_id(bm_id, db_path=self.server.db_path)
                 if existing is None:
                     self.send_json_error(404, "Bookmark not found")
