@@ -260,7 +260,8 @@ body {
   flex-shrink: 0;
 }
 
-.filter-favorites-btn {
+.filter-favorites-btn,
+.filter-archived-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -279,7 +280,8 @@ body {
   user-select: none;
 }
 
-.filter-favorites-btn:hover {
+.filter-favorites-btn:hover,
+.filter-archived-btn:hover {
   color: var(--text);
   background-color: var(--surface-alt);
   border-color: #cbd5e1;
@@ -290,6 +292,11 @@ body {
   line-height: 1;
   color: var(--star-inactive);
   transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.filter-archived-btn .filter-archive-icon {
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .filter-favorites-btn:hover .filter-star-icon {
@@ -315,10 +322,24 @@ body {
   border-color: #f59e0b;
 }
 
-.filter-favorites-btn:focus-visible {
+.filter-favorites-btn:focus-visible,
+.filter-archived-btn:focus-visible {
   outline: none;
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+}
+
+.filter-archived-btn.active {
+  background-color: #e0e7ff;
+  color: #3730a3;
+  border-color: #a5b4fc;
+  font-weight: 600;
+  box-shadow: 0 1px 2px 0 rgba(79, 70, 229, 0.1);
+}
+
+.filter-archived-btn.active:hover {
+  background-color: #c7d2fe;
+  border-color: #6366f1;
 }
 
 /* Main Layout */

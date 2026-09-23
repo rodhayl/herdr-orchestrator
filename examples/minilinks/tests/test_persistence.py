@@ -1218,6 +1218,88 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 server.server_close()
             temp_dir.cleanup()
 
+    def test_sqlite_backward_compatibility_migration_archived(self) -> None:
+        """Verifies automatic database migration adds archived column to older SQLite schema lacking archived."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "legacy_no_archived.db")
+        server: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Create legacy table without archived column
+            conn = sqlite3.connect(db_path)
+            with conn:
+                conn.execute("""
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        notes TEXT DEFAULT '',
+                        tags TEXT DEFAULT '[]',
+                        is_favorite INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, notes, tags, is_favorite, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Legacy Without Archived",
+                        "https://legacy-archived.example.com",
+                        "Legacy Notes",
+                        '["old"]',
+                        0,
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+            conn.close()
+
+            # 2. Start server which executes migration
+            server = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base = f"http://127.0.0.1:{server.server_port}"
+
+            # 3. Verify legacy bookmark is readable with default archived=False
+            status, bookmarks = send_http_request(base, "GET", "/api/bookmarks")
+            self.assertEqual(status, 200)
+            self.assertEqual(len(bookmarks), 1)
+            self.assertEqual(bookmarks[0]["archived"], False)
+
+            # 4. Archive legacy bookmark via POST /api/bookmarks/<id>/archive
+            bm_id = bookmarks[0]["id"]
+            status_arch, arch_res = send_http_request(base, "POST", f"/api/bookmarks/{bm_id}/archive")
+            self.assertEqual(status_arch, 200)
+            self.assertEqual(arch_res["archived"], True)
+
+            # 5. Verify default GET /api/bookmarks now returns 0 items (active only)
+            status_def, bms_def = send_http_request(base, "GET", "/api/bookmarks")
+            self.assertEqual(status_def, 200)
+            self.assertEqual(len(bms_def), 0)
+
+            # 6. Verify GET /api/bookmarks?archived=true returns the archived bookmark
+            status_arch_q, bms_arch_q = send_http_request(base, "GET", "/api/bookmarks?archived=true")
+            self.assertEqual(status_arch_q, 200)
+            self.assertEqual(len(bms_arch_q), 1)
+            self.assertEqual(bms_arch_q[0]["archived"], True)
+
+            # 7. Restore legacy bookmark via POST /api/bookmarks/<id>/restore
+            status_rest, rest_res = send_http_request(base, "POST", f"/api/bookmarks/{bm_id}/restore")
+            self.assertEqual(status_rest, 200)
+            self.assertEqual(rest_res["archived"], False)
+
+            # 8. Verify default GET /api/bookmarks returns it again
+            status_def2, bms_def2 = send_http_request(base, "GET", "/api/bookmarks")
+            self.assertEqual(status_def2, 200)
+            self.assertEqual(len(bms_def2), 1)
+            self.assertEqual(bms_def2[0]["archived"], False)
+        finally:
+            if server:
+                server.shutdown()
+                server.server_close()
+            temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "project_name": "AGY-Herdr Software Factory",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "default_model": "gemini-3.8-flash-high",
   "worker_registry": {
     "agy": {
@@ -152,35 +152,47 @@
       "reasoning_effort": "high",
       "concurrency_eligibility": false,
       "description": "Production OpenAI Codex CLI Worker (GPT-5.6 Luna High)"
+    },
+    "claude": {
+      "family": "anthropic",
+      "command": "/root/.local/bin/claude",
+      "profile_home": "/root/.claude",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "testing",
+        "specification",
+        "review"
+      ],
+      "adapter": "claude",
+      "invocation_adapter": "claude_cli",
+      "default_model": "claude-sonnet-5",
+      "reasoning_effort": "high",
+      "concurrency_eligibility": false,
+      "description": "Production Anthropic Claude Code CLI Worker"
+    },
+    "opencode": {
+      "family": "opencode",
+      "command": "/root/.opencode/bin/opencode",
+      "profile_home": "/root/.opencode",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "testing",
+        "support",
+        "fixture",
+        "mechanical_change"
+      ],
+      "adapter": "opencode",
+      "invocation_adapter": "opencode_cli",
+      "default_model": "google/gemini-3.8-flash",
+      "reasoning_effort": "high",
+      "concurrency_eligibility": false,
+      "description": "Production OpenCode CLI Worker"
     }
   },
   "harness_profiles_path": "harness_profiles.json",
   "future_worker_adapters": {
-    "claude": {
-      "family": "anthropic",
-      "adapter_type": "command_adapter",
-      "binary": "claude",
-      "capabilities": [
-        "planning",
-        "implementation",
-        "review"
-      ],
-      "invocation_protocol": "herdr-pane-cli",
-      "status": "planned",
-      "notes": "Ready for v6 integration upon installation of claude CLI wrapper"
-    },
-    "opencode": {
-      "family": "opencode",
-      "adapter_type": "command_adapter",
-      "binary": "opencode",
-      "capabilities": [
-        "coding",
-        "testing"
-      ],
-      "invocation_protocol": "herdr-pane-cli",
-      "status": "planned",
-      "notes": "Ready for v6 integration upon installation of opencode CLI wrapper"
-    },
     "freebuff": {
       "family": "freebuff",
       "adapter_type": "command_adapter",

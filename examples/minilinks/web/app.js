@@ -10,6 +10,7 @@
   let bookmarksState = [];
   let currentSearchQuery = '';
   let isFavoritesFilterActive = false;
+  let isArchivedFilterActive = false;
   let activeEditingId = null;
   let activeDeletingId = null;
   let searchDebounceTimer = null;
@@ -26,6 +27,7 @@
   const searchInput = document.getElementById('search-input');
   const searchClearBtn = document.getElementById('search-clear-btn');
   const filterFavoritesBtn = document.getElementById('filter-favorites-btn');
+  const filterArchivedBtn = document.getElementById('filter-archived-btn');
   const bookmarksCount = document.getElementById('bookmarks-count');
   const bookmarksList = document.getElementById('bookmarks-list');
 
@@ -111,7 +113,7 @@
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
         currentSearchQuery = query.trim();
-        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
+        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
       }, 250);
     });
 
@@ -120,7 +122,7 @@
       if (e.key === 'Enter') {
         clearTimeout(searchDebounceTimer);
         currentSearchQuery = searchInput.value.trim();
-        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
+        fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
       }
     });
 
@@ -130,7 +132,7 @@
         searchClearBtn.classList.add('hidden');
         clearTimeout(searchDebounceTimer);
         currentSearchQuery = '';
-        fetchBookmarks('', isFavoritesFilterActive);
+        fetchBookmarks('', isFavoritesFilterActive, isArchivedFilterActive);
       }
     });
 
@@ -139,13 +141,18 @@
       searchInput.value = '';
       searchClearBtn.classList.add('hidden');
       currentSearchQuery = '';
-      fetchBookmarks('', isFavoritesFilterActive);
+      fetchBookmarks('', isFavoritesFilterActive, isArchivedFilterActive);
       searchInput.focus();
     });
 
     // Favorites filter button click
     if (filterFavoritesBtn) {
       filterFavoritesBtn.addEventListener('click', handleToggleFavoritesFilter);
+    }
+
+    // Archived filter button click
+    if (filterArchivedBtn) {
+      filterArchivedBtn.addEventListener('click', handleToggleArchivedFilter);
     }
 
     // Create bookmark form submission
@@ -189,7 +196,16 @@
   function handleToggleFavoritesFilter() {
     isFavoritesFilterActive = !isFavoritesFilterActive;
     updateFavoritesFilterUI();
-    fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
+    fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
+  }
+
+  /**
+   * Toggle archived filter state and reload bookmarks
+   */
+  function handleToggleArchivedFilter() {
+    isArchivedFilterActive = !isArchivedFilterActive;
+    updateArchivedFilterUI();
+    fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
   }
 
   /**
@@ -206,9 +222,18 @@
   }
 
   /**
-   * Fetch bookmarks from REST API with optional search query and favorites filter
+   * Update archived filter button visual indicator
    */
-  async function fetchBookmarks(query = '', favoritesOnly = false) {
+  function updateArchivedFilterUI() {
+    if (!filterArchivedBtn) return;
+    filterArchivedBtn.classList.toggle('active', isArchivedFilterActive);
+    filterArchivedBtn.setAttribute('aria-pressed', String(isArchivedFilterActive));
+  }
+
+  /**
+   * Fetch bookmarks from REST API with optional search query, favorites filter, and archived filter
+   */
+  async function fetchBookmarks(query = '', favoritesOnly = false, archivedOnly = false) {
     setLoadingState(true);
     try {
       const params = new URLSearchParams();
@@ -217,6 +242,9 @@
       }
       if (favoritesOnly) {
         params.set('favorites', 'true');
+      }
+      if (archivedOnly) {
+        params.set('archived', 'true');
       }
 
       const queryString = params.toString();
@@ -309,9 +337,13 @@
         isFavoritesFilterActive = false;
         updateFavoritesFilterUI();
       }
+      if (isArchivedFilterActive) {
+        isArchivedFilterActive = false;
+        updateArchivedFilterUI();
+      }
 
       // Refresh listing
-      await fetchBookmarks('', false);
+      await fetchBookmarks('', false, false);
     } catch (err) {
       console.error('Error creating bookmark:', err);
       showNotification(err.message || 'Failed to create bookmark', 'error');
@@ -399,7 +431,7 @@
       closeEditModal();
 
       // Refresh list to keep timestamps & filtering consistent
-      await fetchBookmarks(currentSearchQuery, isFavoritesFilterActive);
+      await fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
     } catch (err) {
       console.error('Error updating bookmark:', err);
       showNotification(err.message || 'Failed to update bookmark', 'error');
@@ -639,11 +671,57 @@
       openDeleteModal(currentBm);
     });
 
+    const isArchived = Boolean(bookmark.archived);
+    const archiveBtn = document.createElement('button');
+    archiveBtn.type = 'button';
+    archiveBtn.className = `btn btn-secondary btn-sm btn-archive${isArchived ? ' is-archived' : ''}`;
+    archiveBtn.innerHTML = `
+      <span class="btn-archive-icon" aria-hidden="true">${isArchived ? '📤' : '📦'}</span>
+      ${isArchived ? 'Restore' : 'Archive'}
+    `;
+    archiveBtn.title = isArchived ? 'Restore bookmark' : 'Archive bookmark';
+    archiveBtn.addEventListener('click', () => {
+      handleToggleArchive(bookmark.id, isArchived);
+    });
+
     cardFooter.appendChild(editBtn);
+    cardFooter.appendChild(archiveBtn);
     cardFooter.appendChild(deleteBtn);
     article.appendChild(cardFooter);
 
     return article;
+  }
+
+  /**
+   * Toggle archive/restore status via POST /api/bookmarks/:id/archive or /restore
+   */
+  async function handleToggleArchive(id, isCurrentlyArchived) {
+    const action = isCurrentlyArchived ? 'restore' : 'archive';
+    try {
+      const response = await fetch(`/api/bookmarks/${id}/${action}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      const updated = await parseJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error((updated && updated.error) || `Failed to ${action} bookmark`);
+      }
+
+      showNotification(
+        isCurrentlyArchived ? 'Bookmark restored from archive' : 'Bookmark moved to archive',
+        'success',
+        2000
+      );
+
+      await fetchBookmarks(currentSearchQuery, isFavoritesFilterActive, isArchivedFilterActive);
+    } catch (err) {
+      console.error(`Error toggling archive status:`, err);
+      showNotification(err.message || `Failed to ${action} bookmark`, 'error');
+    }
   }
 
   /**

@@ -1212,6 +1212,624 @@ class CodexAdapter(WorkerAdapter):
                 pass
 
 
+class ClaudeAdapter(WorkerAdapter):
+    """
+    Worker adapter for Anthropic Claude Code non-interactive execution.
+    Executes in isolated worktree and registered Herdr workspace/pane.
+    Flags:
+      claude -p "$(< prompt.md)" \\
+        --model claude-sonnet-5 \\
+        --effort high \\
+        --permission-mode acceptEdits \\
+        --output-format json \\
+        --json-schema "$(< schema.json)" \\
+        --no-session-persistence
+    """
+
+    def __init__(self, worker_id: str, worker_config: dict, herdr_client: HerdrClient, resource_manager: ResourceManager):
+        super().__init__(worker_id, worker_config, herdr_client, resource_manager)
+        self.command = worker_config.get("command", "/root/.local/bin/claude")
+        self.profile_home = pathlib.Path(worker_config.get("profile_home", "/root/.claude"))
+        self.default_model = worker_config.get("default_model", "claude-sonnet-5")
+        self.reasoning_effort = worker_config.get("reasoning_effort", "high")
+        self.native_cfg = worker_config.get("native", {})
+
+    def prepare_environment(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path) -> dict:
+        label = f"factory_{task_id}_att_{attempt_id}"
+        ws_id, pane_id = self.herdr.create_workspace(cwd=str(worktree_path), label=label)
+        self.res_mgr.register_owned_workspace(ws_id)
+        self.res_mgr.register_owned_pane(pane_id)
+        return {
+            "workspace_id": ws_id,
+            "pane_id": pane_id,
+            "worktree_path": str(worktree_path)
+        }
+
+    def execute(self, run_id: str, task_id: str, attempt_id: int,
+                worktree_path: pathlib.Path, prompt_file: pathlib.Path,
+                schema_file: pathlib.Path, timeout: int,
+                task_attempt_dir: pathlib.Path, env_info: dict,
+                model: str = None, effort: str = None) -> dict:
+        output_json_path = task_attempt_dir / "worker_output.json"
+        status_file_path = task_attempt_dir / "worker_status.txt"
+        pane_id = env_info.get("pane_id")
+
+        model = model or self.default_model
+        effort = effort or self.reasoning_effort
+        perm_mode = self.native_cfg.get("permission_mode", "acceptEdits")
+
+        # Deterministic test harness mode
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+            behavior = os.environ.get("CLAUDE_TEST_BEHAVIOR", "SUCCESS")
+            return self._handle_test_behavior(
+                behavior, run_id, task_id, attempt_id, worktree_path,
+                output_json_path, status_file_path, timeout, env_info,
+                model=model, effort=effort, perm_mode=perm_mode
+            )
+
+        # Live authentication check
+        has_auth = bool(os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+        if not has_auth:
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "error": "Claude authentication missing (no CLAUDE_CODE_TOKEN or ANTHROPIC_API_KEY). Set credentials to enable live Claude execution.",
+                "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort}
+            }
+
+        # Build wrapper script for live claude execution
+        script_path = task_attempt_dir / "run_claude.sh"
+        cmd = [
+            f'"{self.command}"',
+            "-p \"$(< " + f'"{prompt_file}"' + ")\"",
+            f'--model "{model}"',
+            f'--effort "{effort}"',
+            f'--permission-mode "{perm_mode}"',
+            "--output-format json",
+            f'--json-schema "$(< "{schema_file}")"',
+            "--no-session-persistence"
+        ]
+        script_body = (
+            f"#!/usr/bin/env bash\n"
+            f"cd \"{worktree_path}\"\n"
+            f"{' '.join(cmd)} > \"{output_json_path}\" 2>&1\n"
+            f"echo $? > \"{status_file_path}\"\n"
+        )
+        script_path.write_text(script_body, encoding="utf-8")
+        os.chmod(script_path, 0o755)
+
+        if pane_id:
+            self.herdr.run_in_pane(pane_id, f'bash "{script_path}"')
+        else:
+            subprocess.Popen(["bash", str(script_path)], cwd=str(worktree_path))
+
+        start_wait = time.time()
+        while time.time() - start_wait < timeout:
+            if status_file_path.exists() and status_file_path.stat().st_size > 0:
+                break
+            time.sleep(1)
+
+        if not status_file_path.exists() or status_file_path.stat().st_size == 0:
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {
+                "exit_code": -1,
+                "timed_out": True,
+                "error": f"Claude worker timed out after {timeout}s",
+                "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+            }
+
+        try:
+            exit_code = int(status_file_path.read_text().strip())
+        except Exception:
+            exit_code = -1
+
+        raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+        parsed = self._parse_claude_output(raw_output, run_id, task_id, attempt_id, model=model, effort=effort)
+
+        return {
+            "exit_code": exit_code,
+            "timed_out": False,
+            "raw_output": raw_output,
+            "data": parsed.get("task_data", {}),
+            "provenance": parsed.get("provenance", {})
+        }
+
+    def _parse_claude_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
+                             model: str = "claude-sonnet-5", effort: str = "high") -> dict:
+        result = {
+            "task_data": {},
+            "provenance": {
+                "model": model,
+                "reasoning_effort": effort
+            }
+        }
+        raw_output = raw_output.strip()
+        if not raw_output:
+            return result
+
+        envelope = {}
+        try:
+            envelope = json.loads(raw_output)
+        except Exception:
+            for line in reversed(raw_output.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        envelope = json.loads(line)
+                        break
+                    except Exception:
+                        pass
+
+        if isinstance(envelope, dict):
+            if "session_id" in envelope:
+                result["provenance"]["session_id"] = envelope["session_id"]
+            if "duration_ms" in envelope:
+                result["provenance"]["duration_ms"] = envelope["duration_ms"]
+            if "turns" in envelope:
+                result["provenance"]["turns"] = envelope["turns"]
+            if "model" in envelope:
+                result["provenance"]["model"] = envelope["model"]
+            if "effort" in envelope or "reasoning_effort" in envelope:
+                result["provenance"]["reasoning_effort"] = envelope.get("effort") or envelope.get("reasoning_effort")
+
+            if envelope.get("is_error") is True:
+                result["task_data"] = {
+                    "status": "FAILED",
+                    "error": envelope.get("error") or envelope.get("result", "Claude execution error")
+                }
+                return result
+
+            inner_text = envelope.get("result")
+            inner_json = None
+            if isinstance(inner_text, dict):
+                inner_json = inner_text
+            elif isinstance(inner_text, str):
+                m = re.search(r"(\{[\s\S]*\})", inner_text)
+                if m:
+                    try:
+                        inner_json = json.loads(m.group(1))
+                    except Exception:
+                        pass
+            elif not inner_text and "status" in envelope:
+                inner_json = envelope
+
+            if inner_json:
+                if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                    return result
+                if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                    return result
+                result["task_data"] = inner_json
+                return result
+
+        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
+        if m:
+            try:
+                result["task_data"] = json.loads(m.group(1))
+            except Exception:
+                pass
+        return result
+
+    def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
+                              worktree_path: pathlib.Path, output_json_path: pathlib.Path,
+                              status_file_path: pathlib.Path, timeout: int, env_info: dict,
+                              model: str = "claude-sonnet-5", effort: str = "high", perm_mode: str = "acceptEdits") -> dict:
+        if behavior == "TIMEOUT":
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {"exit_code": -1, "timed_out": True, "error": f"Claude worker timed out after {timeout}s"}
+        elif behavior == "ERROR":
+            err_envelope = {"is_error": True, "error": "Simulated Claude failure", "result": "Execution error"}
+            output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
+            status_file_path.write_text("1\n")
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "raw_output": json.dumps(err_envelope),
+                "data": {"status": "FAILED", "error": "Simulated Claude failure"},
+                "provenance": {
+                    "session_id": "claude-test-session-err",
+                    "model": model,
+                    "reasoning_effort": effort,
+                    "permission_mode": perm_mode
+                }
+            }
+        elif behavior == "MALFORMED":
+            output_json_path.write_text("NOT_JSON_AT_ALL", encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": "NOT_JSON_AT_ALL",
+                "data": {},
+                "provenance": {}
+            }
+        elif behavior == "ATTEMPT_MISMATCH":
+            envelope = {
+                "is_error": False,
+                "session_id": "claude-test-session-mismatch",
+                "result": json.dumps({
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "attempt_id": attempt_id + 99,
+                    "status": "COMPLETED",
+                    "summary": "Mismatched attempt",
+                    "changed_files": []
+                })
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            parsed = self._parse_claude_output(json.dumps(envelope), run_id, task_id, attempt_id, model=model, effort=effort)
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": parsed.get("task_data", {}),
+                "provenance": parsed.get("provenance", {})
+            }
+        else:  # SUCCESS
+            inner_data = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "summary": f"Successfully finished {task_id} via Claude",
+                "changed_files": []
+            }
+            envelope = {
+                "is_error": False,
+                "session_id": f"claude-sess-{task_id}-{attempt_id}",
+                "duration_ms": 3500,
+                "turns": 2,
+                "model": model,
+                "reasoning_effort": effort,
+                "result": json.dumps(inner_data)
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": inner_data,
+                "provenance": {
+                    "session_id": f"claude-sess-{task_id}-{attempt_id}",
+                    "duration_ms": 3500,
+                    "turns": 2,
+                    "model": model,
+                    "reasoning_effort": effort,
+                    "permission_mode": perm_mode
+                }
+            }
+
+    def cancel(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> bool:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                return self.herdr.close_workspace(ws_id)
+            except Exception:
+                return False
+        return True
+
+    def cleanup_attempt(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> None:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                self.res_mgr.clean_workspace(ws_id)
+            except Exception:
+                pass
+
+
+class OpenCodeAdapter(WorkerAdapter):
+    """
+    Worker adapter for OpenCode CLI non-interactive execution.
+    Executes in isolated worktree and registered Herdr workspace/pane.
+    Flags:
+      opencode run "$(< prompt.md)" \\
+        --dir "<worktree>" \\
+        --model "<model>" \\
+        --variant "<variant>" \\
+        --format json \\
+        --auto \\
+        --pure
+    """
+
+    def __init__(self, worker_id: str, worker_config: dict, herdr_client: HerdrClient, resource_manager: ResourceManager):
+        super().__init__(worker_id, worker_config, herdr_client, resource_manager)
+        self.command = worker_config.get("command", "/root/.opencode/bin/opencode")
+        self.profile_home = pathlib.Path(worker_config.get("profile_home", "/root/.opencode"))
+        self.default_model = worker_config.get("default_model", "google/gemini-3.8-flash")
+        self.reasoning_effort = worker_config.get("reasoning_effort", "high")
+        self.native_cfg = worker_config.get("native", {})
+
+    def prepare_environment(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path) -> dict:
+        label = f"factory_{task_id}_att_{attempt_id}"
+        ws_id, pane_id = self.herdr.create_workspace(cwd=str(worktree_path), label=label)
+        self.res_mgr.register_owned_workspace(ws_id)
+        self.res_mgr.register_owned_pane(pane_id)
+        return {
+            "workspace_id": ws_id,
+            "pane_id": pane_id,
+            "worktree_path": str(worktree_path)
+        }
+
+    def execute(self, run_id: str, task_id: str, attempt_id: int,
+                worktree_path: pathlib.Path, prompt_file: pathlib.Path,
+                schema_file: pathlib.Path, timeout: int,
+                task_attempt_dir: pathlib.Path, env_info: dict,
+                model: str = None, effort: str = None) -> dict:
+        output_json_path = task_attempt_dir / "worker_output.json"
+        status_file_path = task_attempt_dir / "worker_status.txt"
+        pane_id = env_info.get("pane_id")
+
+        model = model or self.default_model
+        variant = effort or self.reasoning_effort
+        pure = "--pure" if self.native_cfg.get("pure", True) else ""
+        auto = "--auto" if self.native_cfg.get("auto", True) else ""
+
+        # Deterministic test harness mode
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+            behavior = os.environ.get("OPENCODE_TEST_BEHAVIOR", "SUCCESS")
+            return self._handle_test_behavior(
+                behavior, run_id, task_id, attempt_id, worktree_path,
+                output_json_path, status_file_path, timeout, env_info,
+                model=model, variant=variant
+            )
+
+        # Live authentication check
+        has_auth = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
+        if not has_auth:
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "error": "OpenCode authentication missing (no OPENROUTER_API_KEY or OPENCODE_API_KEY).",
+                "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": variant}
+            }
+
+        # Build wrapper script for live opencode execution
+        script_path = task_attempt_dir / "run_opencode.sh"
+        cmd = [
+            f'"{self.command}"',
+            "run",
+            f'"$(< \"{prompt_file}\")"',
+            f'--dir "{worktree_path}"',
+            f'--model "{model}"',
+            f'--variant "{variant}"',
+            "--format json",
+            auto,
+            pure
+        ]
+        script_body = (
+            f"#!/usr/bin/env bash\n"
+            f"cd \"{worktree_path}\"\n"
+            f"{' '.join([c for c in cmd if c])} > \"{output_json_path}\" 2>&1\n"
+            f"echo $? > \"{status_file_path}\"\n"
+        )
+        script_path.write_text(script_body, encoding="utf-8")
+        os.chmod(script_path, 0o755)
+
+        if pane_id:
+            self.herdr.run_in_pane(pane_id, f'bash "{script_path}"')
+        else:
+            subprocess.Popen(["bash", str(script_path)], cwd=str(worktree_path))
+
+        start_wait = time.time()
+        while time.time() - start_wait < timeout:
+            if status_file_path.exists() and status_file_path.stat().st_size > 0:
+                break
+            time.sleep(1)
+
+        if not status_file_path.exists() or status_file_path.stat().st_size == 0:
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {
+                "exit_code": -1,
+                "timed_out": True,
+                "error": f"OpenCode worker timed out after {timeout}s",
+                "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+            }
+
+        try:
+            exit_code = int(status_file_path.read_text().strip())
+        except Exception:
+            exit_code = -1
+
+        raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+        parsed = self._parse_opencode_output(raw_output, run_id, task_id, attempt_id, model=model, variant=variant)
+
+        return {
+            "exit_code": exit_code,
+            "timed_out": False,
+            "raw_output": raw_output,
+            "data": parsed.get("task_data", {}),
+            "provenance": parsed.get("provenance", {})
+        }
+
+    def _parse_opencode_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
+                              model: str = "google/gemini-3.8-flash", variant: str = "high") -> dict:
+        result = {
+            "task_data": {},
+            "provenance": {
+                "model": model,
+                "reasoning_effort": variant
+            }
+        }
+        raw_output = raw_output.strip()
+        if not raw_output:
+            return result
+
+        envelope = {}
+        try:
+            envelope = json.loads(raw_output)
+        except Exception:
+            for line in reversed(raw_output.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        envelope = json.loads(line)
+                        break
+                    except Exception:
+                        pass
+
+        if isinstance(envelope, dict):
+            if "session_id" in envelope:
+                result["provenance"]["session_id"] = envelope["session_id"]
+            if "duration_ms" in envelope:
+                result["provenance"]["duration_ms"] = envelope["duration_ms"]
+            if "turns" in envelope:
+                result["provenance"]["turns"] = envelope["turns"]
+            if "model" in envelope:
+                result["provenance"]["model"] = envelope["model"]
+            if "variant" in envelope:
+                result["provenance"]["reasoning_effort"] = envelope["variant"]
+
+            if envelope.get("is_error") is True:
+                result["task_data"] = {
+                    "status": "FAILED",
+                    "error": envelope.get("error") or envelope.get("result", "OpenCode execution error")
+                }
+                return result
+
+            inner_text = envelope.get("result")
+            inner_json = None
+            if isinstance(inner_text, dict):
+                inner_json = inner_text
+            elif isinstance(inner_text, str):
+                m = re.search(r"(\{[\s\S]*\})", inner_text)
+                if m:
+                    try:
+                        inner_json = json.loads(m.group(1))
+                    except Exception:
+                        pass
+            elif not inner_text and "status" in envelope:
+                inner_json = envelope
+
+            if inner_json:
+                if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                    return result
+                if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                    return result
+                result["task_data"] = inner_json
+                return result
+
+        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
+        if m:
+            try:
+                result["task_data"] = json.loads(m.group(1))
+            except Exception:
+                pass
+        return result
+
+    def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
+                              worktree_path: pathlib.Path, output_json_path: pathlib.Path,
+                              status_file_path: pathlib.Path, timeout: int, env_info: dict,
+                              model: str = "google/gemini-3.8-flash", variant: str = "high") -> dict:
+        if behavior == "TIMEOUT":
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {"exit_code": -1, "timed_out": True, "error": f"OpenCode worker timed out after {timeout}s"}
+        elif behavior == "ERROR":
+            err_envelope = {"is_error": True, "error": "Simulated OpenCode failure", "result": "Execution error"}
+            output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
+            status_file_path.write_text("1\n")
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "raw_output": json.dumps(err_envelope),
+                "data": {"status": "FAILED", "error": "Simulated OpenCode failure"},
+                "provenance": {
+                    "session_id": "opencode-test-session-err",
+                    "model": model,
+                    "reasoning_effort": variant
+                }
+            }
+        elif behavior == "MALFORMED":
+            output_json_path.write_text("NOT_JSON_AT_ALL", encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": "NOT_JSON_AT_ALL",
+                "data": {},
+                "provenance": {}
+            }
+        elif behavior == "ATTEMPT_MISMATCH":
+            envelope = {
+                "is_error": False,
+                "session_id": "opencode-test-session-mismatch",
+                "result": json.dumps({
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "attempt_id": attempt_id + 99,
+                    "status": "COMPLETED",
+                    "summary": "Mismatched attempt",
+                    "changed_files": []
+                })
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            parsed = self._parse_opencode_output(json.dumps(envelope), run_id, task_id, attempt_id, model=model, variant=variant)
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": parsed.get("task_data", {}),
+                "provenance": parsed.get("provenance", {})
+            }
+        else:  # SUCCESS
+            inner_data = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "summary": f"Successfully finished {task_id} via OpenCode",
+                "changed_files": []
+            }
+            envelope = {
+                "is_error": False,
+                "session_id": f"opencode-sess-{task_id}-{attempt_id}",
+                "duration_ms": 2900,
+                "turns": 2,
+                "model": model,
+                "variant": variant,
+                "result": json.dumps(inner_data)
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": inner_data,
+                "provenance": {
+                    "session_id": f"opencode-sess-{task_id}-{attempt_id}",
+                    "duration_ms": 2900,
+                    "turns": 2,
+                    "model": model,
+                    "reasoning_effort": variant
+                }
+            }
+
+    def cancel(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> bool:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                return self.herdr.close_workspace(ws_id)
+            except Exception:
+                return False
+        return True
+
+    def cleanup_attempt(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> None:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                self.res_mgr.clean_workspace(ws_id)
+            except Exception:
+                pass
+
+
 ADAPTER_REGISTRY = {
     "agy": AgyAdapter,
     "antigravity_cli": AgyAdapter,
@@ -1219,7 +1837,11 @@ ADAPTER_REGISTRY = {
     "droid_cli": DroidAdapter,
     "factory_cli": DroidAdapter,
     "codex": CodexAdapter,
-    "codex_cli": CodexAdapter
+    "codex_cli": CodexAdapter,
+    "claude": ClaudeAdapter,
+    "claude_cli": ClaudeAdapter,
+    "opencode": OpenCodeAdapter,
+    "opencode_cli": OpenCodeAdapter
 }
 
 
@@ -1252,24 +1874,67 @@ SUPPORTED_HARNESS_EFFORTS = {
     "agy": {"low", "medium", "high"},
     "droid": {"none", "low", "medium", "high", "xhigh"},
     "codex": {"low", "medium", "high", "xhigh"},
-    "claude": {"low", "medium", "high", "max"},
-    "opencode": {"default", "fast", "deep"}
+    "claude": {"low", "medium", "high", "xhigh", "max"},
+    "opencode": {"default", "fast", "medium", "high", "deep", "free"}
 }
 
 ALLOWED_CODEX_SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
 
+def derive_execution_class(task_type: str, explicit_class: str = None) -> str:
+    """Deterministically derives routine, standard, or deep execution class."""
+    if explicit_class in {"routine", "standard", "deep"}:
+        return explicit_class
+    if task_type in {"mechanical_change", "testing", "fixture", "support"}:
+        return "routine"
+    if task_type in {"debugging", "conflict_resolution", "audit"}:
+        return "deep"
+    return "standard"
+
+ROUTING_PRIORITY_MATRIX = {
+    ("specification", "routine"): ["agy-spec-high", "claude-sonnet5-medium", "claude-sonnet5-high"],
+    ("specification", "standard"): ["agy-spec-high", "claude-sonnet5-high"],
+    ("specification", "deep"): ["agy-spec-high", "claude-sonnet5-high"],
+    ("planning", "standard"): ["agy-spec-high", "claude-sonnet5-high"],
+    ("backend", "routine"): ["droid-backend-medium", "agy-backend-medium", "droid-backend-xhigh", "agy-backend-high", "droid-backend-deep"],
+    ("backend", "standard"): ["droid-backend-xhigh", "agy-backend-high", "droid-backend-medium", "agy-backend-medium", "droid-backend-deep"],
+    ("backend", "deep"): ["droid-backend-xhigh", "agy-backend-high", "droid-backend-deep"],
+    ("frontend", "routine"): ["codex-luna-medium", "agy-frontend-medium", "codex-luna-high", "agy-frontend-high", "codex-frontend-high"],
+    ("frontend", "standard"): ["codex-luna-high", "agy-frontend-high", "codex-luna-medium", "agy-frontend-medium", "codex-frontend-high"],
+    ("frontend", "deep"): ["codex-luna-xhigh", "codex-luna-high", "agy-frontend-high", "codex-frontend-high"],
+    ("testing", "routine"): ["claude-sonnet5-high", "agy-tests-medium", "claude-sonnet5-medium", "opencode-gemini-high", "opencode-mimo-free", "agy-backend-high"],
+    ("testing", "standard"): ["claude-sonnet5-high", "agy-tests-medium", "opencode-gemini-high", "agy-backend-high"],
+    ("testing", "deep"): ["claude-sonnet5-high", "agy-tests-medium", "agy-backend-high"],
+    ("fixture", "routine"): ["opencode-gemini-high", "opencode-mimo-free", "agy-tests-medium"],
+    ("support", "routine"): ["opencode-gemini-high", "opencode-mimo-free", "agy-tests-medium"],
+    ("coding", "routine"): ["opencode-gemini-high", "opencode-mimo-free", "agy-tests-medium", "agy-backend-medium"],
+    ("mechanical_change", "routine"): ["droid-backend-medium", "opencode-gemini-high", "droid-backend-xhigh", "droid-backend-deep"],
+    ("mechanical_change", "standard"): ["droid-backend-xhigh", "droid-backend-medium", "opencode-gemini-high", "droid-backend-deep"],
+    ("integration", "routine"): ["agy-integration-high", "agy-backend-medium"],
+    ("integration", "standard"): ["agy-integration-high", "agy-backend-high"],
+    ("integration", "deep"): ["agy-integration-high", "agy-backend-high"],
+    ("debugging", "deep"): ["droid-backend-xhigh", "agy-integration-high", "agy-backend-high", "droid-backend-deep"],
+    ("conflict_resolution", "deep"): ["agy-integration-high"],
+    ("review", "routine"): ["agy-audit-high", "claude-sonnet5-medium"],
+    ("review", "standard"): ["agy-audit-high", "claude-sonnet5-high"],
+    ("review", "deep"): ["agy-audit-high", "claude-sonnet5-high"],
+    ("audit", "deep"): ["agy-audit-high", "claude-sonnet5-high"],
+    ("audit", "standard"): ["agy-audit-high", "claude-sonnet5-high"]
+}
+
 PROFILE_TASK_TYPE_PREFERENCES = {
-    "specification": ["agy-spec-high"],
-    "planning": ["agy-spec-high"],
-    "backend": ["droid-backend-deep", "agy-backend-high"],
-    "frontend": ["codex-frontend-high", "agy-frontend-high"],
-    "testing": ["agy-tests-medium", "agy-backend-high"],
-    "debugging": ["droid-backend-deep", "agy-backend-high", "agy-integration-high"],
-    "mechanical_change": ["droid-backend-deep"],
+    "specification": ["agy-spec-high", "claude-sonnet5-high"],
+    "planning": ["agy-spec-high", "claude-sonnet5-high"],
+    "backend": ["droid-backend-xhigh", "agy-backend-high", "droid-backend-medium", "agy-backend-medium", "droid-backend-deep"],
+    "frontend": ["codex-luna-high", "agy-frontend-high", "codex-luna-medium", "agy-frontend-medium", "codex-frontend-high"],
+    "testing": ["claude-sonnet5-high", "agy-tests-medium", "opencode-gemini-high", "opencode-mimo-free", "agy-backend-high"],
+    "fixture": ["opencode-gemini-high", "opencode-mimo-free", "agy-tests-medium"],
+    "support": ["opencode-gemini-high", "opencode-mimo-free", "agy-tests-medium"],
+    "debugging": ["droid-backend-xhigh", "agy-backend-high", "agy-integration-high", "droid-backend-deep"],
+    "mechanical_change": ["droid-backend-medium", "opencode-gemini-high", "droid-backend-xhigh", "droid-backend-deep"],
     "integration": ["agy-integration-high", "agy-backend-high"],
     "conflict_resolution": ["agy-integration-high"],
-    "review": ["agy-review-high", "agy-audit-high"],
-    "audit": ["agy-audit-high"]
+    "review": ["agy-audit-high", "claude-sonnet5-high"],
+    "audit": ["agy-audit-high", "claude-sonnet5-high"]
 }
 
 WORKER_CAPABILITIES = {
@@ -1281,21 +1946,25 @@ WORKER_CAPABILITIES = {
     "agy6": {"integration", "debugging", "conflict_resolution"},
     "agy7": {"review", "audit"},
     "droid": {"coding", "backend", "testing", "debugging", "mechanical_change"},
-    "codex": {"coding", "frontend", "debugging", "testing", "review"}
+    "codex": {"coding", "frontend", "debugging", "testing", "review"},
+    "claude": {"coding", "testing", "specification", "review"},
+    "opencode": {"coding", "testing", "support", "fixture", "mechanical_change"}
 }
 
 TASK_TYPE_PREFERENCES = {
-    "specification": ["agy2"],
-    "planning": ["agy2"],
+    "specification": ["agy2", "claude"],
+    "planning": ["agy2", "claude"],
     "backend": ["droid", "agy3"],
     "frontend": ["codex", "agy4"],
-    "testing": ["agy5", "droid"],
+    "testing": ["claude", "agy5", "opencode", "droid"],
+    "fixture": ["opencode", "agy5"],
+    "support": ["opencode", "agy5"],
     "debugging": ["droid", "agy3", "agy6"],
-    "mechanical_change": ["droid"],
+    "mechanical_change": ["droid", "opencode"],
     "integration": ["agy6", "droid"],
     "conflict_resolution": ["agy6", "droid"],
-    "review": ["agy7"],
-    "audit": ["agy7"]
+    "review": ["agy7", "claude"],
+    "audit": ["agy7", "claude"]
 }
 
 
@@ -1406,12 +2075,14 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             }
             return None, metadata, "BLOCKED"
 
-    # 2. Execution Profile Routing (v5 mode if profiles loaded)
+    # 2. Execution Profile Routing (v5 and v6 mode if profiles loaded)
     task_type = task_def.get("task_type", "implementation")
+    explicit_class = task_def.get("execution_class")
+    execution_class = derive_execution_class(task_type, explicit_class)
     requires = set(task_def.get("requires", []))
 
     if profiles:
-        priority_pids = PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+        priority_pids = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
         all_pids = list(profiles.keys())
         ordered_pids = [p for p in priority_pids if p in all_pids]
         for p in all_pids:
@@ -1453,11 +2124,26 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
                     if not has_auth:
                         auth_blocked_profiles.append(pid)
                         continue
+                if harness == "claude":
+                    has_auth = bool(os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
+                    if not has_auth:
+                        auth_blocked_profiles.append(pid)
+                        continue
+                if harness == "opencode":
+                    has_auth = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
+                    if not has_auth:
+                        auth_blocked_profiles.append(pid)
+                        continue
+                    if pid == "opencode-gemini-high" and not os.environ.get("OPENCODE_API_KEY"):
+                        # Gemini on openrouter restricted unless authenticated direct
+                        auth_blocked_profiles.append(pid)
+                        continue
 
         if not capability_matched_profiles:
             metadata = {
                 "routing_mode": "execution_profile",
                 "task_type": task_type,
+                "execution_class": execution_class,
                 "required_capabilities": list(requires),
                 "requirements": list(requires),
                 "eligible_candidates": [],
@@ -1479,6 +2165,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             metadata = {
                 "routing_mode": "execution_profile",
                 "task_type": task_type,
+                "execution_class": execution_class,
                 "required_capabilities": list(requires),
                 "requirements": list(requires),
                 "eligible_candidates": [],
@@ -1519,6 +2206,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             metadata = {
                 "routing_mode": "execution_profile",
                 "task_type": task_type,
+                "execution_class": execution_class,
                 "required_capabilities": list(requires),
                 "requirements": list(requires),
                 "eligible_candidates": eligible_candidates,
@@ -1543,6 +2231,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
         metadata = {
             "routing_mode": "execution_profile",
             "task_type": task_type,
+            "execution_class": execution_class,
             "required_capabilities": list(requires),
             "requirements": list(requires),
             "eligible_candidates": eligible_candidates,
@@ -1652,6 +2341,8 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
         raise ValueError(f"Task '{task_id}' not found in plan")
 
     task_type = target_task.get("task_type", "implementation")
+    explicit_class = target_task.get("execution_class")
+    execution_class = derive_execution_class(task_type, explicit_class)
     requires = target_task.get("requires", [])
     requires_set = set(requires)
 
@@ -1682,7 +2373,7 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
             except Exception:
                 pass
 
-    pref_list = PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
+    pref_list = ROUTING_PRIORITY_MATRIX.get((task_type, execution_class)) or PROFILE_TASK_TYPE_PREFERENCES.get(task_type, [])
     ordered_pids = [p for p in pref_list if p in profiles]
     for p in profiles:
         if p not in ordered_pids:
@@ -1705,6 +2396,16 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
             auth_status = "AVAILABLE" if os.environ.get("FACTORY_API_KEY") else "AUTH_BLOCKED"
         elif harness == "codex":
             auth_status = "AVAILABLE" if os.environ.get("OPENAI_API_KEY") else "AUTH_BLOCKED"
+        elif harness == "claude":
+            auth_status = "AVAILABLE" if (os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")) else "AUTH_BLOCKED"
+        elif harness == "opencode":
+            has_auth = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
+            if not has_auth:
+                auth_status = "AUTH_BLOCKED"
+            elif pid == "opencode-gemini-high" and not os.environ.get("OPENCODE_API_KEY"):
+                auth_status = "AUTH_BLOCKED"
+            else:
+                auth_status = "AVAILABLE"
         else:
             auth_status = "AVAILABLE"
 
@@ -1723,7 +2424,7 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
             reason = f"Missing capabilities: {missing_caps}"
         elif auth_status == "AUTH_BLOCKED":
             eligibility = "AUTH_BLOCKED"
-            reason = "Authentication missing (FACTORY_API_KEY or OPENAI_API_KEY unset)"
+            reason = f"Authentication missing for harness '{harness}'"
         elif is_busy:
             eligibility = "BUSY"
             reason = f"Worker '{wid}' or profile '{pid}' is currently busy"
@@ -1765,6 +2466,7 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
     return {
         "task_id": task_id,
         "task_type": task_type,
+        "execution_class": execution_class,
         "required_capabilities": requires,
         "profiles": profile_evaluations,
         "final_decision": final_decision
@@ -2315,6 +3017,7 @@ class TaskExecutor:
                 "status": "TIMEOUT",
                 "error": raw_res.get("error", "Worker timed out")
             }
+            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1)
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
             atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
@@ -2400,6 +3103,7 @@ class TaskExecutor:
             "status": "SUCCESS" if is_success else "FAILED"
         }
 
+        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code)
         atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
         self.attempts.append(attempt_record)
         self.latest_result = attempt_record
@@ -2408,6 +3112,94 @@ class TaskExecutor:
         check_failpoint("FAIL_BEFORE_COMMIT", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
 
         return attempt_record
+
+    def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
+                          worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int):
+        churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
+        try:
+            diff_res = subprocess.run(
+                ["git", "diff", "--numstat", base_commit],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True
+            )
+            if diff_res.returncode == 0:
+                for line in diff_res.stdout.splitlines():
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        try:
+                            added = int(parts[0]) if parts[0] != "-" else 0
+                            deleted = int(parts[1]) if parts[1] != "-" else 0
+                            churn["lines_added"] += added
+                            churn["lines_deleted"] += deleted
+                            churn["files_changed"] += 1
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        try:
+            dt_start = datetime.datetime.fromisoformat(start_time)
+            dt_end = datetime.datetime.fromisoformat(end_time)
+            duration_ms = max(0.0, round((dt_end - dt_start).total_seconds() * 1000, 2))
+        except Exception:
+            duration_ms = 0.0
+
+        exec_class = (
+            self.task.get("execution_class")
+            or self.routing_provenance.get("execution_class")
+            or derive_execution_class(self.task.get("task_type", "implementation"))
+        )
+
+        telemetry = {
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "attempt_id": attempt_record.get("attempt_id", 1),
+            "profile_id": self.profile_id or "unknown",
+            "harness": self.harness,
+            "adapter": self.worker_config.get("adapter", "agy"),
+            "model": self.model,
+            "effort": self.effort,
+            "execution_class": exec_class,
+            "task_type": self.task.get("task_type", "implementation"),
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_ms": duration_ms,
+            "status": attempt_record.get("state", self.state),
+            "exit_code": exit_code,
+            "churn": churn
+        }
+        prov = raw_res.get("provenance", {})
+        if prov.get("turns"):
+            telemetry["turns"] = prov["turns"]
+        if prov.get("session_id"):
+            telemetry["session_id"] = prov["session_id"]
+
+        attempt_record["telemetry"] = telemetry
+
+        # Run-local metrics.json
+        try:
+            metrics_file = self.run_dir / "metrics.json"
+            run_metrics = []
+            if metrics_file.exists():
+                try:
+                    with open(metrics_file, "r", encoding="utf-8") as mf:
+                        run_metrics = json.load(mf)
+                except Exception:
+                    run_metrics = []
+            run_metrics.append(telemetry)
+            atomic_write_json(metrics_file, run_metrics)
+        except Exception:
+            pass
+
+        # Global evidence telemetry
+        try:
+            global_telemetry = EVIDENCE_DIR / "telemetry.jsonl"
+            global_telemetry.parent.mkdir(parents=True, exist_ok=True)
+            with open(global_telemetry, "a", encoding="utf-8") as gtf:
+                gtf.write(json.dumps(telemetry) + "\n")
+        except Exception:
+            pass
 
     def commit_work(self, attempt_id: int) -> str:
         """Commits verified changes in the attempt worktree."""
@@ -3098,7 +3890,7 @@ def generate_status_projection(run_id: str = None) -> dict:
 
     projection = {
         "status": "OK",
-        "factory_version": "4.0.0",
+        "factory_version": "6.0.0",
         "control_plane": res_mgr.state["control_plane"],
         "owned_resources": res_mgr.state["owned"],
         "runs": runs_data
@@ -3108,8 +3900,118 @@ def generate_status_projection(run_id: str = None) -> dict:
     return projection
 
 
+def summarize_execution_metrics(run_id: str = None, profile_id: str = None) -> dict:
+    """
+    Summarizes execution telemetry across runs or for a specific run/profile.
+    Strictly observational: metrics do not influence routing decisions.
+    """
+    records = []
+    if run_id:
+        rf = RUNS_DIR / run_id / "metrics.json"
+        if rf.exists():
+            try:
+                with open(rf, "r", encoding="utf-8") as f:
+                    records = json.load(f)
+            except Exception:
+                pass
+    else:
+        gt = EVIDENCE_DIR / "telemetry.jsonl"
+        if gt.exists():
+            try:
+                with open(gt, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            records.append(json.loads(line.strip()))
+            except Exception:
+                pass
+        if not records:
+            for rf in RUNS_DIR.glob("*/metrics.json"):
+                try:
+                    with open(rf, "r", encoding="utf-8") as f:
+                        records.extend(json.load(f))
+                except Exception:
+                    pass
+
+    if profile_id:
+        records = [r for r in records if r.get("profile_id") == profile_id]
+
+    total_attempts = len(records)
+    successful = sum(1 for r in records if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"))
+    failed = total_attempts - successful
+    success_rate = (successful / total_attempts * 100) if total_attempts > 0 else 0.0
+
+    durations = [r.get("duration_ms", 0.0) for r in records if "duration_ms" in r]
+    avg_duration = (sum(durations) / len(durations)) if durations else 0.0
+
+    total_lines_added = sum(r.get("churn", {}).get("lines_added", 0) for r in records)
+    total_lines_deleted = sum(r.get("churn", {}).get("lines_deleted", 0) for r in records)
+    total_files_changed = sum(r.get("churn", {}).get("files_changed", 0) for r in records)
+
+    by_profile = {}
+    by_harness = {}
+    by_class = {}
+
+    for r in records:
+        pid = r.get("profile_id", "unknown")
+        by_profile.setdefault(pid, {"total": 0, "success": 0, "failed": 0, "duration_ms": 0.0, "lines_added": 0, "lines_deleted": 0})
+        by_profile[pid]["total"] += 1
+        if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"):
+            by_profile[pid]["success"] += 1
+        else:
+            by_profile[pid]["failed"] += 1
+        by_profile[pid]["duration_ms"] += r.get("duration_ms", 0.0)
+        by_profile[pid]["lines_added"] += r.get("churn", {}).get("lines_added", 0)
+        by_profile[pid]["lines_deleted"] += r.get("churn", {}).get("lines_deleted", 0)
+
+        h = r.get("harness", "unknown")
+        by_harness.setdefault(h, {"total": 0, "success": 0, "failed": 0, "duration_ms": 0.0})
+        by_harness[h]["total"] += 1
+        if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"):
+            by_harness[h]["success"] += 1
+        else:
+            by_harness[h]["failed"] += 1
+        by_harness[h]["duration_ms"] += r.get("duration_ms", 0.0)
+
+        ec = r.get("execution_class", "standard")
+        by_class.setdefault(ec, {"total": 0, "success": 0, "failed": 0, "duration_ms": 0.0})
+        by_class[ec]["total"] += 1
+        if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"):
+            by_class[ec]["success"] += 1
+        else:
+            by_class[ec]["failed"] += 1
+        by_class[ec]["duration_ms"] += r.get("duration_ms", 0.0)
+
+    for p in by_profile.values():
+        if p["total"] > 0:
+            p["avg_duration_ms"] = round(p["duration_ms"] / p["total"], 2)
+    for h in by_harness.values():
+        if h["total"] > 0:
+            h["avg_duration_ms"] = round(h["duration_ms"] / h["total"], 2)
+    for c in by_class.values():
+        if c["total"] > 0:
+            c["avg_duration_ms"] = round(c["duration_ms"] / c["total"], 2)
+
+    return {
+        "run_filter": run_id,
+        "profile_filter": profile_id,
+        "total_attempts": total_attempts,
+        "successful_attempts": successful,
+        "failed_attempts": failed,
+        "success_rate_pct": round(success_rate, 2),
+        "avg_duration_ms": round(avg_duration, 2),
+        "total_churn": {
+            "lines_added": total_lines_added,
+            "lines_deleted": total_lines_deleted,
+            "files_changed": total_files_changed
+        },
+        "by_profile": by_profile,
+        "by_harness": by_harness,
+        "by_execution_class": by_class
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v5.0.0)")
+    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v6.0.0)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Preflight
@@ -3156,6 +4058,14 @@ def main():
     r_exp.add_argument("task", type=str, help="Task ID to explain")
     r_exp.add_argument("--json", action="store_true", help="Output JSON explanation")
     r_exp.add_argument("--run", type=str, default=None, help="Optional run ID for live busy state context")
+
+    # Metrics
+    metrics_parser = subparsers.add_parser("metrics", help="Execution telemetry and performance metrics")
+    metrics_sub = metrics_parser.add_subparsers(dest="metrics_action", required=True)
+    m_sum = metrics_sub.add_parser("summarize", help="Summarize execution telemetry")
+    m_sum.add_argument("--json", action="store_true", help="Output summary in JSON format")
+    m_sum.add_argument("--run", type=str, default=None, help="Filter summary to specific run ID")
+    m_sum.add_argument("--profile", type=str, default=None, help="Filter summary to specific profile ID")
 
     # Cleanup
     cl_parser = subparsers.add_parser("cleanup", help="Safely clean owned workspaces, worktrees, and ephemeral files")
@@ -3320,6 +4230,43 @@ def main():
         result = res_mgr.cleanup_owned_resources(run_id=args.run)
         print("Cleanup completed safely:")
         print(json.dumps(result, indent=2))
+
+    elif args.command == "metrics":
+        if args.metrics_action == "summarize":
+            summary = summarize_execution_metrics(run_id=args.run, profile_id=args.profile)
+            if args.json:
+                print(json.dumps(summary, indent=2))
+            else:
+                print("================================================================================")
+                print("AGY-Herdr Software Factory — Execution Telemetry Summary")
+                print("================================================================================")
+                if summary["run_filter"]:
+                    print(f"Run Filter:     {summary['run_filter']}")
+                if summary["profile_filter"]:
+                    print(f"Profile Filter: {summary['profile_filter']}")
+                print(f"Total Attempts: {summary['total_attempts']}")
+                print(f"Successful:     {summary['successful_attempts']} ({summary['success_rate_pct']}%)")
+                print(f"Failed:         {summary['failed_attempts']}")
+                print(f"Avg Duration:   {summary['avg_duration_ms']} ms")
+                churn = summary["total_churn"]
+                print(f"Git Churn:      +{churn['lines_added']} / -{churn['lines_deleted']} across {churn['files_changed']} files")
+                print("-" * 80)
+                print(f"{'Profile ID':<24} {'Total':<8} {'Success':<9} {'Failed':<8} {'Avg Duration':<14} {'Churn'}")
+                print("-" * 80)
+                for pid, pdata in summary["by_profile"].items():
+                    ch_str = f"+{pdata.get('lines_added', 0)} / -{pdata.get('lines_deleted', 0)}"
+                    print(f"{pid:<24} {pdata['total']:<8} {pdata['success']:<9} {pdata['failed']:<8} {pdata.get('avg_duration_ms', 0.0):<14} {ch_str}")
+                print("-" * 80)
+                print(f"{'Harness':<15} {'Total':<8} {'Success':<9} {'Failed':<8} {'Avg Duration'}")
+                print("-" * 80)
+                for h, hdata in summary["by_harness"].items():
+                    print(f"{h:<15} {hdata['total']:<8} {hdata['success']:<9} {hdata['failed']:<8} {hdata.get('avg_duration_ms', 0.0)}")
+                print("-" * 80)
+                print(f"{'Execution Class':<18} {'Total':<8} {'Success':<9} {'Failed':<8} {'Avg Duration'}")
+                print("-" * 80)
+                for ec, ecdata in summary["by_execution_class"].items():
+                    print(f"{ec:<18} {ecdata['total']:<8} {ecdata['success']:<9} {ecdata['failed']:<8} {ecdata.get('avg_duration_ms', 0.0)}")
+                print("================================================================================")
 
 
 if __name__ == "__main__":

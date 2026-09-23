@@ -1,7 +1,7 @@
 {
   "$schema": "./schemas/harness-profiles.schema.json",
-  "schema_version": "5.0.0",
-  "description": "Certified Execution Profiles for AGY-Herdr Software Factory v5.0.0",
+  "schema_version": "6.0.0",
+  "description": "Certified Execution Profiles for AGY-Herdr Software Factory v6.0.0",
   "profiles": {
     "agy-spec-high": {
       "id": "agy-spec-high",
@@ -57,6 +57,33 @@
         "notes": "Verified in real DAG execution"
       }
     },
+    "agy-backend-medium": {
+      "id": "agy-backend-medium",
+      "name": "AGY Backend (Gemini 3.8 Flash Medium)",
+      "description": "Routine backend coding and maintenance profile using AGY worker agy3",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy3",
+      "worker_identity": "agy3",
+      "model": "gemini-3.8-flash",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "backend",
+        "debugging"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy3_home",
+        "cli_model_arg": "gemini-3.8-flash-medium"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T11:00:00Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
     "agy-frontend-high": {
       "id": "agy-frontend-high",
       "name": "AGY Frontend (Gemini 3.8 Flash High)",
@@ -80,6 +107,32 @@
       "certification": {
         "status": "CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:29:59Z",
+        "notes": "Verified in real DAG execution"
+      }
+    },
+    "agy-frontend-medium": {
+      "id": "agy-frontend-medium",
+      "name": "AGY Frontend (Gemini 3.8 Flash Medium)",
+      "description": "Routine frontend UI adjustments and styling using AGY worker agy4",
+      "adapter": "agy",
+      "harness": "agy",
+      "enabled": true,
+      "command": "/root/.local/bin/agy4",
+      "worker_identity": "agy4",
+      "model": "gemini-3.8-flash",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "frontend"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "profile_home": "/root/.agy4_home",
+        "cli_model_arg": "gemini-3.8-flash-medium"
+      },
+      "certification": {
+        "status": "CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T11:00:00Z",
         "notes": "Verified in real DAG execution"
       }
     },
@@ -162,10 +215,38 @@
         "notes": "Verified in independent audit run"
       }
     },
-    "droid-backend-deep": {
-      "id": "droid-backend-deep",
-      "name": "Droid Backend Deep (Qwen 3.8 Max xHigh)",
-      "description": "Factory CLI / Droid autonomous backend coding profile with xhigh reasoning effort",
+    "droid-backend-medium": {
+      "id": "droid-backend-medium",
+      "name": "Droid Backend Medium (Qwen 3.8 Max Medium)",
+      "description": "Factory CLI / Droid routine backend coding profile with medium reasoning effort",
+      "adapter": "droid",
+      "harness": "droid",
+      "enabled": true,
+      "command": "/root/.local/bin/droid",
+      "worker_identity": "droid",
+      "model": "qwen3.8-max",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "backend",
+        "testing",
+        "debugging",
+        "mechanical_change"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "autonomy": "low"
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires FACTORY_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "droid-backend-xhigh": {
+      "id": "droid-backend-xhigh",
+      "name": "Droid Backend xHigh (Qwen 3.8 Max xHigh)",
+      "description": "Factory CLI / Droid autonomous deep backend engineering profile with xhigh reasoning effort",
       "adapter": "droid",
       "harness": "droid",
       "enabled": true,
@@ -190,10 +271,69 @@
         "notes": "Requires FACTORY_API_KEY environment variable. Fully certified in deterministic test harness."
       }
     },
-    "codex-frontend-high": {
-      "id": "codex-frontend-high",
-      "name": "Codex Frontend High (GPT-5.6 Luna High)",
-      "description": "OpenAI Codex CLI execution profile pinned to GPT-5.6 Luna with high reasoning effort",
+    "droid-backend-deep": {
+      "id": "droid-backend-deep",
+      "name": "Droid Backend Deep (Qwen 3.8 Max xHigh)",
+      "description": "Factory CLI / Droid autonomous backend coding profile with xhigh reasoning effort (v5 compatibility alias)",
+      "adapter": "droid",
+      "harness": "droid",
+      "enabled": true,
+      "command": "/root/.local/bin/droid",
+      "worker_identity": "droid",
+      "model": "qwen3.8-max",
+      "effort": "xhigh",
+      "capabilities": [
+        "coding",
+        "backend",
+        "testing",
+        "debugging",
+        "mechanical_change"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "autonomy": "low"
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires FACTORY_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "codex-luna-medium": {
+      "id": "codex-luna-medium",
+      "name": "Codex Luna Medium (GPT-5.6 Luna Medium)",
+      "description": "OpenAI Codex CLI routine execution profile with medium reasoning effort",
+      "adapter": "codex",
+      "harness": "codex",
+      "enabled": true,
+      "command": "/usr/local/bin/codex",
+      "worker_identity": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "frontend",
+        "debugging",
+        "testing",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "network_access": false,
+        "ephemeral": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires OPENAI_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "codex-luna-high": {
+      "id": "codex-luna-high",
+      "name": "Codex Luna High (GPT-5.6 Luna High)",
+      "description": "OpenAI Codex CLI standard execution profile with high reasoning effort",
       "adapter": "codex",
       "harness": "codex",
       "enabled": true,
@@ -218,7 +358,185 @@
       "certification": {
         "status": "AUTH_BLOCKED",
         "last_certified_timestamp": null,
-        "notes": "Requires OpenAI/Codex authentication in ~/.codex/auth.json or OPENAI_API_KEY. Fully certified in deterministic test harness."
+        "notes": "Requires OPENAI_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "codex-luna-xhigh": {
+      "id": "codex-luna-xhigh",
+      "name": "Codex Luna xHigh (GPT-5.6 Luna xHigh)",
+      "description": "OpenAI Codex CLI deep execution profile with extra-high reasoning effort",
+      "adapter": "codex",
+      "harness": "codex",
+      "enabled": true,
+      "command": "/usr/local/bin/codex",
+      "worker_identity": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "xhigh",
+      "capabilities": [
+        "coding",
+        "frontend",
+        "debugging",
+        "testing",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "network_access": false,
+        "ephemeral": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires OPENAI_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "codex-frontend-high": {
+      "id": "codex-frontend-high",
+      "name": "Codex Frontend High (GPT-5.6 Luna High)",
+      "description": "OpenAI Codex CLI execution profile pinned to GPT-5.6 Luna with high reasoning effort (v5 compatibility alias)",
+      "adapter": "codex",
+      "harness": "codex",
+      "enabled": true,
+      "command": "/usr/local/bin/codex",
+      "worker_identity": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "frontend",
+        "debugging",
+        "testing",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "network_access": false,
+        "ephemeral": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires OPENAI_API_KEY environment variable. Fully certified in deterministic test harness."
+      }
+    },
+    "claude-sonnet5-high": {
+      "id": "claude-sonnet5-high",
+      "name": "Claude Sonnet 5 High (Claude Sonnet 5 High)",
+      "description": "Anthropic Claude Code CLI execution profile pinned to claude-sonnet-5 with high effort",
+      "adapter": "claude",
+      "harness": "claude",
+      "enabled": true,
+      "command": "/root/.local/bin/claude",
+      "worker_identity": "claude",
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "testing",
+        "specification",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "permission_mode": "acceptEdits",
+        "output_format": "json",
+        "no_session_persistence": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires Claude Code authentication (CLAUDE_CODE_TOKEN / /login). Fully certified in deterministic test harness."
+      }
+    },
+    "claude-sonnet5-medium": {
+      "id": "claude-sonnet5-medium",
+      "name": "Claude Sonnet 5 Medium (Claude Sonnet 5 Medium)",
+      "description": "Anthropic Claude Code CLI routine execution profile pinned to claude-sonnet-5 with medium effort",
+      "adapter": "claude",
+      "harness": "claude",
+      "enabled": true,
+      "command": "/root/.local/bin/claude",
+      "worker_identity": "claude",
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "capabilities": [
+        "coding",
+        "testing",
+        "review"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "permission_mode": "acceptEdits",
+        "output_format": "json",
+        "no_session_persistence": true
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires Claude Code authentication (CLAUDE_CODE_TOKEN / /login). Fully certified in deterministic test harness."
+      }
+    },
+    "opencode-gemini-high": {
+      "id": "opencode-gemini-high",
+      "name": "OpenCode Gemini High (google/gemini-3.8-flash)",
+      "description": "OpenCode CLI standard execution profile with Google Gemini 3.8 Flash and high variant",
+      "adapter": "opencode",
+      "harness": "opencode",
+      "enabled": true,
+      "command": "/root/.opencode/bin/opencode",
+      "worker_identity": "opencode",
+      "model": "google/gemini-3.8-flash",
+      "effort": "high",
+      "capabilities": [
+        "coding",
+        "testing",
+        "support",
+        "fixture",
+        "mechanical_change"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "pure": true,
+        "auto": true,
+        "format": "json"
+      },
+      "certification": {
+        "status": "AUTH_BLOCKED",
+        "last_certified_timestamp": null,
+        "notes": "Requires OpenRouter/OpenCode workspace authorization. Fully certified in deterministic test harness."
+      }
+    },
+    "opencode-mimo-free": {
+      "id": "opencode-mimo-free",
+      "name": "OpenCode Mimo Free (opencode/mimo-v2.6-flash-free)",
+      "description": "OpenCode CLI smoke/free tier execution profile with mimo-v2.6-flash-free",
+      "adapter": "opencode",
+      "harness": "opencode",
+      "enabled": true,
+      "command": "/root/.opencode/bin/opencode",
+      "worker_identity": "opencode",
+      "model": "opencode/mimo-v2.6-flash-free",
+      "effort": "free",
+      "capabilities": [
+        "coding",
+        "testing",
+        "support",
+        "fixture"
+      ],
+      "max_concurrency": 1,
+      "native": {
+        "pure": true,
+        "auto": true,
+        "format": "json"
+      },
+      "certification": {
+        "status": "AVAILABLE",
+        "last_certified_timestamp": "2026-09-23T11:00:00Z",
+        "notes": "Transport verified live via OPENROUTER_API_KEY."
       }
     }
   }

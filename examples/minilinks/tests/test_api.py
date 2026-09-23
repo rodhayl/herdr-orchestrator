@@ -1643,6 +1643,114 @@ class TestMiniLinksAPI(unittest.TestCase):
 
         self.assertEqual(len(errors), 0, f"Concurrent request errors: {errors}")
 
+    # 14. Archived bookmark feature tests (v6)
+    def test_archived_crud_and_endpoints(self) -> None:
+        """Verifies creation, patching, and archive/restore action endpoints."""
+        # Create unarchived (default)
+        status, bm1, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Active BM", "url": "https://active.example.com", "notes": "Active"},
+        )
+        self.assertEqual(status, 201)
+        self.assertFalse(bm1["archived"])
+        bm1_id = bm1["id"]
+
+        # Create directly as archived
+        status, bm2, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Archived BM", "url": "https://archived.example.com", "archived": True},
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(bm2["archived"])
+        bm2_id = bm2["id"]
+
+        # Reject invalid archived type on POST
+        status, err, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Invalid", "url": "https://invalid.com", "archived": "not_a_bool"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # Archive bm1 via dedicated endpoint
+        status, arch_res, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/archive")
+        self.assertEqual(status, 200)
+        self.assertTrue(arch_res["archived"])
+
+        # Restore bm1 via dedicated endpoint
+        status, rest_res, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/restore")
+        self.assertEqual(status, 200)
+        self.assertFalse(rest_res["archived"])
+
+        # Archive bm1 via PATCH
+        status, patch_res, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm1_id}", {"archived": True}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(patch_res["archived"])
+
+        # Reject invalid archived type on PATCH
+        status, err, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm1_id}", {"archived": "yes"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", err)
+
+        # 404 on non-existent bookmark archive/restore
+        status, err, _, _ = self.make_request("POST", "/api/bookmarks/99999/archive")
+        self.assertEqual(status, 404)
+        status, err, _, _ = self.make_request("POST", "/api/bookmarks/99999/restore")
+        self.assertEqual(status, 404)
+
+        # 400 on invalid ID for archive/restore
+        status, err, _, _ = self.make_request("POST", "/api/bookmarks/invalid/archive")
+        self.assertEqual(status, 400)
+        status, err, _, _ = self.make_request("POST", "/api/bookmarks/invalid/restore")
+        self.assertEqual(status, 400)
+
+    def test_archived_filtering(self) -> None:
+        """Verifies GET /api/bookmarks filtering by archived status."""
+        # Insert active bookmark
+        self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Active One", "url": "https://active1.example.com", "notes": "active notes"},
+        )
+        # Insert archived bookmark
+        self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Archived One", "url": "https://archived1.example.com", "notes": "archived notes", "archived": True},
+        )
+
+        # Default GET /api/bookmarks: only active
+        status, active_bms, _, _ = self.make_request("GET", "/api/bookmarks")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(active_bms), 1)
+        self.assertEqual(active_bms[0]["title"], "Active One")
+        self.assertFalse(active_bms[0]["archived"])
+
+        # Explicit ?archived=false: only active
+        status, false_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=false")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(false_bms), 1)
+        self.assertEqual(false_bms[0]["title"], "Active One")
+
+        # Explicit ?archived=true: only archived
+        status, arch_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=true")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(arch_bms), 1)
+        self.assertEqual(arch_bms[0]["title"], "Archived One")
+        self.assertTrue(arch_bms[0]["archived"])
+
+        # Explicit ?archived=all: both
+        status, all_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=all")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(all_bms), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

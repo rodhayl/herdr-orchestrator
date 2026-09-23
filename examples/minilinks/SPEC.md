@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     notes TEXT DEFAULT '',
     tags TEXT DEFAULT '[]',
     is_favorite INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 | `notes` | `TEXT` | `DEFAULT ''` | Optional user notes, descriptions, or annotations. Stored as `TEXT DEFAULT ''`. Always serialized as a string in JSON payloads (`""` when empty). | `"Official Python 3 library reference"` |
 | `tags` | `TEXT` | `DEFAULT '[]'` | JSON-serialized array of user-assigned textual tags. Always serialized as a list of strings (`[]` when empty). | `["python", "docs"]` |
 | `is_favorite` | `INTEGER` | `DEFAULT 0` | Boolean flag indicating whether the bookmark is starred/favorited (`0` for false, `1` for true). Serialized as a native boolean (`true`/`false`) in JSON API payloads. | `0` (serialized as `false`) |
+| `archived` | `INTEGER` | `DEFAULT 0` | Boolean flag indicating whether the bookmark is archived (`0` for active/false, `1` for archived/true). Serialized as a native boolean (`true`/`false`) in JSON API payloads. | `0` (serialized as `false`) |
 | `created_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp recorded when the bookmark record is first inserted. | `"2026-09-23T00:00:00Z"` |
 | `updated_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp updated on initial creation and every subsequent modification. | `"2026-09-23T00:05:00Z"` |
 
@@ -124,6 +126,29 @@ The `tags` attribute provides lightweight categorical labeling for bookmarks:
    - `GET /api/bookmarks?tag=<tag>` filters bookmarks that contain `<tag>` (case-insensitive).
    - `GET /api/tags` returns a list of all unique tags used across all bookmarks (`{"tags": [...]}`).
 
+### 2.7 Optional Bookmark Archived Attribute Specification (`archived`)
+
+The `archived` attribute provides soft-archival capabilities for bookmarks:
+
+1. **Storage Representation**:
+   - Column definition: `archived INTEGER DEFAULT 0`.
+   - Backward compatibility: older databases without `archived` are automatically migrated via `ALTER TABLE bookmarks ADD COLUMN archived INTEGER DEFAULT 0`.
+2. **Payload Serialization**:
+   - Every bookmark dictionary serialized to JSON contains the key `"archived"` mapping to a boolean (`false` for active, `true` for archived).
+   - Example active: `"archived": false`.
+   - Example archived: `"archived": true`.
+   - Never returned as `null` or excluded from the response payload.
+3. **Creation Semantics**:
+   - In `POST /api/bookmarks`, `archived` is optional, defaulting to `false`.
+   - When provided, must be a native boolean. Non-boolean values are rejected with `400 Bad Request`.
+4. **Update Semantics**:
+   - In `PATCH /api/bookmarks/<id>`, `archived` can be updated directly via boolean.
+   - Dedicated endpoints `POST /api/bookmarks/<id>/archive` and `POST /api/bookmarks/<id>/restore` provide convenient toggle actions.
+5. **Archive Filtering**:
+   - `GET /api/bookmarks`: By default (or with `?archived=false`), only unarchived bookmarks (`archived = 0`) are returned.
+   - `GET /api/bookmarks?archived=true`: Returns only archived bookmarks (`archived = 1`).
+   - `GET /api/bookmarks?archived=all`: Returns all bookmarks regardless of archive status.
+
 ---
 
 ## 3. REST API Contract
@@ -154,10 +179,11 @@ Retrieves a list of bookmarks, with optional query parameter filtering by search
 
 - **Request**:
   - Method: `GET`
-  - Path: `/api/bookmarks`, `/api/bookmarks?q=<term>`, `/api/bookmarks?favorites=true`, or `/api/bookmarks?favorites=true&q=<term>`
+  - Path: `/api/bookmarks`, `/api/bookmarks?q=<term>`, `/api/bookmarks?favorites=true`, `/api/bookmarks?archived=true`, or `/api/bookmarks?archived=all`
   - Query Parameters:
     - `q` (optional, `string`): Search keyword. When provided and non-empty, filters bookmarks where `title`, `url`, or `notes` contains the search term (case-insensitive substring match). When omitted or empty/whitespace-only, search filtering is not applied.
-    - `favorites` (optional, `string`): Favorite filter flag. When set to `'true'` (case-insensitive, e.g. `?favorites=true`), returns only bookmarks marked as favorite (`is_favorite = 1`). When omitted, empty, or `'false'`, all bookmarks (matching `q` if present) are returned without favorite filtering.
+    - `favorites` (optional, `string`): Favorite filter flag. When set to `'true'` (case-insensitive, e.g. `?favorites=true`), returns only bookmarks marked as favorite (`is_favorite = 1`). When omitted, empty, or `'false'`, all bookmarks (matching other filters) are returned without favorite filtering.
+    - `archived` (optional, `string`): Archive filter flag. When omitted, empty, or `'false'`, returns only active, non-archived bookmarks (`archived = 0`). When set to `'true'` (e.g. `?archived=true`), returns only archived bookmarks (`archived = 1`). When set to `'all'` (e.g. `?archived=all`), returns both active and archived bookmarks.
 - **Response**:
   - Status: `200 OK`
   - Headers: `Content-Type: application/json; charset=utf-8`
@@ -312,8 +338,9 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, `is_favorite`,
     - Updatable fields:
       - `title` (`string`, optional): Non-empty string after stripping whitespace.
       - `url` (`string`, optional): Non-empty valid URL string starting with `http://` or `https://`.
-      - `notes` (`string`, optional): Updated notes text string. Supplying `""` clears existing notes. Must be a string if provided; non-string types rejected with `400 Bad Request`.
-      - `is_favorite` (`boolean`, optional): Native boolean (`true` or `false`) to update favorite status. Non-boolean types rejected with `400 Bad Request`.
+       - `notes` (`string`, optional): Updated notes text string. Supplying `""` clears existing notes. Must be a string if provided; non-string types rejected with `400 Bad Request`.
+       - `is_favorite` (`boolean`, optional): Native boolean (`true` or `false`) to update favorite status. Non-boolean types rejected with `400 Bad Request`.
+       - `archived` (`boolean`, optional): Native boolean (`true` or `false`) to update archive status. Non-boolean types rejected with `400 Bad Request`.
 - **Success Response**:
   - Status: `200 OK`
   - Headers: `Content-Type: application/json; charset=utf-8`
@@ -325,6 +352,7 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, `is_favorite`,
       "url": "https://developer.mozilla.org/",
       "notes": "Updated documentation notes",
       "is_favorite": true,
+      "archived": false,
       "created_at": "2026-09-23T00:10:00Z",
       "updated_at": "2026-09-23T00:15:00Z"
     }
@@ -342,6 +370,7 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, `is_favorite`,
       - `url` is provided but empty, whitespace-only, or invalid format.
       - `notes` is provided but is not a string.
       - `is_favorite` is provided but is not a boolean.
+      - `archived` is provided but is not a boolean.
     - Body: `{"error": "Invalid update payload"}`
 
 ---
@@ -371,7 +400,37 @@ Deletes a bookmark by ID.
 
 ---
 
-### 3.7 Search Filtering & Notes Query Semantics
+### 3.7 `POST /api/bookmarks/<id>/archive`
+Convenience action endpoint to mark a bookmark as archived (`archived = true`).
+
+- **Request**:
+  - Method: `POST`
+  - Path: `/api/bookmarks/<id>/archive`
+- **Success Response**:
+  - Status: `200 OK`
+  - Body: Complete updated bookmark record with `"archived": true`.
+- **Error Responses**:
+  - Status: `404 Not Found` if bookmark doesn't exist.
+  - Status: `400 Bad Request` if invalid bookmark ID.
+
+---
+
+### 3.8 `POST /api/bookmarks/<id>/restore`
+Convenience action endpoint to restore an archived bookmark back to active (`archived = false`).
+
+- **Request**:
+  - Method: `POST`
+  - Path: `/api/bookmarks/<id>/restore`
+- **Success Response**:
+  - Status: `200 OK`
+  - Body: Complete updated bookmark record with `"archived": false`.
+- **Error Responses**:
+  - Status: `404 Not Found` if bookmark doesn't exist.
+  - Status: `400 Bad Request` if invalid bookmark ID.
+
+---
+
+### 3.9 Search Filtering & Notes Query Semantics
 
 The REST API supports comprehensive search filtering across bookmarks:
 

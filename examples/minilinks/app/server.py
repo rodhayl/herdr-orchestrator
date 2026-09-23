@@ -169,8 +169,29 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             )
             tag_list = query_params.get("tag")
             tag = tag_list[0] if tag_list else None
+
+            # Handle archived query parameter: 'true', 'false', 'all' (default false)
+            archived_list = query_params.get("archived")
+            archived_filter: Optional[Union[bool, str]] = False
+            if archived_list:
+                arch_raw = archived_list[0].strip().lower()
+                if arch_raw in ("true", "1"):
+                    archived_filter = True
+                elif arch_raw in ("all", "*"):
+                    archived_filter = "all"
+                elif arch_raw in ("false", "0"):
+                    archived_filter = False
+                else:
+                    archived_filter = False
+            else:
+                archived_filter = False
+
             bookmarks = database.get_bookmarks(
-                q=q, favorites_only=favorites_only, tag=tag, db_path=self.server.db_path
+                q=q,
+                favorites_only=favorites_only,
+                tag=tag,
+                archived=archived_filter,
+                db_path=self.server.db_path,
             )
             self.send_json(200, bookmarks)
             return
@@ -201,9 +222,40 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
         self.serve_static(parsed.path)
 
     def do_POST(self) -> None:
-        """Handles POST requests: creating bookmarks at /api/bookmarks."""
+        """Handles POST requests: creating bookmarks at /api/bookmarks, or archive/restore actions."""
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/")
+
+        # Check for /api/bookmarks/<id>/archive and /api/bookmarks/<id>/restore
+        if path.startswith("/api/bookmarks/") and (path.endswith("/archive") or path.endswith("/restore")):
+            parts = path.split("/")
+            if len(parts) == 5:
+                id_str = parts[3]
+                action = parts[4]
+                try:
+                    bm_id = int(id_str)
+                    if bm_id <= 0:
+                        raise ValueError()
+                except ValueError:
+                    self.send_json_error(400, "Invalid bookmark ID")
+                    return
+
+                existing = database.get_bookmark_by_id(bm_id, db_path=self.server.db_path)
+                if existing is None:
+                    self.send_json_error(404, "Bookmark not found")
+                    return
+
+                if action == "archive":
+                    updated = database.archive_bookmark(bm_id, db_path=self.server.db_path)
+                else:
+                    updated = database.restore_bookmark(bm_id, db_path=self.server.db_path)
+
+                if updated is None:
+                    self.send_json_error(404, "Bookmark not found")
+                    return
+
+                self.send_json(200, updated)
+                return
 
         if path != "/api/bookmarks":
             if path.startswith("/api/"):
@@ -257,6 +309,15 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                 return
             is_favorite = raw_fav
 
+        # Validate archived
+        is_archived = False
+        if "archived" in body:
+            raw_arch = body["archived"]
+            if not isinstance(raw_arch, bool):
+                self.send_json_error(400, "archived must be a boolean if provided")
+                return
+            is_archived = raw_arch
+
         # Validate tags
         tags = None
         if "tags" in body:
@@ -279,6 +340,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             notes=clean_notes,
             is_favorite=is_favorite,
             tags=tags,
+            archived=is_archived,
             db_path=self.server.db_path,
         )
         self.send_json(201, created)
@@ -313,7 +375,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_error(400, "Invalid update payload")
             return
 
-        allowed_fields = {"title", "url", "notes", "tags", "is_favorite"}
+        allowed_fields = {"title", "url", "notes", "tags", "is_favorite", "archived"}
         present_fields = [k for k in body.keys() if k in allowed_fields]
         if not present_fields:
             self.send_json_error(400, "Invalid update payload")
@@ -324,6 +386,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
         clean_notes: Optional[str] = None
         clean_tags: Optional[List[str]] = None
         clean_is_favorite: Optional[bool] = None
+        clean_archived: Optional[bool] = None
 
         if "title" in body:
             title = body["title"]
@@ -360,6 +423,13 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
                 return
             clean_is_favorite = raw_fav
 
+        if "archived" in body:
+            raw_arch = body["archived"]
+            if not isinstance(raw_arch, bool):
+                self.send_json_error(400, "Invalid update payload")
+                return
+            clean_archived = raw_arch
+
         existing = database.get_bookmark_by_id(bm_id, db_path=self.server.db_path)
         if existing is None:
             self.send_json_error(404, "Bookmark not found")
@@ -372,6 +442,7 @@ class MiniLinksHandler(http.server.BaseHTTPRequestHandler):
             notes=clean_notes,
             is_favorite=clean_is_favorite,
             tags=clean_tags,
+            archived=clean_archived,
             db_path=self.server.db_path,
         )
         if updated is None:
