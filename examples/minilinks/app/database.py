@@ -356,9 +356,19 @@ def update_bookmark(
     except (ValueError, TypeError):
         return None
 
-    # Handle backward-compatible positional db_path argument
+    # Handle backward-compatible positional call where 4th arg was is_favorite
     fav_val: Optional[int] = None
-    if isinstance(is_favorite, bool):
+    if isinstance(notes, bool):
+        fav_val = 1 if notes else 0
+        notes = None
+        if isinstance(is_favorite, (str, Path)) and (
+            isinstance(is_favorite, Path)
+            or "/" in str(is_favorite)
+            or "\\" in str(is_favorite)
+            or str(is_favorite).endswith(".db")
+        ):
+            db_path = is_favorite
+    elif isinstance(is_favorite, bool):
         fav_val = 1 if is_favorite else 0
     elif isinstance(is_favorite, Path):
         db_path = is_favorite
