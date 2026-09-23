@@ -840,7 +840,7 @@ Validates SQLite persistence across server lifecycle restarts:
 
 ---
 
-### 7.2 Standalone 12-Step Smoke Test: `scripts/smoke_test.py`
+## 7.2 Standalone 12-Step Smoke Test: `scripts/smoke_test.py`
 
 `scripts/smoke_test.py` is a standalone executable Python script that executes an end-to-end verification scenario against an ephemeral server instance. It prints deterministic progress logs for each step and exits with status code `0` on total success or non-zero on any assertion failure.
 
