@@ -497,6 +497,15 @@ class AgyAdapter(WorkerAdapter):
         worker_cmd = self.worker_config.get("command", "agy")
         effort_arg = f'--effort "{effort}" \\' if effort else ""
 
+        # Support test injection in test harness
+        test_behavior = os.environ.get("AGY_TEST_BEHAVIOR")
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1" and test_behavior:
+            return self._handle_test_behavior(
+                test_behavior, run_id, task_id, attempt_id, worktree_path,
+                output_json_path, status_file_path, timeout, env_info,
+                model=model, effort=effort
+            )
+
         script_path = task_attempt_dir / "run_worker.sh"
         with open(script_path, "w", encoding="utf-8") as sf:
             sf.write(f"""#!/bin/bash
@@ -574,6 +583,51 @@ echo $? > "{status_file_path}"
             "raw_output": raw_output,
             "data": parsed_data
         }
+
+    def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
+                              worktree_path: pathlib.Path, output_json_path: pathlib.Path,
+                              status_file_path: pathlib.Path, timeout: int, env_info: dict,
+                              model: str = "gemini-3.8-flash", effort: str = "high") -> dict:
+        if behavior == "TIMEOUT":
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {"exit_code": -1, "timed_out": True, "error": f"AGY worker timed out after {timeout}s"}
+        elif behavior == "ERROR":
+            err_envelope = {"status": "FAILED", "error": "Simulated AGY failure"}
+            output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
+            status_file_path.write_text("1\n")
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "raw_output": json.dumps(err_envelope),
+                "data": err_envelope,
+                "provenance": {"model": model, "reasoning_effort": effort}
+            }
+        else:  # SUCCESS
+            inner_data = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "summary": f"Successfully finished {task_id} via AGY",
+                "changed_files": []
+            }
+            envelope = {
+                "status": "SUCCESS",
+                "response": json.dumps(inner_data),
+                "structured_output": inner_data
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": envelope,
+                "provenance": {
+                    "model": model,
+                    "reasoning_effort": effort
+                }
+            }
 
     def cancel(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> bool:
         ws_id = env_info.get("workspace_id")
@@ -793,18 +847,13 @@ echo $? > "{status_file_path}"
                 "provenance": parsed.get("provenance", {})
             }
         else: # SUCCESS
-            out_file = worktree_path / f"output_{task_id}_{run_id}.txt"
-            out_file.parent.mkdir(parents=True, exist_ok=True)
-            out_file.write_text(f"Droid finished {task_id} att-{attempt_id}\n", encoding="utf-8")
-            rel_file = str(out_file.relative_to(worktree_path))
-
             inner_data = {
                 "run_id": run_id,
                 "task_id": task_id,
                 "attempt_id": attempt_id,
                 "status": "COMPLETED",
                 "summary": f"Successfully finished {task_id} via Droid",
-                "changed_files": [rel_file]
+                "changed_files": []
             }
             envelope = {
                 "is_error": False,
@@ -1111,18 +1160,13 @@ class CodexAdapter(WorkerAdapter):
                 "provenance": parsed.get("provenance", {})
             }
         else:  # SUCCESS
-            out_file = worktree_path / f"output_{task_id}_{run_id}.txt"
-            out_file.parent.mkdir(parents=True, exist_ok=True)
-            out_file.write_text(f"Codex finished {task_id} att-{attempt_id}\n", encoding="utf-8")
-            rel_file = str(out_file.relative_to(worktree_path))
-
             inner_data = {
                 "run_id": run_id,
                 "task_id": task_id,
                 "attempt_id": attempt_id,
                 "status": "COMPLETED",
                 "summary": f"Successfully finished {task_id} via Codex",
-                "changed_files": [rel_file]
+                "changed_files": []
             }
             envelope = {
                 "is_error": False,
@@ -2317,10 +2361,12 @@ class TaskExecutor:
                     structured_output = json.loads(m.group(1))
             except Exception:
                 pass
+        if not structured_output and agy_data.get("status") in ("SUCCESS", "COMPLETED"):
+            structured_output = agy_data
 
         is_success = (
             exit_code == 0
-            and agy_data.get("status") == "SUCCESS"
+            and agy_data.get("status") in ("SUCCESS", "COMPLETED")
             and not path_violations
             and not missing_expected
             and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected))
