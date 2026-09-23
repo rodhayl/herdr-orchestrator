@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "V6ReconciliationSchema",
+  "type": "object",
+  "required": [
+    "run_id",
+    "audit_timestamp",
+    "auditor",
+    "summary",
+    "contains_mock_execution",
+    "run_actual_mode",
+    "tasks"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "audit_timestamp": {
+      "type": "string"
+    },
+    "auditor": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "contains_mock_execution": {
+      "type": "boolean"
+    },
+    "run_actual_mode": {
+      "type": "string",
+      "enum": ["REAL", "MOCK", "TRANSPORT_ONLY", "UNKNOWN"]
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "profile_id",
+          "adapter",
+          "harness",
+          "reported_state",
+          "actual_execution_mode",
+          "evidence"
+        ],
+        "properties": {
+          "task_id": { "type": "string" },
+          "profile_id": { "type": "string" },
+          "adapter": { "type": "string" },
+          "harness": { "type": "string" },
+          "reported_state": { "type": "string" },
+          "actual_execution_mode": {
+            "type": "string",
+            "enum": ["REAL", "MOCK", "TRANSPORT_ONLY", "UNKNOWN"]
+          },
+          "duration_ms": { "type": "number" },
+          "session_id": { "type": ["string", "null"] },
+          "files_changed": { "type": "integer" },
+          "lines_added": { "type": "integer" },
+          "lines_deleted": { "type": "integer" },
+          "evidence": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
