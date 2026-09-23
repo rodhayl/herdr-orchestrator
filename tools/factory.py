@@ -579,10 +579,269 @@ echo $? > "{status_file_path}"
                 pass
 
 
+
+class DroidAdapter(WorkerAdapter):
+    """Production adapter executing Droid / Factory CLI in isolated Herdr workspaces."""
+
+    def prepare_environment(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path) -> dict:
+        label = f"task-{task_id}-a{attempt_id}"
+        workspace_id, pane_id = self.herdr.create_workspace(cwd=str(worktree_path), label=label)
+        self.res_mgr.record_workspace(workspace_id, pane_id, run_id=run_id)
+        return {
+            "workspace_id": workspace_id,
+            "pane_id": pane_id,
+            "worktree_path": str(worktree_path)
+        }
+
+    def execute(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path,
+                prompt_file: pathlib.Path, schema_file: pathlib.Path, timeout: int,
+                task_attempt_dir: pathlib.Path, env_info: dict, model: str) -> dict:
+        pane_id = env_info.get("pane_id")
+        output_json_path = task_attempt_dir / "output.json"
+        status_file_path = task_attempt_dir / "exit_code.txt"
+        worker_cmd = self.worker_config.get("command", "droid")
+        effort = self.worker_config.get("reasoning_effort", "xhigh")
+        autonomy = self.worker_config.get("autonomy", "low")
+
+        # Support test injection in test harness
+        test_behavior = os.environ.get("DROID_TEST_BEHAVIOR")
+        if os.environ.get("FACTORY_TEST_HARNESS") == "1" and test_behavior:
+            return self._handle_test_behavior(
+                test_behavior, run_id, task_id, attempt_id, worktree_path,
+                output_json_path, status_file_path, timeout, env_info
+            )
+
+        script_path = task_attempt_dir / "run_worker.sh"
+        with open(script_path, "w", encoding="utf-8") as sf:
+            sf.write(f"""#!/bin/bash
+set -o pipefail
+cd "{worktree_path}"
+"{worker_cmd}" exec \\
+  --cwd "{worktree_path}" \\
+  --auto "{autonomy}" \\
+  --model "{model}" \\
+  --reasoning-effort "{effort}" \\
+  --output-format json \\
+  --file "{prompt_file}" \\
+  > "{output_json_path}" 2>&1
+echo $? > "{status_file_path}"
+""")
+        os.chmod(script_path, 0o755)
+
+        if pane_id:
+            self.herdr.run_in_pane(pane_id, f'bash "{script_path}"')
+        else:
+            subprocess.Popen(["bash", str(script_path)], cwd=str(worktree_path))
+
+        start_wait = time.time()
+        while time.time() - start_wait < timeout:
+            if status_file_path.exists() and status_file_path.stat().st_size > 0:
+                break
+            time.sleep(1)
+
+        if not status_file_path.exists() or status_file_path.stat().st_size == 0:
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {
+                "exit_code": -1,
+                "timed_out": True,
+                "error": f"Droid worker timed out after {timeout}s",
+                "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+            }
+
+        try:
+            exit_code = int(status_file_path.read_text().strip())
+        except Exception:
+            exit_code = -1
+
+        raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
+        parsed = self._parse_droid_output(raw_output, run_id, task_id, attempt_id)
+
+        return {
+            "exit_code": exit_code,
+            "timed_out": False,
+            "raw_output": raw_output,
+            "data": parsed.get("task_data", {}),
+            "provenance": parsed.get("provenance", {})
+        }
+
+    def _parse_droid_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int) -> dict:
+        result = {"task_data": {}, "provenance": {}}
+        raw_output = raw_output.strip()
+        if not raw_output:
+            return result
+
+        droid_envelope = {}
+        try:
+            droid_envelope = json.loads(raw_output)
+        except Exception:
+            for line in reversed(raw_output.splitlines()):
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        droid_envelope = json.loads(line)
+                        break
+                    except Exception:
+                        pass
+
+        # Capture provenance from envelope
+        if isinstance(droid_envelope, dict):
+            if "session_id" in droid_envelope:
+                result["provenance"]["session_id"] = droid_envelope["session_id"]
+            if "duration_ms" in droid_envelope:
+                result["provenance"]["duration_ms"] = droid_envelope["duration_ms"]
+            if "turns" in droid_envelope:
+                result["provenance"]["turns"] = droid_envelope["turns"]
+            result["provenance"]["model"] = droid_envelope.get("model", self.worker_config.get("default_model"))
+            result["provenance"]["reasoning_effort"] = droid_envelope.get("reasoning_effort", self.worker_config.get("reasoning_effort"))
+
+            # Check if outer envelope indicates error
+            if droid_envelope.get("is_error") is True:
+                result["task_data"] = {
+                    "status": "FAILED",
+                    "error": droid_envelope.get("error") or droid_envelope.get("result", "Droid execution error")
+                }
+                return result
+
+            # Parse inner Factory task JSON
+            inner_text = str(droid_envelope.get("result") or raw_output)
+            m = re.search(r"(\{[\s\S]*\})", inner_text)
+            if m:
+                try:
+                    inner_json = json.loads(m.group(1))
+                    if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                        return result
+                    if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                        return result
+                    result["task_data"] = inner_json
+                    return result
+                except Exception:
+                    pass
+
+        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
+        if m:
+            try:
+                result["task_data"] = json.loads(m.group(1))
+            except Exception:
+                pass
+        return result
+
+    def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
+                              worktree_path: pathlib.Path, output_json_path: pathlib.Path,
+                              status_file_path: pathlib.Path, timeout: int, env_info: dict) -> dict:
+        if behavior == "TIMEOUT":
+            self.cancel(run_id, task_id, attempt_id, env_info)
+            return {"exit_code": -1, "timed_out": True, "error": f"Worker timed out after {timeout}s"}
+        elif behavior == "ERROR":
+            err_envelope = {"is_error": True, "error": "Simulated Droid failure", "result": "Execution error"}
+            output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
+            status_file_path.write_text("1\n")
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "raw_output": json.dumps(err_envelope),
+                "data": {"status": "FAILED", "error": "Simulated Droid failure"},
+                "provenance": {"session_id": "test-session-err", "model": "qwen3.8-max"}
+            }
+        elif behavior == "MALFORMED":
+            output_json_path.write_text("NOT_JSON_AT_ALL", encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": "NOT_JSON_AT_ALL",
+                "data": {},
+                "provenance": {}
+            }
+        elif behavior == "ATTEMPT_MISMATCH":
+            envelope = {
+                "is_error": False,
+                "session_id": "test-session-mismatch",
+                "result": json.dumps({
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "attempt_id": attempt_id + 99,
+                    "status": "COMPLETED",
+                    "summary": "Mismatched attempt",
+                    "changed_files": []
+                })
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            parsed = self._parse_droid_output(json.dumps(envelope), run_id, task_id, attempt_id)
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": parsed.get("task_data", {}),
+                "provenance": parsed.get("provenance", {})
+            }
+        else: # SUCCESS
+            out_file = worktree_path / f"output_{task_id}_{run_id}.txt"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(f"Droid finished {task_id} att-{attempt_id}\n", encoding="utf-8")
+            rel_file = str(out_file.relative_to(worktree_path))
+
+            inner_data = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "status": "COMPLETED",
+                "summary": f"Successfully finished {task_id} via Droid",
+                "changed_files": [rel_file]
+            }
+            envelope = {
+                "is_error": False,
+                "session_id": f"sess-{task_id}-{attempt_id}",
+                "duration_ms": 4200,
+                "turns": 3,
+                "model": "qwen3.8-max",
+                "reasoning_effort": "xhigh",
+                "result": json.dumps(inner_data)
+            }
+            output_json_path.write_text(json.dumps(envelope), encoding="utf-8")
+            status_file_path.write_text("0\n")
+            return {
+                "exit_code": 0,
+                "timed_out": False,
+                "raw_output": json.dumps(envelope),
+                "data": inner_data,
+                "provenance": {
+                    "session_id": f"sess-{task_id}-{attempt_id}",
+                    "duration_ms": 4200,
+                    "turns": 3,
+                    "model": "qwen3.8-max",
+                    "reasoning_effort": "xhigh"
+                }
+            }
+
+    def cancel(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> bool:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                return self.herdr.close_workspace(ws_id)
+            except Exception:
+                return False
+        return True
+
+    def cleanup_attempt(self, run_id: str, task_id: str, attempt_id: int, env_info: dict) -> None:
+        ws_id = env_info.get("workspace_id")
+        if ws_id and self.res_mgr.is_owned_workspace(ws_id):
+            try:
+                self.res_mgr.clean_workspace(ws_id)
+            except Exception:
+                pass
+
+
 ADAPTER_REGISTRY = {
     "agy": AgyAdapter,
-    "antigravity_cli": AgyAdapter
+    "antigravity_cli": AgyAdapter,
+    "droid": DroidAdapter,
+    "droid_cli": DroidAdapter,
+    "factory_cli": DroidAdapter
 }
+
 
 
 def register_adapter(name: str, adapter_cls: type):
@@ -602,6 +861,286 @@ def get_adapter(worker_id: str, worker_config: dict, herdr: HerdrClient, res_mgr
         raise ValueError(f"Unknown worker adapter '{adapter_name}' declared for worker '{worker_id}'")
     cls = ADAPTER_REGISTRY[adapter_name]
     return cls(worker_id, worker_config, herdr, res_mgr)
+
+
+# ==============================================================================
+# Capability Taxonomy & Deterministic Router
+# ==============================================================================
+
+WORKER_CAPABILITIES = {
+    "agy": {"implementation", "review", "planning", "testing"},
+    "agy2": {"planning", "specification", "review"},
+    "agy3": {"coding", "backend", "debugging"},
+    "agy4": {"coding", "frontend"},
+    "agy5": {"coding", "testing"},
+    "agy6": {"integration", "debugging", "conflict_resolution"},
+    "agy7": {"review", "audit"},
+    "droid": {"coding", "backend", "testing", "debugging", "mechanical_change"}
+}
+
+TASK_TYPE_PREFERENCES = {
+    "specification": ["agy2"],
+    "planning": ["agy2"],
+    "backend": ["droid", "agy3"],
+    "frontend": ["agy4", "droid"],
+    "testing": ["agy5", "droid"],
+    "debugging": ["droid", "agy3", "agy6"],
+    "mechanical_change": ["droid"],
+    "integration": ["agy6", "droid"],
+    "conflict_resolution": ["agy6", "droid"],
+    "review": ["agy7"],
+    "audit": ["agy7"]
+}
+
+
+def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy_workers: set = None) -> tuple:
+    """
+    Deterministically routes a task to an eligible worker based on capabilities and preferences.
+    Returns: (worker_id, routing_metadata, status)
+      where status is 'ROUTED', 'BUSY', or 'BLOCKED'
+    """
+    busy_workers = busy_workers or set()
+    worker_registry = factory_config.get("worker_registry", {})
+
+    # 1. Explicit worker assignment (legacy and backward-compatibility mode)
+    explicit_wid = task_def.get("worker_id") or task_def.get("worker")
+    if explicit_wid:
+        if explicit_wid in worker_registry:
+            w_cfg = worker_registry[explicit_wid]
+            adapter = w_cfg.get("adapter", "agy")
+            concurrency_allowed = w_cfg.get("concurrency_eligibility", False)
+            is_busy = (explicit_wid in busy_workers) and (not concurrency_allowed)
+            metadata = {
+                "routing_mode": "explicit",
+                "task_type": task_def.get("task_type", "explicit"),
+                "required_capabilities": task_def.get("requires", []),
+                "eligible_candidates": [explicit_wid],
+                "busy_candidates": [explicit_wid] if is_busy else [],
+                "selected_worker": explicit_wid,
+                "selected_adapter": adapter,
+                "selection_reason": f"Explicit worker assignment to '{explicit_wid}'"
+            }
+            if is_busy:
+                return explicit_wid, metadata, "BUSY"
+            return explicit_wid, metadata, "ROUTED"
+        else:
+            metadata = {
+                "routing_mode": "explicit",
+                "error": f"Unknown explicit worker: {explicit_wid}"
+            }
+            return None, metadata, "BLOCKED"
+
+    # 2. Capability-based deterministic routing
+    task_type = task_def.get("task_type")
+    requires = set(task_def.get("requires", []))
+
+    priority_order = TASK_TYPE_PREFERENCES.get(task_type, [])
+    all_workers = list(worker_registry.keys())
+
+    # Build preference-ordered candidate list
+    ordered_candidates = [w for w in priority_order if w in all_workers]
+    for w in all_workers:
+        if w not in ordered_candidates:
+            ordered_candidates.append(w)
+
+    # Filter candidates that satisfy ALL required capabilities
+    eligible = []
+    for wid in ordered_candidates:
+        w_caps = set(WORKER_CAPABILITIES.get(wid, worker_registry.get(wid, {}).get("capabilities", [])))
+        if requires.issubset(w_caps):
+            eligible.append(wid)
+
+    if not eligible:
+        metadata = {
+            "routing_mode": "deterministic_capability",
+            "task_type": task_type,
+            "required_capabilities": list(requires),
+            "eligible_candidates": [],
+            "busy_candidates": [],
+            "selected_worker": None,
+            "selected_adapter": None,
+            "selection_reason": f"No worker satisfies required capabilities: {list(requires)}"
+        }
+        return None, metadata, "BLOCKED"
+
+    busy_candidates = [w for w in eligible if w in busy_workers]
+    available_candidates = [w for w in eligible if w not in busy_workers]
+
+    if not available_candidates:
+        metadata = {
+            "routing_mode": "deterministic_capability",
+            "task_type": task_type,
+            "required_capabilities": list(requires),
+            "eligible_candidates": eligible,
+            "busy_candidates": busy_candidates,
+            "selected_worker": None,
+            "selected_adapter": None,
+            "selection_reason": f"All eligible candidates ({', '.join(eligible)}) are busy"
+        }
+        return None, metadata, "BUSY"
+
+    selected = available_candidates[0]
+    adapter = worker_registry[selected].get("adapter", "agy")
+    metadata = {
+        "routing_mode": "deterministic_capability",
+        "task_type": task_type,
+        "required_capabilities": list(requires),
+        "eligible_candidates": eligible,
+        "busy_candidates": busy_candidates,
+        "selected_worker": selected,
+        "selected_adapter": adapter,
+        "selection_reason": f"Selected preferred available candidate '{selected}' from eligible pool {eligible}"
+    }
+    return selected, metadata, "ROUTED"
+
+
+# ==============================================================================
+# One-Way Kanban Board Projector
+# ==============================================================================
+
+class HerdrBoardProjector:
+    """
+    One-way Kanban projection engine translating Factory state into herdr-board cards.
+    Enforces strict one-way authority: Factory is the single source of truth.
+    Maintains .agy-factory/board/mapping.json and cards.json.
+    Ensures idempotency, self-correction upon manual move, and offline recovery.
+    """
+    COLUMNS = ["Backlog", "Ready", "Running", "Blocked", "Review", "Done", "Failed"]
+
+    STATE_TO_COLUMN = {
+        "PENDING": "Backlog",
+        "READY": "Ready",
+        "DISPATCHING": "Running",
+        "RUNNING": "Running",
+        "RESULT_RECEIVED": "Running",
+        "PATH_VALIDATING": "Running",
+        "VALIDATING": "Running",
+        "COMMITTING": "Running",
+        "COMMITTED": "Running",
+        "INTEGRATING": "Running",
+        "BLOCKED": "Blocked",
+        "INTEGRATED": "Review",
+        "COMPLETED": "Done",
+        "FAILED": "Failed",
+        "TIMED_OUT": "Failed",
+        "CONFLICTED": "Failed",
+        "CANCELLED": "Failed"
+    }
+
+    def __init__(self, root_dir: pathlib.Path = None):
+        self.root_dir = root_dir or PROJECT_ROOT
+        self.runs_dir = self.root_dir / ".agy-factory" / "runs"
+        self.board_dir = self.root_dir / ".agy-factory" / "board"
+        self.board_dir.mkdir(parents=True, exist_ok=True)
+        self.mapping_file = self.board_dir / "mapping.json"
+        self.cards_file = self.board_dir / "cards.json"
+        self.mapping = self._load_json(self.mapping_file, default={})
+        self.cards = self._load_json(self.cards_file, default={})
+
+    def _load_json(self, path: pathlib.Path, default=None):
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return default if default is not None else {}
+        return default if default is not None else {}
+
+    def _save(self):
+        atomic_write_json(self.mapping_file, self.mapping)
+        atomic_write_json(self.cards_file, self.cards)
+
+    def sync(self, run_id: str = None) -> dict:
+        """
+        Synchronizes Factory state to herdr-board cards.
+        Idempotent: running repeatedly produces zero duplicate cards.
+        Self-correcting: restores any manually moved card to its canonical column.
+        """
+        runs_to_sync = []
+        if run_id:
+            runs_to_sync = [self.runs_dir / run_id]
+        else:
+            if self.runs_dir.exists():
+                runs_to_sync = sorted(list(self.runs_dir.glob("run-*")))
+
+        synced_cards = []
+        for r_dir in runs_to_sync:
+            m_file = r_dir / "manifest.json"
+            if not m_file.exists():
+                continue
+            try:
+                with open(m_file, "r", encoding="utf-8") as f:
+                    m_data = json.load(f)
+            except Exception:
+                continue
+
+            r_id = m_data.get("run_id", r_dir.name)
+            for tid, tinfo in m_data.get("tasks", {}).items():
+                key = f"{r_id}:{tid}"
+                if key not in self.mapping:
+                    self.mapping[key] = f"card-{len(self.mapping) + 1:04d}"
+                card_id = self.mapping[key]
+
+                canonical_state = tinfo.get("canonical_state", tinfo.get("status", "PENDING"))
+                target_col = self.STATE_TO_COLUMN.get(canonical_state, "Backlog")
+
+                card = {
+                    "card_id": card_id,
+                    "run_id": r_id,
+                    "task_id": tid,
+                    "column": target_col,
+                    "canonical_state": canonical_state,
+                    "worker_id": tinfo.get("worker_id"),
+                    "adapter": tinfo.get("adapter"),
+                    "attempt_id": tinfo.get("current_attempt_id", 0),
+                    "task_type": tinfo.get("task_type"),
+                    "dependencies": tinfo.get("dependencies", []),
+                    "branch": tinfo.get("branch"),
+                    "commit": tinfo.get("commit_hash"),
+                    "reason": tinfo.get("error") or tinfo.get("block_reason"),
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                self.cards[card_id] = card
+                synced_cards.append(card_id)
+
+        self._save()
+
+        # Check if actual board CLI is installed locally and daemon running
+        board_bin = self.root_dir / ".tools" / "bin" / "board"
+        if board_bin.exists() and os.access(board_bin, os.X_OK):
+            try:
+                subprocess.run([str(board_bin), "card", "sync"], cwd=str(self.root_dir), capture_output=True, timeout=5)
+            except Exception:
+                pass
+
+        return {
+            "status": "OK",
+            "synced_cards_count": len(synced_cards),
+            "total_cards": len(self.cards),
+            "run_id": run_id
+        }
+
+    def get_status(self) -> dict:
+        board_bin = self.root_dir / ".tools" / "bin" / "board"
+        has_bin = board_bin.exists() and os.access(board_bin, os.X_OK)
+
+        columns_view = {col: [] for col in self.COLUMNS}
+        for card_id, card in self.cards.items():
+            col = card.get("column", "Backlog")
+            if col in columns_view:
+                columns_view[col].append(card)
+
+        return {
+            "authority": "factory (one-way)",
+            "columns": self.COLUMNS,
+            "columns_view": columns_view,
+            "total_cards": len(self.cards),
+            "mapping_count": len(self.mapping),
+            "board_binary_present": has_bin,
+            "compatibility_status": "BLOCKED_EXTERNAL_COMPATIBILITY" if not has_bin else "OK",
+            "auto_dispatch": False
+        }
+
 
 
 # ==============================================================================
@@ -662,10 +1201,11 @@ def validate_plan_file(plan_path: pathlib.Path, factory_config: dict = None) -> 
             errors.append(f"Duplicate task_id detected: '{tid}'")
         task_ids.add(tid)
 
-        wid = task.get("worker_id")
-        if not wid:
-            errors.append(f"Task '{tid}' is missing 'worker_id'")
-        elif worker_registry and wid not in worker_registry:
+        wid = task.get("worker_id") or task.get("worker")
+        ttype = task.get("task_type")
+        if not wid and not ttype:
+            errors.append(f"Task '{tid}' must specify either 'worker_id' or 'task_type'")
+        elif wid and worker_registry and wid not in worker_registry:
             errors.append(f"Task '{tid}' specifies unknown worker: '{wid}'")
 
         deps = task.get("dependencies", [])
@@ -793,11 +1333,15 @@ class TaskExecutor:
         self.run_id = run_id
         self.task = plan_task
         self.task_id = plan_task["task_id"]
-        self.worker_id = plan_task["worker_id"]
+        self.worker_id = plan_task.get("worker_id") or plan_task.get("worker")
+        self.routing_provenance = plan_task.get("routing_provenance", {})
         self.run_dir = run_dir
         self.herdr = herdr
         self.res_mgr = res_mgr
         self.factory_config = factory_config
+
+        if not self.worker_id:
+            raise ValueError(f"Task '{self.task_id}' cannot be executed without an assigned worker_id")
 
         self.worker_config = factory_config["worker_registry"][self.worker_id]
         self.adapter = get_adapter(self.worker_id, self.worker_config, herdr, res_mgr)
@@ -947,6 +1491,8 @@ class TaskExecutor:
                 "attempt_id": attempt_id,
                 "task_id": self.task_id,
                 "worker_id": self.worker_id,
+                "adapter": self.worker_config.get("adapter", "agy"),
+                "routing_provenance": self.routing_provenance,
                 "branch": attempt_branch,
                 "worktree": str(worktree_path),
                 "start_time": start_time,
@@ -1019,6 +1565,8 @@ class TaskExecutor:
             "task_id": self.task_id,
             "worker_id": self.worker_id,
             "adapter": self.worker_config.get("adapter", "agy"),
+            "routing_provenance": self.routing_provenance,
+            "provenance": raw_res.get("provenance", {}),
             "model": self.model,
             "branch": attempt_branch,
             "worktree": str(worktree_path),
@@ -1085,6 +1633,7 @@ class FactoryOrchestrator:
         self.herdr = HerdrClient(PROJECT_ROOT)
         self.res_mgr = ResourceManager(self.herdr)
         self.merge_lock = threading.Lock()
+        self.board_projector = HerdrBoardProjector(PROJECT_ROOT)
 
         # Build task lookup and dependency graph
         self._build_task_graph()
@@ -1110,10 +1659,13 @@ class FactoryOrchestrator:
 
             initial_tasks = {}
             for tid, tdef in self.tasks_def.items():
+                wid = tdef.get("worker_id") or tdef.get("worker")
+                adapter = self.factory_config.get("worker_registry", {}).get(wid, {}).get("adapter") if wid else None
                 initial_tasks[tid] = {
                     "task_id": tid,
-                    "worker_id": tdef["worker_id"],
-                    "adapter": self.factory_config.get("worker_registry", {}).get(tdef["worker_id"], {}).get("adapter", "agy"),
+                    "worker_id": wid,
+                    "task_type": tdef.get("task_type"),
+                    "adapter": adapter,
                     "dependencies": tdef.get("dependencies", []),
                     "canonical_state": "PENDING",
                     "display_state": "BACKLOG",
@@ -1125,7 +1677,7 @@ class FactoryOrchestrator:
                 }
 
             self.manifest = {
-                "factory_version": "3.0.0",
+                "factory_version": "4.0.0",
                 "run_id": self.run_id,
                 "plan_path": str(self.plan_path),
                 "plan_name": self.plan["name"],
@@ -1200,6 +1752,10 @@ class FactoryOrchestrator:
 
         self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
         atomic_write_json(self.manifest_path, self.manifest)
+        try:
+            self.board_projector.sync(self.run_id)
+        except Exception:
+            pass
 
     def run_validation_commands(self, commands_list: list) -> dict:
         """Executes declared verification commands."""
@@ -1276,6 +1832,9 @@ class FactoryOrchestrator:
         self.log_event("RECONCILIATION_STARTED", {"run_id": self.run_id})
 
         for tid, tinfo in self.manifest["tasks"].items():
+            if tinfo.get("worker_id"):
+                self.tasks_def[tid]["worker_id"] = tinfo["worker_id"]
+                self.tasks_def[tid]["routing_provenance"] = tinfo.get("routing_provenance", {})
             state = tinfo.get("canonical_state", "PENDING")
             att_id = tinfo.get("current_attempt_id", 0)
 
@@ -1431,15 +1990,43 @@ class FactoryOrchestrator:
                         all_terminal = False
 
                 # 2. Dispatch ready tasks up to available concurrency slots
-                running_count = len(active_executors)
-                available_slots = max_concurrency - running_count
-
-                if ready_tasks and available_slots > 0:
-                    tasks_to_launch = ready_tasks[:available_slots]
+                if ready_tasks and len(active_executors) < max_concurrency:
                     current_base_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
+                    busy_workers = {ex.worker_id for _, (t, ex, a) in active_executors.items()}
 
-                    for tid in tasks_to_launch:
+                    for tid in ready_tasks:
+                        if len(active_executors) >= max_concurrency:
+                            break
+
                         tinfo = self.manifest["tasks"][tid]
+                        tdef = self.tasks_def[tid]
+
+                        # Deterministic capability routing
+                        wid, route_meta, route_status = resolve_task_worker(
+                            tid,
+                            tdef,
+                            self.factory_config,
+                            busy_workers=busy_workers
+                        )
+
+                        if route_status == "BLOCKED":
+                            tinfo["canonical_state"] = "BLOCKED"
+                            tinfo["status"] = "BLOCKED"
+                            tinfo["block_reason"] = route_meta.get("selection_reason")
+                            self.log_event("TASK_ROUTING_BLOCKED", {"task_id": tid, "metadata": route_meta})
+                            continue
+                        elif route_status == "BUSY":
+                            self.log_event("TASK_WAITING_BUSY_WORKER", {"task_id": tid, "metadata": route_meta})
+                            continue
+
+                        # Successfully routed
+                        tinfo["worker_id"] = wid
+                        tinfo["adapter"] = route_meta.get("selected_adapter")
+                        tinfo["routing_provenance"] = route_meta
+                        tdef["worker_id"] = wid
+                        tdef["routing_provenance"] = route_meta
+                        busy_workers.add(wid)
+
                         tinfo["canonical_state"] = "DISPATCHING"
                         tinfo["attempts_count"] = tinfo.get("attempts_count", 0) + 1
                         att_id = tinfo["attempts_count"]
@@ -1447,7 +2034,7 @@ class FactoryOrchestrator:
 
                         executor = TaskExecutor(
                             self.run_id,
-                            self.tasks_def[tid],
+                            tdef,
                             self.run_dir,
                             self.herdr,
                             self.res_mgr,
@@ -1455,7 +2042,13 @@ class FactoryOrchestrator:
                         )
                         fut = pool.submit(executor.execute_attempt, att_id, current_base_commit)
                         active_executors[fut] = (tid, executor, att_id)
-                        self.log_event("TASK_DISPATCHED", {"task_id": tid, "attempt_id": att_id, "worker_id": executor.worker_id})
+                        self.log_event("TASK_DISPATCHED", {
+                            "task_id": tid,
+                            "attempt_id": att_id,
+                            "worker_id": wid,
+                            "adapter": tinfo["adapter"],
+                            "routing": route_meta
+                        })
 
                     self.save_manifest()
 
@@ -1672,7 +2265,7 @@ def generate_status_projection(run_id: str = None) -> dict:
 
     projection = {
         "status": "OK",
-        "factory_version": "3.0.0",
+        "factory_version": "4.0.0",
         "control_plane": res_mgr.state["control_plane"],
         "owned_resources": res_mgr.state["owned"],
         "runs": runs_data
@@ -1683,7 +2276,7 @@ def generate_status_projection(run_id: str = None) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v3.0.0)")
+    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v4.0.0)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Preflight
@@ -1705,6 +2298,13 @@ def main():
     st_parser = subparsers.add_parser("status", help="Show active and past factory run status")
     st_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON status")
     st_parser.add_argument("--run", type=str, help="Filter status to a specific run ID")
+
+    # Board
+    board_parser = subparsers.add_parser("board", help="Manage one-way Kanban board projection")
+    board_sub = board_parser.add_subparsers(dest="board_action", required=True)
+    board_sync = board_sub.add_parser("sync", help="Synchronize factory state to Kanban board")
+    board_sync.add_argument("--run", type=str, help="Specific run ID to sync")
+    board_status = board_sub.add_parser("status", help="Get Kanban board projection status")
 
     # Cleanup
     cl_parser = subparsers.add_parser("cleanup", help="Safely clean owned workspaces, worktrees, and ephemeral files")
@@ -1770,7 +2370,7 @@ def main():
         else:
             herdr = HerdrClient(PROJECT_ROOT)
             res_mgr = ResourceManager(herdr)
-            print("=== AGY-Herdr Software Factory Status (v3.0.0) ===")
+            print("=== AGY-Herdr Software Factory Status (v4.0.0) ===")
             print(f"Project Root: {PROJECT_ROOT}")
             print(f"Control Plane Context: {json.dumps(res_mgr.state['control_plane'], indent=2)}")
             print(f"Owned Resources: {json.dumps(res_mgr.state['owned'], indent=2)}")
@@ -1788,6 +2388,15 @@ def main():
                         print(f"  - {r.name}: state={data.get('run_state', data.get('final_status'))} plan={data.get('plan_id')} tasks=[{', '.join(tasks_info)}]")
                     except Exception:
                         pass
+
+    elif args.command == "board":
+        projector = HerdrBoardProjector()
+        if args.board_action == "sync":
+            res = projector.sync(run_id=args.run)
+            print(json.dumps(res, indent=2))
+        elif args.board_action == "status":
+            res = projector.get_status()
+            print(json.dumps(res, indent=2))
 
     elif args.command == "cleanup":
         herdr = HerdrClient(PROJECT_ROOT)

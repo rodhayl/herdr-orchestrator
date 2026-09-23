@@ -1,13 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "project_name": "AGY-Herdr Software Factory",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "default_model": "gemini-3.8-flash-high",
   "worker_registry": {
     "agy": {
       "family": "antigravity",
       "command": "/root/.local/bin/agy",
-      "profile_home": "/root/.agy_home",
+      "profile_home": "/root/.gemini/antigravity-cli",
       "enabled": true,
       "capabilities": [
         "implementation",
@@ -34,7 +34,7 @@
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Product Specification and Planning Worker"
     },
     "agy3": {
@@ -43,14 +43,14 @@
       "profile_home": "/root/.agy3_home",
       "enabled": true,
       "capabilities": [
-        "implementation",
+        "coding",
         "backend",
-        "database"
+        "debugging"
       ],
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Backend & Storage Implementation Worker"
     },
     "agy4": {
@@ -59,14 +59,13 @@
       "profile_home": "/root/.agy4_home",
       "enabled": true,
       "capabilities": [
-        "implementation",
-        "frontend",
-        "ui"
+        "coding",
+        "frontend"
       ],
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Frontend UI & Client Implementation Worker"
     },
     "agy5": {
@@ -75,14 +74,13 @@
       "profile_home": "/root/.agy5_home",
       "enabled": true,
       "capabilities": [
-        "implementation",
-        "testing",
-        "smoke-harness"
+        "coding",
+        "testing"
       ],
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Test Suite & Smoke Harness Worker"
     },
     "agy6": {
@@ -91,15 +89,14 @@
       "profile_home": "/root/.agy6_home",
       "enabled": true,
       "capabilities": [
-        "implementation",
-        "repair",
         "integration",
-        "review"
+        "debugging",
+        "conflict_resolution"
       ],
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Integration Quality & Repair Worker"
     },
     "agy7": {
@@ -108,15 +105,34 @@
       "profile_home": "/root/.agy7_home",
       "enabled": true,
       "capabilities": [
-        "audit",
         "review",
-        "evaluation"
+        "audit"
       ],
       "adapter": "agy",
       "invocation_adapter": "antigravity_cli",
       "default_model": "gemini-3.8-flash-high",
-      "concurrency_eligibility": true,
+      "concurrency_eligibility": false,
       "description": "Independent Final Audit Worker"
+    },
+    "droid": {
+      "family": "droid",
+      "command": "/root/.local/bin/droid",
+      "profile_home": "/root/.factory",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "backend",
+        "testing",
+        "debugging",
+        "mechanical_change"
+      ],
+      "adapter": "droid",
+      "invocation_adapter": "droid_cli",
+      "default_model": "qwen3.8-max",
+      "reasoning_effort": "xhigh",
+      "autonomy": "low",
+      "concurrency_eligibility": false,
+      "description": "Production Droid Worker (Qwen3.8 Max, Low Autonomy)"
     }
   },
   "future_worker_adapters": {
@@ -131,18 +147,6 @@
       "invocation_protocol": "herdr-pane-cli",
       "status": "planned",
       "notes": "Ready for integration upon installation of codex CLI wrapper"
-    },
-    "droid": {
-      "family": "droid",
-      "adapter_type": "command_adapter",
-      "binary": "droid",
-      "capabilities": [
-        "implementation",
-        "refactoring"
-      ],
-      "invocation_protocol": "herdr-pane-cli",
-      "status": "planned",
-      "notes": "Ready for integration upon installation of droid CLI wrapper"
     },
     "freebuff": {
       "family": "freebuff",
