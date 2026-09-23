@@ -645,7 +645,57 @@ echo $? > "{status_file_path}"
                 self.res_mgr.clean_workspace(ws_id)
             except Exception:
                 pass
-
+def extract_json_payload(text: str, task_id: str = None) -> Optional[dict]:
+    """
+    Robustly extracts a task result dictionary from arbitrary worker output or markdown.
+    Handles fenced ```json ... ``` blocks, bare JSON, nested braces, and greedy regex fallbacks.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    # 1. Fenced markdown code block
+    m_fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", cleaned)
+    if m_fence:
+        try:
+            parsed = json.loads(m_fence.group(1))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    # 2. Direct json string parse
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or ("{" in cleaned and "}" in cleaned):
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    # 3. Candidate JSON blocks containing status
+    for m in re.finditer(r"(\{[^{}]*\"status\"[^{}]*\})", cleaned):
+        try:
+            parsed = json.loads(m.group(1))
+            if isinstance(parsed, dict) and "status" in parsed:
+                return parsed
+        except Exception:
+            pass
+    # 4. Search curly bracket blocks that have task keys
+    for m in re.finditer(r"(\{[\s\S]*?\})", cleaned):
+        try:
+            parsed = json.loads(m.group(1))
+            if isinstance(parsed, dict) and ("status" in parsed or "summary" in parsed or (task_id and parsed.get("task_id") == task_id)):
+                return parsed
+        except Exception:
+            pass
+    # 5. Greedy fallback
+    m_greedy = re.search(r"(\{[\s\S]*\})", cleaned)
+    if m_greedy:
+        try:
+            parsed = json.loads(m_greedy.group(1))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return None
 
 
 class DroidAdapter(WorkerAdapter):
@@ -773,27 +823,20 @@ echo $? > "{status_file_path}"
 
             # Parse inner Factory task JSON
             inner_text = str(droid_envelope.get("result") or raw_output)
-            m = re.search(r"(\{[\s\S]*\})", inner_text)
-            if m:
-                try:
-                    inner_json = json.loads(m.group(1))
-                    if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
-                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
-                        return result
-                    if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
-                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
-                        return result
-                    result["task_data"] = inner_json
+            inner_json = extract_json_payload(inner_text, task_id)
+            if inner_json:
+                if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
                     return result
-                except Exception:
-                    pass
+                if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                    return result
+                result["task_data"] = inner_json
+                return result
 
-        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
-        if m:
-            try:
-                result["task_data"] = json.loads(m.group(1))
-            except Exception:
-                pass
+        fallback_json = extract_json_payload(raw_output, task_id)
+        if fallback_json:
+            result["task_data"] = fallback_json
         return result
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
@@ -1076,12 +1119,7 @@ class CodexAdapter(WorkerAdapter):
             if isinstance(inner_text, dict):
                 inner_json = inner_text
             elif isinstance(inner_text, str):
-                m = re.search(r"(\{[\s\S]*\})", inner_text)
-                if m:
-                    try:
-                        inner_json = json.loads(m.group(1))
-                    except Exception:
-                        pass
+                inner_json = extract_json_payload(inner_text, task_id)
             elif not inner_text and "status" in envelope:
                 inner_json = envelope
 
@@ -1095,12 +1133,9 @@ class CodexAdapter(WorkerAdapter):
                 result["task_data"] = inner_json
                 return result
 
-        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
-        if m:
-            try:
-                result["task_data"] = json.loads(m.group(1))
-            except Exception:
-                pass
+        fallback_json = extract_json_payload(raw_output, task_id)
+        if fallback_json:
+            result["task_data"] = fallback_json
         return result
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
@@ -1385,12 +1420,7 @@ class ClaudeAdapter(WorkerAdapter):
             if isinstance(inner_text, dict):
                 inner_json = inner_text
             elif isinstance(inner_text, str):
-                m = re.search(r"(\{[\s\S]*\})", inner_text)
-                if m:
-                    try:
-                        inner_json = json.loads(m.group(1))
-                    except Exception:
-                        pass
+                inner_json = extract_json_payload(inner_text, task_id)
             elif not inner_text and "status" in envelope:
                 inner_json = envelope
 
@@ -1404,12 +1434,9 @@ class ClaudeAdapter(WorkerAdapter):
                 result["task_data"] = inner_json
                 return result
 
-        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
-        if m:
-            try:
-                result["task_data"] = json.loads(m.group(1))
-            except Exception:
-                pass
+        fallback_json = extract_json_payload(raw_output, task_id)
+        if fallback_json:
+            result["task_data"] = fallback_json
         return result
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
@@ -1696,12 +1723,7 @@ class OpenCodeAdapter(WorkerAdapter):
             if isinstance(inner_text, dict):
                 inner_json = inner_text
             elif isinstance(inner_text, str):
-                m = re.search(r"(\{[\s\S]*\})", inner_text)
-                if m:
-                    try:
-                        inner_json = json.loads(m.group(1))
-                    except Exception:
-                        pass
+                inner_json = extract_json_payload(inner_text, task_id)
             elif not inner_text and "status" in envelope:
                 inner_json = envelope
 
@@ -1715,12 +1737,9 @@ class OpenCodeAdapter(WorkerAdapter):
                 result["task_data"] = inner_json
                 return result
 
-        m = re.search(r"(\{[^{}]*\"status\"[^{}]*\})", raw_output)
-        if m:
-            try:
-                result["task_data"] = json.loads(m.group(1))
-            except Exception:
-                pass
+        fallback_json = extract_json_payload(raw_output, task_id)
+        if fallback_json:
+            result["task_data"] = fallback_json
         return result
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
