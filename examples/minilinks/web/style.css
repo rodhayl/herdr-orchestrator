@@ -407,7 +407,7 @@ body {
 
 .form-textarea {
   resize: vertical;
-  min-height: 4rem;
+  min-height: 60px;
 }
 
 .form-actions {
@@ -639,6 +639,7 @@ body {
   text-decoration: underline;
 }
 
+/* Notes block inside bookmark card */
 .card-notes {
   font-size: 0.875rem;
   color: var(--text);
