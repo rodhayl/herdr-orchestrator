@@ -645,7 +645,7 @@ echo $? > "{status_file_path}"
                 self.res_mgr.clean_workspace(ws_id)
             except Exception:
                 pass
-def extract_json_payload(text: str, task_id: str = None) -> Optional[dict]:
+def extract_json_payload(text: str, task_id: str = None):
     """
     Robustly extracts a task result dictionary from arbitrary worker output or markdown.
     Handles fenced ```json ... ``` blocks, bare JSON, nested braces, and greedy regex fallbacks.
