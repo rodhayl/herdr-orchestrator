@@ -18,6 +18,7 @@ import datetime
 import fnmatch
 import glob
 import hashlib
+import inspect
 import json
 import os
 import pathlib
@@ -459,7 +460,8 @@ class WorkerAdapter:
 
     def execute(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path,
                 prompt_file: pathlib.Path, schema_file: pathlib.Path, timeout: int,
-                task_attempt_dir: pathlib.Path, env_info: dict, model: str) -> dict:
+                task_attempt_dir: pathlib.Path, env_info: dict, model: str,
+                effort: str = None, **kwargs) -> dict:
         """Executes the worker and returns standardized execution result dict."""
         raise NotImplementedError
 
@@ -487,11 +489,13 @@ class AgyAdapter(WorkerAdapter):
 
     def execute(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path,
                 prompt_file: pathlib.Path, schema_file: pathlib.Path, timeout: int,
-                task_attempt_dir: pathlib.Path, env_info: dict, model: str) -> dict:
+                task_attempt_dir: pathlib.Path, env_info: dict, model: str,
+                effort: str = None, **kwargs) -> dict:
         pane_id = env_info["pane_id"]
         output_json_path = task_attempt_dir / "output.json"
         status_file_path = task_attempt_dir / "exit_code.txt"
         worker_cmd = self.worker_config.get("command", "agy")
+        effort_arg = f'--effort "{effort}" \\' if effort else ""
 
         script_path = task_attempt_dir / "run_worker.sh"
         with open(script_path, "w", encoding="utf-8") as sf:
@@ -501,6 +505,7 @@ cd "{worktree_path}"
 "{worker_cmd}" --mode accept-edits --dangerously-skip-permissions --add-dir "{worktree_path}" \\
   -p "$(< "{prompt_file}")" \\
   --model "{model}" \\
+  {effort_arg}
   --output-format json \\
   --json-schema "$(< "{schema_file}")" \\
   > "{output_json_path}" 2>&1
@@ -604,12 +609,13 @@ class DroidAdapter(WorkerAdapter):
 
     def execute(self, run_id: str, task_id: str, attempt_id: int, worktree_path: pathlib.Path,
                 prompt_file: pathlib.Path, schema_file: pathlib.Path, timeout: int,
-                task_attempt_dir: pathlib.Path, env_info: dict, model: str) -> dict:
+                task_attempt_dir: pathlib.Path, env_info: dict, model: str,
+                effort: str = None, **kwargs) -> dict:
         pane_id = env_info.get("pane_id")
         output_json_path = task_attempt_dir / "output.json"
         status_file_path = task_attempt_dir / "exit_code.txt"
         worker_cmd = self.worker_config.get("command", "droid")
-        effort = self.worker_config.get("reasoning_effort", "xhigh")
+        effort = effort or self.worker_config.get("reasoning_effort", "xhigh")
         autonomy = self.worker_config.get("autonomy", "low")
 
         # Support test injection in test harness
@@ -2210,19 +2216,23 @@ class TaskExecutor:
         shutil.copyfile(schema_src, schema_file)
 
         self.state = "RUNNING"
-        raw_res = self.adapter.execute(
-            run_id=self.run_id,
-            task_id=self.task_id,
-            attempt_id=attempt_id,
-            worktree_path=worktree_path,
-            prompt_file=prompt_file,
-            schema_file=schema_file,
-            timeout=self.timeout,
-            task_attempt_dir=attempt_dir,
-            env_info=env_info,
-            model=self.model,
-            effort=self.effort
-        )
+        sig = inspect.signature(self.adapter.execute)
+        exec_kwargs = {
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "attempt_id": attempt_id,
+            "worktree_path": worktree_path,
+            "prompt_file": prompt_file,
+            "schema_file": schema_file,
+            "timeout": self.timeout,
+            "task_attempt_dir": attempt_dir,
+            "env_info": env_info,
+            "model": self.model
+        }
+        if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            exec_kwargs["effort"] = self.effort
+
+        raw_res = self.adapter.execute(**exec_kwargs)
 
         end_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -2438,11 +2448,11 @@ class FactoryOrchestrator:
                 }
 
             self.manifest = {
-                "factory_version": "4.0.0",
+                "factory_version": "5.0.0",
                 "run_id": self.run_id,
                 "plan_path": str(self.plan_path),
-                "plan_name": self.plan["name"],
-                "plan_id": self.plan["plan_id"],
+                "plan_name": self.plan.get("name") or self.plan.get("plan_id", "unnamed_plan"),
+                "plan_id": self.plan.get("plan_id") or self.plan.get("name", "unnamed_plan"),
                 "control_plane": self.herdr.control_plane,
                 "start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "end_time": None,
@@ -2453,7 +2463,7 @@ class FactoryOrchestrator:
                 "final_status": "PENDING"
             }
             self.save_manifest()
-            self.log_event("RUN_INITIALIZED", {"run_id": self.run_id, "plan": self.plan["name"]})
+            self.log_event("RUN_INITIALIZED", {"run_id": self.run_id, "plan": self.manifest["plan_name"]})
 
     def _build_task_graph(self):
         """Constructs unified task definition map from either 'waves' or 'tasks'."""
