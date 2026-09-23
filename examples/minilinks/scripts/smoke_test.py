@@ -6,15 +6,16 @@ Executes an end-to-end verification scenario against an ephemeral server instanc
   Step 1  - Server Bootstrap
   Step 2  - Health Check
   Step 3  - Initial Empty State
-  Step 4  - Create Bookmark (Valid) & Notes Creation Semantics
-  Step 5  - Create Bookmark Validation Errors (Title, URL, and Notes Validation)
-  Step 6  - Verify Bookmark Listing & Notes
-  Step 7  - Search Filtering across Title, URL, and Notes
-  Step 8  - Update Bookmark, Notes & Favorite Toggling
+  Step 4  - Create Bookmark (Valid), Notes, Tags, and Archive Creation Semantics
+  Step 5  - Create Bookmark Validation Errors (Title, URL, Notes, Tags, and Boolean Flags)
+  Step 6  - Verify Bookmark Listing, Notes, Tags, and Archived Status
+  Step 7  - Search & Tag Filtering across Title, URL, Notes, and Tags
+  Step 8  - Update Bookmark, Notes, Favorite & Archive Toggling via PATCH
+  Step 8b - Archive & Restore Semantics (POST /archive, /restore, ?archived= filtering)
   Step 9  - Update Non-Existent Bookmark
   Step 10 - Delete Bookmark
   Step 11 - Delete Non-Existent Bookmark
-  Step 12 - Verify Static Asset Delivery
+  Step 12 - Verify Static Asset Delivery (HTML, CSS, JS)
 
 Exits with status code 0 on total success, or non-zero on any failure.
 """
@@ -130,8 +131,8 @@ def run_smoke_test() -> None:
         )
         print("  --> PASS: Initial bookmarks list is empty []")
 
-        # Step 4: Create Bookmark (Valid) & Notes Creation Semantics
-        print("[Step 4/12] Create Bookmark (Valid), Notes & Tags Semantics: POST /api/bookmarks...")
+        # Step 4: Create Bookmark (Valid), Notes, Tags, and Archive Creation Semantics
+        print("[Step 4/12] Create Bookmark (Valid), Notes, Tags & Archive Semantics: POST /api/bookmarks...")
         create_payload = {
             "title": "Python Docs",
             "url": "https://docs.python.org",
@@ -163,17 +164,23 @@ def run_smoke_test() -> None:
         assert isinstance(payload.get("is_favorite"), bool), (
             f"Expected is_favorite to be boolean, got {type(payload.get('is_favorite'))}"
         )
+        assert payload.get("archived") is False, (
+            f"Expected archived to default to False, got {payload.get('archived')}"
+        )
+        assert isinstance(payload.get("archived"), bool), (
+            f"Expected archived to be boolean, got {type(payload.get('archived'))}"
+        )
         created_at = payload.get("created_at")
         updated_at = payload.get("updated_at")
         assert created_at and isinstance(created_at, str), f"Missing created_at: {created_at}"
         assert updated_at and isinstance(updated_at, str), f"Missing updated_at: {updated_at}"
 
-        # Verify sqlite3 persistence directly for notes, tags, and fields
+        # Verify sqlite3 persistence directly for notes, tags, favorite, and archived
         conn = sqlite3.connect(temp_db)
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, title, url, notes, is_favorite, tags FROM bookmarks WHERE id = ?",
+                "SELECT id, title, url, notes, is_favorite, tags, archived FROM bookmarks WHERE id = ?",
                 (bm_id,),
             )
             row = cursor.fetchone()
@@ -184,6 +191,7 @@ def run_smoke_test() -> None:
             assert row[3] == "Official Docs", f"Expected notes 'Official Docs' in sqlite3, got {row[3]}"
             assert row[4] == 0, f"Expected is_favorite=0 in sqlite3, got {row[4]}"
             assert json.loads(row[5]) == ["docs", "python"], f"Expected tags ['docs', 'python'] in sqlite3, got {row[5]}"
+            assert row[6] == 0, f"Expected archived=0 in sqlite3, got {row[6]}"
         finally:
             conn.close()
 
@@ -198,6 +206,7 @@ def run_smoke_test() -> None:
         assert status_omitted == 201, f"Expected HTTP 201 for omitted notes, got {status_omitted}"
         assert payload_omitted.get("notes") == "", f"Expected empty string notes, got {payload_omitted.get('notes')}"
         assert payload_omitted.get("tags") == [], f"Expected empty list tags, got {payload_omitted.get('tags')}"
+        assert payload_omitted.get("archived") is False, f"Expected archived False, got {payload_omitted.get('archived')}"
         temp_omitted_id = payload_omitted["id"]
 
         # 2. Null notes and null tags default to "" and []
@@ -210,18 +219,33 @@ def run_smoke_test() -> None:
         assert status_null == 201, f"Expected HTTP 201 for null notes, got {status_null}"
         assert payload_null.get("notes") == "", f"Expected empty string notes, got {payload_null.get('notes')}"
         assert payload_null.get("tags") == [], f"Expected empty list tags, got {payload_null.get('tags')}"
+        assert payload_null.get("archived") is False
         temp_null_id = payload_null["id"]
 
-        # Clean up temporary test bookmarks so Step 6 has exactly 1 bookmark
-        status_del1, _, _ = http_request(base_url, "DELETE", f"/api/bookmarks/{temp_omitted_id}")
-        assert status_del1 == 200, f"Failed to clean up temp omitted bookmark {temp_omitted_id}"
-        status_del2, _, _ = http_request(base_url, "DELETE", f"/api/bookmarks/{temp_null_id}")
-        assert status_del2 == 200, f"Failed to clean up temp null bookmark {temp_null_id}"
+        # 3. Explicit creation with archived: True
+        status_arch_direct, payload_arch_direct, _ = http_request(
+            base_url,
+            "POST",
+            "/api/bookmarks",
+            payload={"title": "Temp Archived Direct", "url": "https://example.com/archived-direct", "archived": True},
+        )
+        assert status_arch_direct == 201, f"Expected HTTP 201 for direct archived, got {status_arch_direct}"
+        assert payload_arch_direct.get("archived") is True
+        assert isinstance(payload_arch_direct.get("archived"), bool)
+        temp_arch_id = payload_arch_direct["id"]
 
-        print(f"  --> PASS: Created bookmark with ID {bm_id} (notes='Official Docs', tags=['docs', 'python'], is_favorite=False) at {created_at}")
+        # Clean up temporary test bookmarks so Step 6 has exactly 1 bookmark
+        for temp_id in [temp_omitted_id, temp_null_id, temp_arch_id]:
+            status_del, _, _ = http_request(base_url, "DELETE", f"/api/bookmarks/{temp_id}")
+            assert status_del == 200, f"Failed to clean up temp bookmark {temp_id}"
+
+        print(
+            f"  --> PASS: Created bookmark with ID {bm_id} "
+            f"(notes='Official Docs', tags=['docs', 'python'], is_favorite=False, archived=False) at {created_at}"
+        )
 
         # Step 5: Create Bookmark Validation Errors
-        print("[Step 5/12] Create Bookmark Validation Errors: testing empty title, non-string notes, and invalid tags...")
+        print("[Step 5/12] Create Bookmark Validation Errors: testing empty title, non-string notes, invalid tags, and non-boolean flags...")
         # 1. Missing / empty title
         status, payload, _ = http_request(
             base_url, "POST", "/api/bookmarks", payload={"title": ""}
@@ -259,8 +283,28 @@ def run_smoke_test() -> None:
             payload={"title": "Valid Title", "url": "https://example.com", "is_favorite": "true"},
         )
         assert status_invalid_fav == 400, f"Expected HTTP 400 for non-boolean is_favorite, got {status_invalid_fav}"
+        assert payload_invalid_fav.get("error") == "is_favorite must be a boolean if provided"
 
-        # 5. Invalid tags (not a list, or list containing non-string)
+        # 5. Non-boolean archived (string and integer)
+        status_invalid_arch1, payload_invalid_arch1, _ = http_request(
+            base_url,
+            "POST",
+            "/api/bookmarks",
+            payload={"title": "Valid Title", "url": "https://example.com", "archived": "true"},
+        )
+        assert status_invalid_arch1 == 400, f"Expected HTTP 400 for string archived, got {status_invalid_arch1}"
+        assert payload_invalid_arch1.get("error") == "archived must be a boolean if provided"
+
+        status_invalid_arch2, payload_invalid_arch2, _ = http_request(
+            base_url,
+            "POST",
+            "/api/bookmarks",
+            payload={"title": "Valid Title", "url": "https://example.com", "archived": 1},
+        )
+        assert status_invalid_arch2 == 400, f"Expected HTTP 400 for integer archived, got {status_invalid_arch2}"
+        assert payload_invalid_arch2.get("error") == "archived must be a boolean if provided"
+
+        # 6. Invalid tags (not a list, or list containing non-string)
         status_bad_tags, payload_bad_tags, _ = http_request(
             base_url,
             "POST",
@@ -277,10 +321,10 @@ def run_smoke_test() -> None:
         )
         assert status_bad_tags2 == 400, f"Expected HTTP 400 for non-string tag element, got {status_bad_tags2}"
 
-        print("  --> PASS: Validation correctly rejected empty title, non-string notes, invalid tags, and invalid is_favorite with HTTP 400")
+        print("  --> PASS: Validation correctly rejected empty title, non-string notes, invalid tags, and non-boolean flags with HTTP 400")
 
         # Step 6: Verify Bookmark Listing & Notes
-        print("[Step 6/12] Verify Bookmark Listing, Notes & Tags: GET /api/bookmarks...")
+        print("[Step 6/12] Verify Bookmark Listing, Notes, Tags & Archived: GET /api/bookmarks...")
         status, payload, _ = http_request(base_url, "GET", "/api/bookmarks")
         assert status == 200, f"Expected HTTP 200, got {status} ({payload})"
         assert isinstance(payload, list) and len(payload) == 1, (
@@ -295,14 +339,22 @@ def run_smoke_test() -> None:
         assert item.get("is_favorite") is False, (
             f"Expected is_favorite False, got {item.get('is_favorite')}"
         )
+        assert item.get("archived") is False, (
+            f"Expected archived False, got {item.get('archived')}"
+        )
+        assert isinstance(item.get("archived"), bool), (
+            f"Expected archived to be boolean, got {type(item.get('archived'))}"
+        )
 
-        # Also verify GET /api/bookmarks/<id> returns complete object with notes and tags
+        # Also verify GET /api/bookmarks/<id> returns complete object with notes, tags, and archived
         status_single, single_bm, _ = http_request(base_url, "GET", f"/api/bookmarks/{bm_id}")
         assert status_single == 200, f"Expected HTTP 200 for single retrieval, got {status_single}"
         assert single_bm.get("id") == bm_id
         assert single_bm.get("notes") == "Official Docs"
         assert single_bm.get("tags") == ["docs", "python"]
-        print(f"  --> PASS: Listing and single retrieval returned bookmark {bm_id} with notes='Official Docs' and tags=['docs', 'python']")
+        assert single_bm.get("is_favorite") is False
+        assert single_bm.get("archived") is False
+        print(f"  --> PASS: Listing and single retrieval returned bookmark {bm_id} with notes='Official Docs', tags=['docs', 'python'], and archived=False")
 
         # Step 7: Search Filtering across Title, URL, and Notes
         print("[Step 7/12] Search & Tag Filtering: GET /api/bookmarks?q=..., GET /api/bookmarks?tag=..., and GET /api/tags...")
@@ -358,7 +410,7 @@ def run_smoke_test() -> None:
         print("  --> PASS: Search correctly matched title, URL, notes, and tags; tag filtering and /api/tags verified")
 
         # Step 8: Update Bookmark, Notes & Favorite Toggling
-        print("[Step 8/12] Update Bookmark, Notes & Favorite: PATCH /api/bookmarks/<id>...")
+        print("[Step 8/12] Update Bookmark, Notes, Favorite & Archive: PATCH /api/bookmarks/<id>...")
         # Brief pause to ensure updated_at timestamp increments past current second boundary
         time.sleep(1.05)
         patch_payload = {
@@ -379,6 +431,7 @@ def run_smoke_test() -> None:
         assert isinstance(payload.get("is_favorite"), bool), (
             f"Expected is_favorite to be boolean, got {type(payload.get('is_favorite'))}"
         )
+        assert payload.get("archived") is False
         new_updated_at = payload.get("updated_at")
         assert new_updated_at and new_updated_at != updated_at, (
             f"Expected refreshed updated_at ({new_updated_at} != {updated_at})"
@@ -452,6 +505,27 @@ def run_smoke_test() -> None:
         )
         assert status_bad_notes == 400, f"Expected HTTP 400 for integer notes in PATCH, got {status_bad_notes}"
 
+        # Verify invalid archived rejected on PATCH
+        status_bad_patch_arch, _, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"archived": "invalid"}
+        )
+        assert status_bad_patch_arch == 400, f"Expected HTTP 400 for non-boolean archived in PATCH, got {status_bad_patch_arch}"
+
+        # Verify PATCH updates archived boolean
+        status_patch_arch, payload_patch_arch, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"archived": True}
+        )
+        assert status_patch_arch == 200
+        assert payload_patch_arch.get("archived") is True
+        assert isinstance(payload_patch_arch.get("archived"), bool)
+
+        # Restore active status via PATCH
+        status_patch_unarch, payload_patch_unarch, _ = http_request(
+            base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"archived": False}
+        )
+        assert status_patch_unarch == 200
+        assert payload_patch_unarch.get("archived") is False
+
         # Verify favorite toggling to False via PATCH
         status_unfav, payload_unfav, _ = http_request(
             base_url, "PATCH", f"/api/bookmarks/{bm_id}", payload={"is_favorite": False}
@@ -493,57 +567,152 @@ def run_smoke_test() -> None:
         conn = sqlite3.connect(temp_db)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, notes, is_favorite FROM bookmarks WHERE id = ?", (bm_id,))
+            cursor.execute("SELECT id, notes, is_favorite, archived FROM bookmarks WHERE id = ?", (bm_id,))
             row = cursor.fetchone()
             assert row is not None, f"Bookmark {bm_id} not found in sqlite3 database"
             assert row[1] == "Updated Documentation Notes", f"Expected notes in DB, got {row[1]}"
             assert row[2] == 1, f"Expected is_favorite=1 in database, got {row[2]}"
+            assert row[3] == 0, f"Expected archived=0 in database, got {row[3]}"
         finally:
             conn.close()
 
         print(
-            f"  --> PASS: Updated bookmark notes, verified clearing/restoring notes, favorite toggling via PATCH; "
+            f"  --> PASS: Updated bookmark notes, verified clearing/restoring notes, favorite & archive toggling via PATCH; "
             f"updated_at refreshed to {new_updated_at}; favorites filter verified via GET"
         )
 
         # Step 8b: Archive & Restore Toggling Semantics
         print("[Step 8b] Archive & Restore Semantics: POST /api/bookmarks/<id>/archive & /restore, ?archived=...")
-        # Archive bookmark
+        time.sleep(1.05)
+        # 1. Archive bookmark via dedicated endpoint
         status_arch, payload_arch, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/archive")
         assert status_arch == 200, f"Expected HTTP 200 archiving bookmark, got {status_arch}"
-        assert payload_arch.get("id") == bm_id and payload_arch.get("archived") is True
+        assert payload_arch.get("id") == bm_id, f"Expected id {bm_id}, got {payload_arch.get('id')}"
+        assert payload_arch.get("archived") is True, f"Expected archived True, got {payload_arch.get('archived')}"
+        assert isinstance(payload_arch.get("archived"), bool), (
+            f"Expected archived to be boolean, got {type(payload_arch.get('archived'))}"
+        )
+        arch_updated_at = payload_arch.get("updated_at")
+        assert arch_updated_at and arch_updated_at != new_updated_at, (
+            f"Expected updated_at to refresh on archive: {arch_updated_at} vs {new_updated_at}"
+        )
 
-        # Verify default list excludes archived bookmark
+        # Direct SQLite inspection
+        conn = sqlite3.connect(temp_db)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT archived FROM bookmarks WHERE id = ?", (bm_id,))
+            row = cursor.fetchone()
+            assert row is not None and row[0] == 1, f"Expected archived=1 in sqlite3, got {row}"
+        finally:
+            conn.close()
+
+        # 2. Verify default GET /api/bookmarks returns 0 items (active only by default)
         status_unarch_list, payload_unarch_list, _ = http_request(base_url, "GET", "/api/bookmarks")
-        assert status_unarch_list == 200 and len(payload_unarch_list) == 0
+        assert status_unarch_list == 200
+        assert isinstance(payload_unarch_list, list) and len(payload_unarch_list) == 0, (
+            f"Expected default listing to exclude archived bookmark, got {payload_unarch_list}"
+        )
 
-        # Verify archived filter includes archived bookmark
+        # 3. Verify explicit GET /api/bookmarks?archived=false returns 0 items
+        status_false_list, payload_false_list, _ = http_request(base_url, "GET", "/api/bookmarks?archived=false")
+        assert status_false_list == 200
+        assert isinstance(payload_false_list, list) and len(payload_false_list) == 0, (
+            f"Expected ?archived=false to return 0 items, got {payload_false_list}"
+        )
+
+        # 4. Verify explicit GET /api/bookmarks?archived=true returns the archived bookmark
         status_arch_list, payload_arch_list, _ = http_request(base_url, "GET", "/api/bookmarks?archived=true")
-        assert status_arch_list == 200 and len(payload_arch_list) == 1
+        assert status_arch_list == 200
+        assert isinstance(payload_arch_list, list) and len(payload_arch_list) == 1, (
+            f"Expected 1 item for ?archived=true, got {payload_arch_list}"
+        )
         assert payload_arch_list[0].get("id") == bm_id
         assert payload_arch_list[0].get("archived") is True
+        assert isinstance(payload_arch_list[0].get("archived"), bool)
 
-        # Verify ?archived=all includes bookmark
+        # 5. Verify explicit GET /api/bookmarks?archived=all returns the bookmark
         status_all_list, payload_all_list, _ = http_request(base_url, "GET", "/api/bookmarks?archived=all")
-        assert status_all_list == 200 and len(payload_all_list) == 1
+        assert status_all_list == 200
+        assert isinstance(payload_all_list, list) and len(payload_all_list) == 1, (
+            f"Expected 1 item for ?archived=all, got {payload_all_list}"
+        )
+        assert payload_all_list[0].get("id") == bm_id
 
-        # Restore bookmark
+        # 6. Verify combined archive filter with favorites filter
+        # Since bm_id is favorited and archived: ?archived=true&favorites=true matches
+        status_arch_fav, payload_arch_fav, _ = http_request(
+            base_url, "GET", "/api/bookmarks?archived=true&favorites=true"
+        )
+        assert status_arch_fav == 200 and len(payload_arch_fav) == 1
+        assert payload_arch_fav[0].get("id") == bm_id
+
+        # ?archived=false&favorites=true should return 0 items
+        status_arch_nonfav, payload_arch_nonfav, _ = http_request(
+            base_url, "GET", "/api/bookmarks?archived=false&favorites=true"
+        )
+        assert status_arch_nonfav == 200 and len(payload_arch_nonfav) == 0
+
+        # 7. Restore bookmark via dedicated endpoint
+        time.sleep(1.05)
         status_rest, payload_rest, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/restore")
         assert status_rest == 200, f"Expected HTTP 200 restoring bookmark, got {status_rest}"
-        assert payload_rest.get("id") == bm_id and payload_rest.get("archived") is False
+        assert payload_rest.get("id") == bm_id
+        assert payload_rest.get("archived") is False, f"Expected archived False after restore, got {payload_rest.get('archived')}"
+        assert isinstance(payload_rest.get("archived"), bool), (
+            f"Expected archived to be boolean, got {type(payload_rest.get('archived'))}"
+        )
+        rest_updated_at = payload_rest.get("updated_at")
+        assert rest_updated_at and rest_updated_at != arch_updated_at, (
+            f"Expected updated_at to refresh on restore: {rest_updated_at} vs {arch_updated_at}"
+        )
 
-        # Verify default list now includes bookmark
+        # Direct SQLite inspection
+        conn = sqlite3.connect(temp_db)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT archived FROM bookmarks WHERE id = ?", (bm_id,))
+            row = cursor.fetchone()
+            assert row is not None and row[0] == 0, f"Expected archived=0 in sqlite3 after restore, got {row}"
+        finally:
+            conn.close()
+
+        # 8. Verify default GET /api/bookmarks now returns the bookmark again
         status_rest_list, payload_rest_list, _ = http_request(base_url, "GET", "/api/bookmarks")
-        assert status_rest_list == 200 and len(payload_rest_list) == 1
+        assert status_rest_list == 200
+        assert isinstance(payload_rest_list, list) and len(payload_rest_list) == 1, (
+            f"Expected default listing to include restored bookmark, got {payload_rest_list}"
+        )
         assert payload_rest_list[0].get("id") == bm_id
+        assert payload_rest_list[0].get("archived") is False
 
-        # Verify 404 for non-existent archive/restore
-        status_arch_404, _, _ = http_request(base_url, "POST", "/api/bookmarks/99999/archive")
+        # 9. Verify explicit GET /api/bookmarks?archived=false returns 1 item
+        status_rest_false, payload_rest_false, _ = http_request(base_url, "GET", "/api/bookmarks?archived=false")
+        assert status_rest_false == 200 and len(payload_rest_false) == 1
+
+        # 10. Verify explicit GET /api/bookmarks?archived=true returns 0 items now
+        status_rest_arch, payload_rest_arch, _ = http_request(base_url, "GET", "/api/bookmarks?archived=true")
+        assert status_rest_arch == 200 and len(payload_rest_arch) == 0
+
+        # 11. Verify 404 for non-existent archive/restore
+        status_arch_404, err_arch_404, _ = http_request(base_url, "POST", "/api/bookmarks/99999/archive")
         assert status_arch_404 == 404
-        status_rest_404, _, _ = http_request(base_url, "POST", "/api/bookmarks/99999/restore")
-        assert status_rest_404 == 404
+        assert isinstance(err_arch_404, dict) and "error" in err_arch_404
 
-        print("  --> PASS: Archive and restore actions, 404 handling, and ?archived filtering verified")
+        status_rest_404, err_rest_404, _ = http_request(base_url, "POST", "/api/bookmarks/99999/restore")
+        assert status_rest_404 == 404
+        assert isinstance(err_rest_404, dict) and "error" in err_rest_404
+
+        # 12. Verify 400 for invalid IDs on archive/restore
+        status_arch_400, err_arch_400, _ = http_request(base_url, "POST", "/api/bookmarks/invalid_id/archive")
+        assert status_arch_400 == 400
+        assert isinstance(err_arch_400, dict) and "error" in err_arch_400
+
+        status_rest_400, err_rest_400, _ = http_request(base_url, "POST", "/api/bookmarks/invalid_id/restore")
+        assert status_rest_400 == 400
+        assert isinstance(err_rest_400, dict) and "error" in err_rest_400
+
+        print("  --> PASS: Archive and restore actions, 404/400 handling, SQLite persistence, and ?archived filtering verified")
 
         # Step 9: Update Non-Existent Bookmark
         print("[Step 9/12] Update Non-Existent Bookmark: PATCH /api/bookmarks/99999...")
@@ -599,18 +768,22 @@ def run_smoke_test() -> None:
         assert status_root == 200, f"Expected HTTP 200 for /, got {status_root}"
         assert len(body_root) > 0, "Expected non-empty response body for /"
         assert b"MiniLinks" in body_root, "Expected 'MiniLinks' in root index response"
+        assert b"filter-archived-btn" in body_root, "Expected filter-archived-btn in index.html"
 
         # CSS stylesheet
         status_css, _, body_css = http_request(base_url, "GET", "/style.css")
         assert status_css == 200, f"Expected HTTP 200 for /style.css, got {status_css}"
         assert len(body_css) > 0, "Expected non-empty response body for /style.css"
         assert b"card-notes" in body_css, "Expected 'card-notes' styling in style.css"
+        assert b"filter-archived-btn" in body_css, "Expected filter-archived-btn styling in style.css"
+        assert b"btn-archive" in body_css, "Expected btn-archive styling in style.css"
 
         # JS client script
         status_js, _, body_js = http_request(base_url, "GET", "/app.js")
         assert status_js == 200, f"Expected HTTP 200 for /app.js, got {status_js}"
         assert len(body_js) > 0, "Expected non-empty response body for /app.js"
         assert b"card-notes" in body_js, "Expected card-notes handling in app.js"
+        assert b"btn-archive" in body_js, "Expected btn-archive handling in app.js"
         print("  --> PASS: All static assets (/, /style.css, /app.js) served with HTTP 200")
 
         print("=" * 70)

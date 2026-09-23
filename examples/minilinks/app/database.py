@@ -245,6 +245,9 @@ def get_bookmarks(
             if isinstance(archived, bool):
                 conditions.append("COALESCE(archived, 0) = ?")
                 params.append(1 if archived else 0)
+            elif isinstance(archived, int):
+                conditions.append("COALESCE(archived, 0) = ?")
+                params.append(1 if archived else 0)
             elif isinstance(archived, str):
                 arch_lower = archived.strip().lower()
                 if arch_lower in ("true", "1"):

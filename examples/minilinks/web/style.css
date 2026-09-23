@@ -497,6 +497,29 @@ body {
   flex-shrink: 0;
 }
 
+/* Archive / Restore Action Button */
+.btn-archive {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.btn-archive .btn-archive-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.btn-archive.is-archived {
+  background-color: #e0e7ff;
+  color: #3730a3;
+  border-color: #a5b4fc;
+}
+
+.btn-archive.is-archived:hover:not(:disabled) {
+  background-color: #c7d2fe;
+  border-color: #6366f1;
+}
+
 /* Bookmarks Section */
 .section-header {
   display: flex;
@@ -554,6 +577,16 @@ body {
 
 .bookmark-card.is-favorite:hover {
   border-color: #fcd34d;
+}
+
+.bookmark-card.is-archived {
+  background-color: #fafbfc;
+  border-style: dashed;
+  border-color: #cbd5e1;
+}
+
+.bookmark-card.is-archived:hover {
+  border-color: #94a3b8;
 }
 
 .card-header {
