@@ -1636,6 +1636,65 @@ class TestMiniLinksPersistence(unittest.TestCase):
                     pass
             temp_dir.cleanup()
 
+    def test_sqlite_malformed_tags_resilience(self) -> None:
+        """Verifies database gracefully handles empty or malformed tags in legacy records."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "malformed_tags.db")
+        server: Optional[MiniLinksServer] = None
+
+        try:
+            # Create a table and manually insert records with empty, NULL, and valid tags
+            conn = sqlite3.connect(db_path)
+            with conn:
+                conn.execute("""
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        notes TEXT DEFAULT '',
+                        tags TEXT DEFAULT '[]',
+                        is_favorite INTEGER DEFAULT 0,
+                        archived INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, notes, tags, is_favorite, archived, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("Valid Tags", "https://valid.example.com", "", '["python"]', 0, 0, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, notes, tags, is_favorite, archived, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("Empty Tags String", "https://empty.example.com", "", "", 0, 0, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+                )
+            conn.close()
+
+            # Start server and query
+            server = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base = f"http://127.0.0.1:{server.server_port}"
+
+            # Query with tag filter should not crash
+            status, results = send_http_request(base, "GET", "/api/bookmarks?tag=python")
+            self.assertEqual(status, 200)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["title"], "Valid Tags")
+
+            # Query all tags should not crash
+            status_tags, tags_payload = send_http_request(base, "GET", "/api/tags")
+            self.assertEqual(status_tags, 200)
+            self.assertEqual(tags_payload, {"tags": ["python"]})
+        finally:
+            if server:
+                server.shutdown()
+                server.server_close()
+            temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
