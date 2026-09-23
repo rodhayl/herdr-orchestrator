@@ -946,7 +946,12 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict, busy
     # Filter candidates that satisfy ALL required capabilities
     eligible = []
     for wid in ordered_candidates:
-        w_caps = set(WORKER_CAPABILITIES.get(wid, worker_registry.get(wid, {}).get("capabilities", [])))
+        w_cfg = worker_registry.get(wid, {})
+        if not w_cfg.get("enabled", True):
+            continue
+        if wid == "droid" and not os.environ.get("FACTORY_API_KEY") and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+            continue
+        w_caps = set(WORKER_CAPABILITIES.get(wid, w_cfg.get("capabilities", [])))
         if requires.issubset(w_caps):
             eligible.append(wid)
 
