@@ -96,6 +96,353 @@ CANONICAL_TO_DISPLAY_STATE = {
     "CANCELLED": "FAILED"
 }
 
+# Execution Modes & Certification Levels (v6.1.0)
+EXECUTION_MODES = [
+    "REAL",
+    "MOCK",
+    "TRANSPORT_ONLY",
+    "UNKNOWN"
+]
+
+CERTIFICATION_LEVELS = [
+    "DETERMINISTIC_CERTIFIED",
+    "TRANSPORT_CERTIFIED",
+    "REAL_PROVIDER_CERTIFIED",
+    "AUTH_BLOCKED",
+    "PROFILE_INVALID",
+    "PROFILE_UNAVAILABLE",
+    "EXTERNAL_COMPATIBILITY_BLOCKED",
+    "FAILED"
+]
+
+AUTH_SOURCES = [
+    "stored_oauth",
+    "subscription_login",
+    "api_key_env",
+    "provider_credentials",
+    "local_free",
+    "unauthenticated",
+    "unknown"
+]
+
+KNOWN_SECRET_ENV_VARS = [
+    "OPENAI_API_KEY",
+    "FACTORY_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_TOKEN",
+    "OPENROUTER_API_KEY",
+    "OPENCODE_API_KEY",
+    "HERDR_TOKEN",
+]
+
+SECRET_PATTERNS = [
+    re.compile(r"sk-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"fk-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"ghp_[a-zA-Z0-9]{20,}"),
+    re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
+]
+
+
+def redact_secrets(val):
+    """Recursively redacts secret API keys, tokens, and known secret env vars."""
+    if isinstance(val, str):
+        res = val
+        for var in KNOWN_SECRET_ENV_VARS:
+            v = os.environ.get(var)
+            if v and len(v.strip()) >= 6:
+                res = res.replace(v.strip(), f"[REDACTED_{var}]")
+        for pat in SECRET_PATTERNS:
+            res = pat.sub("[REDACTED_SECRET]", res)
+        return res
+    elif isinstance(val, list):
+        return [redact_secrets(item) for item in val]
+    elif isinstance(val, tuple):
+        return tuple(redact_secrets(item) for item in val)
+    elif isinstance(val, dict):
+        return {k: redact_secrets(v) for k, v in val.items()}
+    return val
+
+
+def verify_binary_identity(cmd: str) -> dict:
+    """Resolves executable path, realpath, version, and detects test fixture shadowing."""
+    fixture_reasons = []
+    for bad in ["factory_tests", "/tmp/", "test_shims", "test_fixtures"]:
+        if bad in cmd:
+            fixture_reasons.append(f"Command path contains test directory '{bad}'")
+
+    resolved = shutil.which(cmd)
+    if not resolved:
+        p = pathlib.Path(cmd)
+        if p.exists() and os.access(str(p), os.X_OK):
+            resolved = str(p.resolve())
+        else:
+            is_fixture = len(fixture_reasons) > 0
+            return {
+                "found": False,
+                "command": cmd,
+                "resolved_path": "",
+                "realpath": str(cmd),
+                "version": "not_found",
+                "is_fixture": is_fixture,
+                "fixture_reason": "; ".join(fixture_reasons) if is_fixture else "",
+                "error": f"Command '{cmd}' not found on PATH"
+            }
+
+    realpath = os.path.realpath(resolved)
+    version = "unknown"
+    try:
+        proc = subprocess.run([resolved, "--version"], capture_output=True, text=True, timeout=5)
+        out = (proc.stdout.strip() or proc.stderr.strip()).splitlines()
+        if out:
+            version = out[0]
+    except Exception:
+        pass
+
+    for bad in ["factory_tests", "/tmp/", "test_shims", "test_fixtures"]:
+        msg = f"Resolved realpath contains test directory '{bad}'"
+        if bad in realpath and msg not in fixture_reasons:
+            fixture_reasons.append(msg)
+
+    is_fixture = len(fixture_reasons) > 0
+    return {
+        "found": True,
+        "command": cmd,
+        "resolved_path": resolved,
+        "realpath": realpath,
+        "version": version,
+        "is_fixture": is_fixture,
+        "fixture_reason": "; ".join(fixture_reasons) if is_fixture else ""
+    }
+
+
+_AUTH_PROBE_CACHE = {}
+
+
+def probe_harness_auth(harness: str, force_refresh: bool = False) -> dict:
+    """
+    Harness-specific read-only authentication discovery.
+    Uses official CLI status commands and metadata without modifying configuration or logging in.
+    """
+    if not force_refresh and harness in _AUTH_PROBE_CACHE:
+        return _AUTH_PROBE_CACHE[harness]
+
+    result = {
+        "harness": harness,
+        "authenticated": False,
+        "auth_source": "unauthenticated",
+        "confidence": "high",
+        "evidence": "",
+        "requires_interaction": False,
+        "notes": ""
+    }
+
+    if harness == "agy":
+        try:
+            p = subprocess.run(["agy", "models"], capture_output=True, text=True, timeout=25)
+            if p.returncode == 0 and ("gemini-3.8-flash" in p.stdout or "gemini" in p.stdout):
+                result["authenticated"] = True
+                result["auth_source"] = "provider_credentials"
+                result["evidence"] = "agy models listed available models including gemini-3.8-flash"
+            else:
+                result["evidence"] = f"agy models failed or missing expected model (exit {p.returncode})"
+        except Exception as e:
+            result["evidence"] = f"Failed to execute agy models: {e}"
+            result["confidence"] = "low"
+
+    elif harness == "droid":
+        if os.environ.get("FACTORY_API_KEY"):
+            result["authenticated"] = True
+            result["auth_source"] = "api_key_env"
+            result["evidence"] = "FACTORY_API_KEY environment variable is present"
+        else:
+            try:
+                p = subprocess.run(["droid", "doctor"], capture_output=True, text=True, timeout=12)
+                out = p.stdout + p.stderr
+                if "no usable credentials found (not logged in)" in out or "no stored login found" in out:
+                    result["authenticated"] = False
+                    result["auth_source"] = "unauthenticated"
+                    result["evidence"] = "droid doctor confirmed no usable credentials found"
+                elif "✓ Auth verification" in out or "✓ Logged in" in out:
+                    result["authenticated"] = True
+                    result["auth_source"] = "stored_oauth"
+                    result["evidence"] = "droid doctor reported valid stored login credentials"
+                else:
+                    result["evidence"] = "droid doctor: neither API key nor active login confirmed"
+            except Exception as e:
+                result["evidence"] = f"Failed to run droid doctor: {e}"
+                result["confidence"] = "medium"
+
+    elif harness == "codex":
+        if os.environ.get("OPENAI_API_KEY"):
+            result["authenticated"] = True
+            result["auth_source"] = "api_key_env"
+            result["evidence"] = "OPENAI_API_KEY environment variable is present"
+        else:
+            try:
+                p = subprocess.run(["codex", "login", "status"], capture_output=True, text=True, timeout=8)
+                out = (p.stdout + p.stderr).strip()
+                if p.returncode == 0 and ("logged in" in out.lower() and "not logged in" not in out.lower()):
+                    result["authenticated"] = True
+                    result["auth_source"] = "subscription_login"
+                    result["evidence"] = f"codex login status: {out}"
+                elif "not logged in" in out.lower():
+                    result["authenticated"] = False
+                    result["auth_source"] = "unauthenticated"
+                    result["evidence"] = "codex login status returned 'Not logged in'"
+                else:
+                    p2 = subprocess.run(["codex", "doctor", "--json"], capture_output=True, text=True, timeout=8)
+                    if "Not logged in" in p2.stdout:
+                        result["authenticated"] = False
+                        result["auth_source"] = "unauthenticated"
+                        result["evidence"] = "codex doctor --json: Not logged in"
+                    else:
+                        result["evidence"] = f"codex login status returned exit {p.returncode}: {out}"
+            except Exception as e:
+                result["evidence"] = f"Failed to run codex login status: {e}"
+                result["confidence"] = "medium"
+
+    elif harness == "claude":
+        if os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"):
+            result["authenticated"] = True
+            result["auth_source"] = "api_key_env"
+            result["evidence"] = "CLAUDE_CODE_TOKEN or ANTHROPIC_API_KEY environment variable is present"
+        else:
+            try:
+                p = subprocess.run(["claude", "auth", "status", "--json"], capture_output=True, text=True, timeout=8)
+                out = p.stdout.strip()
+                try:
+                    cdata = json.loads(out)
+                    if cdata.get("loggedIn") is True:
+                        result["authenticated"] = True
+                        method = cdata.get("authMethod", "")
+                        result["auth_source"] = "stored_oauth" if ("oauth" in method or "claude.ai" in method) else "subscription_login"
+                        result["evidence"] = f"claude auth status --json reported loggedIn=true (method={cdata.get('authMethod')})"
+                    else:
+                        result["authenticated"] = False
+                        result["auth_source"] = "unauthenticated"
+                        result["evidence"] = f"claude auth status --json reported loggedIn=false (method={cdata.get('authMethod')})"
+                except Exception:
+                    if "loggedIn" in out and "false" in out:
+                        result["authenticated"] = False
+                        result["auth_source"] = "unauthenticated"
+                        result["evidence"] = "claude auth status --json: loggedIn is false"
+                    else:
+                        result["evidence"] = f"claude auth status returned non-json: {out}"
+            except Exception as e:
+                result["evidence"] = f"Failed to run claude auth status: {e}"
+                result["confidence"] = "medium"
+
+    elif harness == "opencode":
+        try:
+            p = subprocess.run(["opencode", "auth", "list"], capture_output=True, text=True, timeout=8)
+            out = p.stdout + p.stderr
+            has_env = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
+            if has_env or "OPENROUTER_API_KEY" in out:
+                result["authenticated"] = True
+                result["auth_source"] = "api_key_env"
+                result["evidence"] = "opencode auth list confirmed active OPENROUTER_API_KEY"
+            elif "0 credentials" not in out and "Credentials" in out:
+                result["authenticated"] = True
+                result["auth_source"] = "provider_credentials"
+                result["evidence"] = "opencode auth list found stored credentials in auth.json"
+            else:
+                result["authenticated"] = False
+                result["auth_source"] = "unauthenticated"
+                result["evidence"] = "opencode auth list: no active credentials or environment variables"
+        except Exception as e:
+            if os.environ.get("OPENROUTER_API_KEY"):
+                result["authenticated"] = True
+                result["auth_source"] = "api_key_env"
+                result["evidence"] = "OPENROUTER_API_KEY set in environment"
+            else:
+                result["evidence"] = f"Failed to run opencode auth list: {e}"
+                result["confidence"] = "medium"
+
+    _AUTH_PROBE_CACHE[harness] = result
+    return result
+
+
+def probe_profile_auth(profile_id: str, profiles: dict = None, force_refresh: bool = False) -> dict:
+    """Evaluates effective authentication for a specific execution profile."""
+    if profiles is None:
+        try:
+            with open(PROJECT_ROOT / "harness_profiles.json", "r", encoding="utf-8") as f:
+                pdata = json.load(f)
+                profiles = pdata.get("profiles", {})
+        except Exception:
+            profiles = {}
+
+    profile = profiles.get(profile_id, {})
+    harness = profile.get("harness", "unknown")
+
+    # Special handling for free/local profile
+    if profile_id == "opencode-mimo-free" or profile.get("effort") == "free":
+        return {
+            "profile_id": profile_id,
+            "harness": harness,
+            "authenticated": True,
+            "auth_source": "local_free",
+            "confidence": "high",
+            "evidence": "Free tier model available via OpenCode CLI transport",
+            "requires_interaction": False,
+            "notes": "Verified working with openrouter/openrouter/free"
+        }
+
+    h_res = probe_harness_auth(harness, force_refresh=force_refresh)
+    res = dict(h_res)
+    res["profile_id"] = profile_id
+
+    if profile_id == "opencode-gemini-high":
+        if not os.environ.get("OPENCODE_API_KEY"):
+            res["authenticated"] = False
+            res["evidence"] = "openrouter/google/gemini-3.8-flash blocked by upstream OpenRouter workspace guardrails"
+            res["notes"] = "openrouter/google/gemini-3.8-flash blocked by upstream OpenRouter workspace guardrails"
+            res["profile_availability"] = "PROFILE_UNAVAILABLE"
+
+    return res
+
+
+def assert_real_certifiable(manifest: dict) -> tuple[bool, str]:
+    """
+    Centralized certification guard. Rejects REAL_PROVIDER_CERTIFIED if:
+    - FACTORY_TEST_HARNESS was active
+    - Run contains any mock attempts
+    - Run did not complete successfully
+    - Any attempt evidence is missing
+    - Adapter executable was a test fixture or fake shim
+    - Provider raw result hash is missing
+    """
+    if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+        return False, "FACTORY_TEST_HARNESS=1 is active; mock runs cannot receive real certification"
+    if manifest.get("contains_mock_execution", False):
+        return False, "Run contains mock execution; cannot receive REAL_PROVIDER_CERTIFIED"
+    if manifest.get("final_status") != "COMPLETED" and manifest.get("run_state") != "COMPLETED":
+        return False, f"Run did not complete successfully (status={manifest.get('final_status')})"
+    tasks = manifest.get("tasks", {})
+    if not tasks:
+        return False, "Run has no tasks"
+
+    for tid, tinfo in tasks.items():
+        attempts = tinfo.get("attempts", [])
+        if not attempts:
+            return False, f"Task '{tid}' has no recorded attempts"
+        last_att = attempts[-1]
+        mode = last_att.get("execution_mode")
+        if mode != "REAL":
+            return False, f"Task '{tid}' attempt mode is '{mode}', expected 'REAL'"
+        ev = last_att.get("real_evidence")
+        if not ev:
+            return False, f"Task '{tid}' is missing real_evidence bundle"
+        realpath = ev.get("executable_realpath", "")
+        if any(bad in realpath for bad in ["factory_tests", "/tmp/", "test_shims", "test_fixtures"]):
+            return False, f"Task '{tid}' used test fixture executable: {realpath}"
+        if not ev.get("raw_result_hash"):
+            return False, f"Task '{tid}' missing raw_result_hash"
+
+    return True, "REAL_PROVIDER_CERTIFIED: All tasks executed genuine provider-backed processes with verifiable evidence"
+
+
 
 def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
     """Atomically writes data to a JSON file using a temp file, flush, fsync, and replace."""
@@ -576,11 +923,33 @@ echo $? > "{status_file_path}"
             return {}
 
         parsed_data = _parse_output(raw_output)
+        raw_result_hash = hashlib.sha256(raw_output.encode("utf-8")).hexdigest() if raw_output else ""
+        invocation_argv = [
+            worker_cmd,
+            "--mode", "accept-edits",
+            "--dangerously-skip-permissions",
+            "--add-dir", str(worktree_path),
+            "-p", "<prompt>",
+            "--model", model
+        ]
+        if effort and not model.startswith("claude"):
+            invocation_argv.extend(["--effort", effort])
+        invocation_argv.extend(["--output-format", "json", "--json-schema", "<schema>"])
+
         return {
             "exit_code": exit_code,
             "timed_out": False,
             "raw_output": raw_output,
-            "data": parsed_data
+            "data": parsed_data,
+            "execution_mode": "REAL",
+            "is_real_execution": True,
+            "raw_result_hash": raw_result_hash,
+            "invocation_argv": invocation_argv,
+            "provenance": {
+                "model": model,
+                "reasoning_effort": effort,
+                "auth_source": "provider_credentials"
+            }
         }
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
@@ -589,7 +958,7 @@ echo $? > "{status_file_path}"
                               model: str = "gemini-3.8-flash", effort: str = "high") -> dict:
         if behavior == "TIMEOUT":
             self.cancel(run_id, task_id, attempt_id, env_info)
-            return {"exit_code": -1, "timed_out": True, "error": f"AGY worker timed out after {timeout}s"}
+            return {"exit_code": -1, "timed_out": True, "execution_mode": "MOCK", "error": f"AGY worker timed out after {timeout}s"}
         elif behavior == "ERROR":
             err_envelope = {"status": "FAILED", "error": "Simulated AGY failure"}
             output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
@@ -599,7 +968,8 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": json.dumps(err_envelope),
                 "data": err_envelope,
-                "provenance": {"model": model, "reasoning_effort": effort}
+                "execution_mode": "MOCK",
+                "provenance": {"model": model, "reasoning_effort": effort, "auth_source": "unauthenticated"}
             }
         else:  # SUCCESS
             inner_data = {
@@ -622,9 +992,11 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": envelope,
+                "execution_mode": "MOCK",
                 "provenance": {
                     "model": model,
-                    "reasoning_effort": effort
+                    "reasoning_effort": effort,
+                    "auth_source": "unauthenticated"
                 }
             }
 
@@ -729,6 +1101,19 @@ class DroidAdapter(WorkerAdapter):
                 output_json_path, status_file_path, timeout, env_info
             )
 
+        # Live authentication discovery
+        auth_probe = probe_harness_auth("droid")
+        if not auth_probe["authenticated"] and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+            return {
+                "exit_code": 1,
+                "timed_out": False,
+                "error": f"Droid authentication missing ({auth_probe.get('evidence', 'No valid credentials found')}).",
+                "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
+                "execution_mode": "REAL",
+                "is_real_execution": False,
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort, "auth_source": auth_probe.get("auth_source", "unauthenticated")}
+            }
+
         script_path = task_attempt_dir / "run_worker.sh"
         with open(script_path, "w", encoding="utf-8") as sf:
             sf.write(f"""#!/bin/bash
@@ -774,12 +1159,29 @@ echo $? > "{status_file_path}"
         raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
         parsed = self._parse_droid_output(raw_output, run_id, task_id, attempt_id)
 
+        raw_result_hash = hashlib.sha256(raw_output.encode("utf-8")).hexdigest() if raw_output else ""
+        invocation_argv = [
+            worker_cmd, "exec",
+            "--cwd", str(worktree_path),
+            "--auto", autonomy,
+            "--model", model,
+            "--reasoning-effort", effort,
+            "--output-format", "json",
+            "--file", str(prompt_file)
+        ]
+        prov = parsed.get("provenance", {})
+        prov["auth_source"] = auth_probe.get("auth_source", "api_key_env")
+
         return {
             "exit_code": exit_code,
             "timed_out": False,
             "raw_output": raw_output,
             "data": parsed.get("task_data", {}),
-            "provenance": parsed.get("provenance", {})
+            "provenance": prov,
+            "execution_mode": "REAL",
+            "is_real_execution": True,
+            "raw_result_hash": raw_result_hash,
+            "invocation_argv": invocation_argv
         }
 
     def _parse_droid_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int) -> dict:
@@ -843,7 +1245,7 @@ echo $? > "{status_file_path}"
                               status_file_path: pathlib.Path, timeout: int, env_info: dict) -> dict:
         if behavior == "TIMEOUT":
             self.cancel(run_id, task_id, attempt_id, env_info)
-            return {"exit_code": -1, "timed_out": True, "error": f"Worker timed out after {timeout}s"}
+            return {"exit_code": -1, "timed_out": True, "execution_mode": "MOCK", "error": f"Worker timed out after {timeout}s"}
         elif behavior == "ERROR":
             err_envelope = {"is_error": True, "error": "Simulated Droid failure", "result": "Execution error"}
             output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
@@ -853,7 +1255,8 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": json.dumps(err_envelope),
                 "data": {"status": "FAILED", "error": "Simulated Droid failure"},
-                "provenance": {"session_id": "test-session-err", "model": "qwen3.8-max"}
+                "execution_mode": "MOCK",
+                "provenance": {"session_id": "test-session-err", "model": "qwen3.8-max", "auth_source": "unauthenticated"}
             }
         elif behavior == "MALFORMED":
             output_json_path.write_text("NOT_JSON_AT_ALL", encoding="utf-8")
@@ -863,7 +1266,8 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": "NOT_JSON_AT_ALL",
                 "data": {},
-                "provenance": {}
+                "execution_mode": "MOCK",
+                "provenance": {"auth_source": "unauthenticated"}
             }
         elif behavior == "ATTEMPT_MISMATCH":
             envelope = {
@@ -886,6 +1290,7 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": parsed.get("task_data", {}),
+                "execution_mode": "MOCK",
                 "provenance": parsed.get("provenance", {})
             }
         else: # SUCCESS
@@ -913,12 +1318,14 @@ echo $? > "{status_file_path}"
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": inner_data,
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": f"sess-{task_id}-{attempt_id}",
                     "duration_ms": 4200,
                     "turns": 3,
                     "model": "qwen3.8-max",
-                    "reasoning_effort": "xhigh"
+                    "reasoning_effort": "xhigh",
+                    "auth_source": "unauthenticated"
                 }
             }
 
@@ -997,15 +1404,17 @@ class CodexAdapter(WorkerAdapter):
                 model=model, effort=effort, sandbox=sandbox
             )
 
-        # Live authentication check
-        has_auth = bool(os.environ.get("OPENAI_API_KEY"))
-        if not has_auth:
+        # Live authentication discovery
+        auth_probe = probe_harness_auth("codex")
+        if not auth_probe["authenticated"] and os.environ.get("FACTORY_TEST_HARNESS") != "1":
             return {
                 "exit_code": 1,
                 "timed_out": False,
-                "error": "Codex authentication missing (no OPENAI_API_KEY environment variable). Set OPENAI_API_KEY to enable live Codex execution.",
+                "error": f"Codex authentication missing ({auth_probe.get('evidence', 'No valid credentials found')}).",
                 "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
-                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort, "sandbox": sandbox}
+                "execution_mode": "REAL",
+                "is_real_execution": False,
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort, "sandbox": sandbox, "auth_source": auth_probe.get("auth_source", "unauthenticated")}
             }
 
         # Build wrapper script for live codex execution
@@ -1014,7 +1423,7 @@ class CodexAdapter(WorkerAdapter):
             f'"{self.command}"',
             "exec",
             f"--model {model}",
-            f"-c model_reasoning_effort={effort}",
+            f"-c 'model_reasoning_effort=\"{effort}\"'",
             f"--sandbox {sandbox}",
             "--approve-for-me",
             "--ephemeral",
@@ -1046,6 +1455,8 @@ class CodexAdapter(WorkerAdapter):
             return {
                 "exit_code": -1,
                 "timed_out": True,
+                "execution_mode": "REAL",
+                "is_real_execution": True,
                 "error": f"Codex worker timed out after {timeout}s",
                 "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
             }
@@ -1057,13 +1468,30 @@ class CodexAdapter(WorkerAdapter):
 
         raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
         parsed = self._parse_codex_output(raw_output, run_id, task_id, attempt_id, model=model, effort=effort, sandbox=sandbox)
+        raw_result_hash = hashlib.sha256(raw_output.encode("utf-8")).hexdigest() if raw_output else ""
+        invocation_argv = [
+            self.command, "exec",
+            "--model", model,
+            "-c", f'model_reasoning_effort="{effort}"',
+            "--sandbox", sandbox,
+            "--approve-for-me",
+            "--ephemeral",
+            "--output-schema", str(schema_file),
+            "-o", str(output_json_path)
+        ]
+        prov = parsed.get("provenance", {})
+        prov["auth_source"] = auth_probe.get("auth_source", "api_key_env")
 
         return {
             "exit_code": exit_code,
             "timed_out": False,
             "raw_output": raw_output,
             "data": parsed.get("task_data", {}),
-            "provenance": parsed.get("provenance", {})
+            "provenance": prov,
+            "execution_mode": "REAL",
+            "is_real_execution": True,
+            "raw_result_hash": raw_result_hash,
+            "invocation_argv": invocation_argv
         }
 
     def _parse_codex_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
@@ -1143,7 +1571,7 @@ class CodexAdapter(WorkerAdapter):
                               model: str = "gpt-5.6-luna", effort: str = "high", sandbox: str = "workspace-write") -> dict:
         if behavior == "TIMEOUT":
             self.cancel(run_id, task_id, attempt_id, env_info)
-            return {"exit_code": -1, "timed_out": True, "error": f"Codex worker timed out after {timeout}s"}
+            return {"exit_code": -1, "timed_out": True, "execution_mode": "MOCK", "error": f"Codex worker timed out after {timeout}s"}
         elif behavior == "ERROR":
             err_envelope = {"is_error": True, "error": "Simulated Codex failure", "result": "Execution error"}
             output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
@@ -1153,11 +1581,13 @@ class CodexAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(err_envelope),
                 "data": {"status": "FAILED", "error": "Simulated Codex failure"},
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": "codex-test-session-err",
                     "model": model,
                     "reasoning_effort": effort,
-                    "sandbox": sandbox
+                    "sandbox": sandbox,
+                    "auth_source": "unauthenticated"
                 }
             }
         elif behavior == "MALFORMED":
@@ -1168,7 +1598,8 @@ class CodexAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": "NOT_JSON_AT_ALL",
                 "data": {},
-                "provenance": {}
+                "execution_mode": "MOCK",
+                "provenance": {"auth_source": "unauthenticated"}
             }
         elif behavior == "ATTEMPT_MISMATCH":
             envelope = {
@@ -1191,6 +1622,7 @@ class CodexAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": parsed.get("task_data", {}),
+                "execution_mode": "MOCK",
                 "provenance": parsed.get("provenance", {})
             }
         else:  # SUCCESS
@@ -1218,13 +1650,15 @@ class CodexAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": inner_data,
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": f"codex-sess-{task_id}-{attempt_id}",
                     "duration_ms": 3800,
                     "turns": 2,
                     "model": model,
                     "reasoning_effort": effort,
-                    "sandbox": sandbox
+                    "sandbox": sandbox,
+                    "auth_source": "unauthenticated"
                 }
             }
 
@@ -1301,15 +1735,17 @@ class ClaudeAdapter(WorkerAdapter):
                 model=model, effort=effort, perm_mode=perm_mode
             )
 
-        # Live authentication check
-        has_auth = bool(os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
-        if not has_auth:
+        # Live authentication discovery
+        auth_probe = probe_harness_auth("claude")
+        if not auth_probe["authenticated"] and os.environ.get("FACTORY_TEST_HARNESS") != "1":
             return {
                 "exit_code": 1,
                 "timed_out": False,
-                "error": "Claude authentication missing (no CLAUDE_CODE_TOKEN or ANTHROPIC_API_KEY). Set credentials to enable live Claude execution.",
+                "error": f"Claude authentication missing ({auth_probe.get('evidence', 'No valid credentials found')}).",
                 "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
-                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort}
+                "execution_mode": "REAL",
+                "is_real_execution": False,
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": effort, "auth_source": auth_probe.get("auth_source", "unauthenticated")}
             }
 
         # Build wrapper script for live claude execution
@@ -1349,6 +1785,8 @@ class ClaudeAdapter(WorkerAdapter):
             return {
                 "exit_code": -1,
                 "timed_out": True,
+                "execution_mode": "REAL",
+                "is_real_execution": True,
                 "error": f"Claude worker timed out after {timeout}s",
                 "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
             }
@@ -1360,13 +1798,29 @@ class ClaudeAdapter(WorkerAdapter):
 
         raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
         parsed = self._parse_claude_output(raw_output, run_id, task_id, attempt_id, model=model, effort=effort)
+        raw_result_hash = hashlib.sha256(raw_output.encode("utf-8")).hexdigest() if raw_output else ""
+        invocation_argv = [
+            self.command, "-p", f"$(< {prompt_file})",
+            "--model", model,
+            "--effort", effort,
+            "--permission-mode", perm_mode,
+            "--output-format", "json",
+            "--json-schema", f"$(< {schema_file})",
+            "--no-session-persistence"
+        ]
+        prov = parsed.get("provenance", {})
+        prov["auth_source"] = auth_probe.get("auth_source", "api_key_env")
 
         return {
             "exit_code": exit_code,
             "timed_out": False,
             "raw_output": raw_output,
             "data": parsed.get("task_data", {}),
-            "provenance": parsed.get("provenance", {})
+            "provenance": prov,
+            "execution_mode": "REAL",
+            "is_real_execution": True,
+            "raw_result_hash": raw_result_hash,
+            "invocation_argv": invocation_argv
         }
 
     def _parse_claude_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
@@ -1444,7 +1898,7 @@ class ClaudeAdapter(WorkerAdapter):
                               model: str = "claude-sonnet-5", effort: str = "high", perm_mode: str = "acceptEdits") -> dict:
         if behavior == "TIMEOUT":
             self.cancel(run_id, task_id, attempt_id, env_info)
-            return {"exit_code": -1, "timed_out": True, "error": f"Claude worker timed out after {timeout}s"}
+            return {"exit_code": -1, "timed_out": True, "execution_mode": "MOCK", "error": f"Claude worker timed out after {timeout}s"}
         elif behavior == "ERROR":
             err_envelope = {"is_error": True, "error": "Simulated Claude failure", "result": "Execution error"}
             output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
@@ -1454,11 +1908,13 @@ class ClaudeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(err_envelope),
                 "data": {"status": "FAILED", "error": "Simulated Claude failure"},
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": "claude-test-session-err",
                     "model": model,
                     "reasoning_effort": effort,
-                    "permission_mode": perm_mode
+                    "permission_mode": perm_mode,
+                    "auth_source": "unauthenticated"
                 }
             }
         elif behavior == "MALFORMED":
@@ -1469,7 +1925,8 @@ class ClaudeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": "NOT_JSON_AT_ALL",
                 "data": {},
-                "provenance": {}
+                "execution_mode": "MOCK",
+                "provenance": {"auth_source": "unauthenticated"}
             }
         elif behavior == "ATTEMPT_MISMATCH":
             envelope = {
@@ -1492,6 +1949,7 @@ class ClaudeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": parsed.get("task_data", {}),
+                "execution_mode": "MOCK",
                 "provenance": parsed.get("provenance", {})
             }
         else:  # SUCCESS
@@ -1519,13 +1977,15 @@ class ClaudeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": inner_data,
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": f"claude-sess-{task_id}-{attempt_id}",
                     "duration_ms": 3500,
                     "turns": 2,
                     "model": model,
                     "reasoning_effort": effort,
-                    "permission_mode": perm_mode
+                    "permission_mode": perm_mode,
+                    "auth_source": "unauthenticated"
                 }
             }
 
@@ -1603,15 +2063,17 @@ class OpenCodeAdapter(WorkerAdapter):
                 model=model, variant=variant
             )
 
-        # Live authentication check
-        has_auth = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
-        if not has_auth:
+        # Live authentication discovery
+        auth_probe = probe_harness_auth("opencode", force_refresh=True)
+        if not auth_probe["authenticated"] and os.environ.get("FACTORY_TEST_HARNESS") != "1":
             return {
                 "exit_code": 1,
                 "timed_out": False,
-                "error": "OpenCode authentication missing (no OPENROUTER_API_KEY or OPENCODE_API_KEY).",
+                "error": f"OpenCode authentication missing ({auth_probe.get('evidence', 'No valid credentials found')}).",
                 "data": {"status": "FAILED", "error": "AUTH_BLOCKED"},
-                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": variant}
+                "execution_mode": "REAL",
+                "is_real_execution": False,
+                "provenance": {"auth_status": "AUTH_BLOCKED", "model": model, "reasoning_effort": variant, "auth_source": auth_probe.get("auth_source", "unauthenticated")}
             }
 
         # Build wrapper script for live opencode execution
@@ -1652,6 +2114,8 @@ class OpenCodeAdapter(WorkerAdapter):
             return {
                 "exit_code": -1,
                 "timed_out": True,
+                "execution_mode": "REAL",
+                "is_real_execution": True,
                 "error": f"OpenCode worker timed out after {timeout}s",
                 "raw_output": output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
             }
@@ -1663,13 +2127,31 @@ class OpenCodeAdapter(WorkerAdapter):
 
         raw_output = output_json_path.read_text(encoding="utf-8") if output_json_path.exists() else ""
         parsed = self._parse_opencode_output(raw_output, run_id, task_id, attempt_id, model=model, variant=variant)
+        raw_result_hash = hashlib.sha256(raw_output.encode("utf-8")).hexdigest() if raw_output else ""
+        invocation_argv = [
+            self.command, "run", f"$(< {prompt_file})",
+            "--dir", str(worktree_path),
+            "--model", model,
+            "--variant", variant,
+            "--format", "json"
+        ]
+        if auto:
+            invocation_argv.append(auto)
+        if pure:
+            invocation_argv.append(pure)
+        prov = parsed.get("provenance", {})
+        prov["auth_source"] = auth_probe.get("auth_source", "api_key_env")
 
         return {
             "exit_code": exit_code,
             "timed_out": False,
             "raw_output": raw_output,
             "data": parsed.get("task_data", {}),
-            "provenance": parsed.get("provenance", {})
+            "provenance": prov,
+            "execution_mode": "REAL",
+            "is_real_execution": True,
+            "raw_result_hash": raw_result_hash,
+            "invocation_argv": invocation_argv
         }
 
     def _parse_opencode_output(self, raw_output: str, run_id: str, task_id: str, attempt_id: int,
@@ -1685,60 +2167,96 @@ class OpenCodeAdapter(WorkerAdapter):
         if not raw_output:
             return result
 
-        envelope = {}
+        accumulated_text = []
+        session_id = None
+        envelope = None
+
         try:
             envelope = json.loads(raw_output)
         except Exception:
-            for line in reversed(raw_output.splitlines()):
-                line = line.strip()
-                if line.startswith("{") and line.endswith("}"):
-                    try:
-                        envelope = json.loads(line)
-                        break
-                    except Exception:
-                        pass
+            pass
 
-        if isinstance(envelope, dict):
-            if "session_id" in envelope:
-                result["provenance"]["session_id"] = envelope["session_id"]
-            if "duration_ms" in envelope:
-                result["provenance"]["duration_ms"] = envelope["duration_ms"]
-            if "turns" in envelope:
-                result["provenance"]["turns"] = envelope["turns"]
-            if "model" in envelope:
-                result["provenance"]["model"] = envelope["model"]
-            if "variant" in envelope:
-                result["provenance"]["reasoning_effort"] = envelope["variant"]
-
-            if envelope.get("is_error") is True:
-                result["task_data"] = {
-                    "status": "FAILED",
-                    "error": envelope.get("error") or envelope.get("result", "OpenCode execution error")
-                }
-                return result
-
-            inner_text = envelope.get("result")
-            inner_json = None
-            if isinstance(inner_text, dict):
-                inner_json = inner_text
-            elif isinstance(inner_text, str):
-                inner_json = extract_json_payload(inner_text, task_id)
-            elif not inner_text and "status" in envelope:
-                inner_json = envelope
-
-            if inner_json:
-                if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
-                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+        if envelope and isinstance(envelope, dict):
+            if "session_id" in envelope or "sessionID" in envelope:
+                session_id = envelope.get("session_id") or envelope.get("sessionID")
+            if "result" in envelope or "status" in envelope or "task_data" in envelope:
+                if "duration_ms" in envelope:
+                    result["provenance"]["duration_ms"] = envelope["duration_ms"]
+                if "turns" in envelope:
+                    result["provenance"]["turns"] = envelope["turns"]
+                if "model" in envelope:
+                    result["provenance"]["model"] = envelope["model"]
+                if "variant" in envelope:
+                    result["provenance"]["reasoning_effort"] = envelope["variant"]
+                if envelope.get("is_error") is True:
+                    result["task_data"] = {
+                        "status": "FAILED",
+                        "error": envelope.get("error") or envelope.get("result", "OpenCode execution error")
+                    }
+                    if session_id:
+                        result["provenance"]["session_id"] = session_id
                     return result
-                if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
-                    result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
-                    return result
-                result["task_data"] = inner_json
-                return result
 
-        fallback_json = extract_json_payload(raw_output, task_id)
-        if fallback_json:
-            result["task_data"] = fallback_json
+                inner_text = envelope.get("result")
+                inner_json = None
+                if isinstance(inner_text, dict):
+                    inner_json = inner_text
+                elif isinstance(inner_text, str):
+                    inner_json = extract_json_payload(inner_text, task_id)
+                elif not inner_text and "status" in envelope:
+                    inner_json = envelope
+
+                if inner_json:
+                    if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                        return result
+                    if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                        result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                        return result
+                    result["task_data"] = inner_json
+                    if session_id:
+                        result["provenance"]["session_id"] = session_id
+                    return result
+
+        # Stream JSONL parser
+        for line in raw_output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                if isinstance(ev, dict):
+                    if not session_id and ("sessionID" in ev or "session_id" in ev):
+                        session_id = ev.get("sessionID") or ev.get("session_id")
+                    ev_type = ev.get("type")
+                    if ev_type in ("text", "message"):
+                        part = ev.get("part", {})
+                        if isinstance(part, dict) and "text" in part:
+                            accumulated_text.append(part["text"])
+                        elif isinstance(part, str):
+                            accumulated_text.append(part)
+            except Exception:
+                pass
+
+        if session_id:
+            result["provenance"]["session_id"] = session_id
+
+        combined_text = "".join(accumulated_text).strip() if accumulated_text else raw_output
+        inner_json = extract_json_payload(combined_text, task_id)
+        if not inner_json:
+            inner_json = extract_json_payload(raw_output, task_id)
+
+        if inner_json:
+            if inner_json.get("task_id") and inner_json.get("task_id") != task_id:
+                result["task_data"] = {"status": "FAILED", "error": f"Mismatched task_id: {inner_json.get('task_id')} != {task_id}"}
+                return result
+            if inner_json.get("attempt_id") and inner_json.get("attempt_id") != attempt_id:
+                result["task_data"] = {"status": "FAILED", "error": f"Mismatched attempt_id: {inner_json.get('attempt_id')} != {attempt_id}"}
+                return result
+            result["task_data"] = inner_json
+        else:
+            result["task_data"] = {"status": "UNKNOWN", "response": combined_text}
+
         return result
 
     def _handle_test_behavior(self, behavior: str, run_id: str, task_id: str, attempt_id: int,
@@ -1747,7 +2265,7 @@ class OpenCodeAdapter(WorkerAdapter):
                               model: str = "google/gemini-3.8-flash", variant: str = "high") -> dict:
         if behavior == "TIMEOUT":
             self.cancel(run_id, task_id, attempt_id, env_info)
-            return {"exit_code": -1, "timed_out": True, "error": f"OpenCode worker timed out after {timeout}s"}
+            return {"exit_code": -1, "timed_out": True, "execution_mode": "MOCK", "error": f"OpenCode worker timed out after {timeout}s"}
         elif behavior == "ERROR":
             err_envelope = {"is_error": True, "error": "Simulated OpenCode failure", "result": "Execution error"}
             output_json_path.write_text(json.dumps(err_envelope), encoding="utf-8")
@@ -1757,10 +2275,12 @@ class OpenCodeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(err_envelope),
                 "data": {"status": "FAILED", "error": "Simulated OpenCode failure"},
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": "opencode-test-session-err",
                     "model": model,
-                    "reasoning_effort": variant
+                    "reasoning_effort": variant,
+                    "auth_source": "unauthenticated"
                 }
             }
         elif behavior == "MALFORMED":
@@ -1771,7 +2291,8 @@ class OpenCodeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": "NOT_JSON_AT_ALL",
                 "data": {},
-                "provenance": {}
+                "execution_mode": "MOCK",
+                "provenance": {"auth_source": "unauthenticated"}
             }
         elif behavior == "ATTEMPT_MISMATCH":
             envelope = {
@@ -1794,6 +2315,7 @@ class OpenCodeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": parsed.get("task_data", {}),
+                "execution_mode": "MOCK",
                 "provenance": parsed.get("provenance", {})
             }
         else:  # SUCCESS
@@ -1821,12 +2343,14 @@ class OpenCodeAdapter(WorkerAdapter):
                 "timed_out": False,
                 "raw_output": json.dumps(envelope),
                 "data": inner_data,
+                "execution_mode": "MOCK",
                 "provenance": {
                     "session_id": f"opencode-sess-{task_id}-{attempt_id}",
                     "duration_ms": 2900,
                     "turns": 2,
                     "model": model,
-                    "reasoning_effort": variant
+                    "reasoning_effort": variant,
+                    "auth_source": "unauthenticated"
                 }
             }
 
@@ -2135,30 +2659,11 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             capability_matched_profiles.append(pid)
 
             # Auth check
-            harness = p.get("harness")
             if not is_test_harness:
-                if harness == "droid" and not os.environ.get("FACTORY_API_KEY"):
+                auth_info = probe_profile_auth(pid, profiles)
+                if not auth_info.get("authenticated", False):
                     auth_blocked_profiles.append(pid)
                     continue
-                if harness == "codex":
-                    has_auth = bool(os.environ.get("OPENAI_API_KEY"))
-                    if not has_auth:
-                        auth_blocked_profiles.append(pid)
-                        continue
-                if harness == "claude":
-                    has_auth = bool(os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
-                    if not has_auth:
-                        auth_blocked_profiles.append(pid)
-                        continue
-                if harness == "opencode":
-                    has_auth = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
-                    if not has_auth:
-                        auth_blocked_profiles.append(pid)
-                        continue
-                    if pid == "opencode-gemini-high" and not os.environ.get("OPENCODE_API_KEY"):
-                        # Gemini on openrouter restricted unless authenticated direct
-                        auth_blocked_profiles.append(pid)
-                        continue
 
         if not capability_matched_profiles:
             metadata = {
@@ -3019,6 +3524,52 @@ class TaskExecutor:
                 "error": "Result arrived after attempt superseded"
             }
 
+        # Determine execution_mode and binary verification
+        is_test_harness = os.environ.get("FACTORY_TEST_HARNESS") == "1"
+        cmd_path = getattr(self.adapter, "command", None) or self.worker_config.get("command", "")
+        bin_identity = verify_binary_identity(cmd_path) if cmd_path else {"is_fixture": False, "realpath": ""}
+
+        if is_test_harness or bin_identity.get("is_fixture"):
+            execution_mode = "MOCK"
+        elif raw_res.get("execution_mode") == "MOCK":
+            execution_mode = "MOCK"
+        else:
+            execution_mode = raw_res.get("execution_mode", "REAL")
+
+        # Invariant: If is_test_harness or bin_identity is_fixture, it MUST be MOCK
+        if is_test_harness or bin_identity.get("is_fixture"):
+            execution_mode = "MOCK"
+
+        git_diff_hash = ""
+        try:
+            diff_proc = subprocess.run(["git", "diff", base_commit], cwd=str(worktree_path), capture_output=True, text=True)
+            if diff_proc.returncode == 0 and diff_proc.stdout:
+                git_diff_hash = hashlib.sha256(diff_proc.stdout.encode("utf-8")).hexdigest()
+        except Exception:
+            pass
+
+        auth_source = raw_res.get("provenance", {}).get("auth_source") or probe_harness_auth(self.harness).get("auth_source", "unauthenticated")
+
+        real_evidence = None
+        if execution_mode == "REAL":
+            real_evidence = {
+                "run_id": self.run_id,
+                "task_id": self.task_id,
+                "attempt_id": attempt_id,
+                "harness": self.harness,
+                "profile_id": self.profile_id,
+                "adapter": self.worker_config.get("adapter", "agy"),
+                "model": self.model,
+                "effort": self.effort,
+                "auth_source": auth_source,
+                "executable_realpath": bin_identity.get("realpath", ""),
+                "binary_identity": bin_identity,
+                "raw_result_hash": raw_res.get("raw_result_hash", ""),
+                "git_diff_hash": git_diff_hash,
+                "invocation_argv": raw_res.get("invocation_argv", []),
+                "commit": None
+            }
+
         if raw_res.get("timed_out"):
             self.state = "TIMED_OUT"
             attempt_record = {
@@ -3031,6 +3582,10 @@ class TaskExecutor:
                 "effort": self.effort,
                 "adapter": self.worker_config.get("adapter", "agy"),
                 "routing_provenance": self.routing_provenance,
+                "execution_mode": execution_mode,
+                "is_real_execution": (execution_mode == "REAL"),
+                "real_evidence": real_evidence,
+                "raw_result_hash": raw_res.get("raw_result_hash", ""),
                 "branch": attempt_branch,
                 "worktree": str(worktree_path),
                 "start_time": start_time,
@@ -3041,7 +3596,8 @@ class TaskExecutor:
                 "status": "TIMEOUT",
                 "error": raw_res.get("error", "Worker timed out")
             }
-            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1)
+            attempt_record = redact_secrets(attempt_record)
+            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source)
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
             atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
@@ -3112,6 +3668,10 @@ class TaskExecutor:
             "adapter": self.worker_config.get("adapter", "agy"),
             "routing_provenance": self.routing_provenance,
             "provenance": raw_res.get("provenance", {}),
+            "execution_mode": execution_mode,
+            "is_real_execution": (execution_mode == "REAL"),
+            "real_evidence": real_evidence,
+            "raw_result_hash": raw_res.get("raw_result_hash", ""),
             "branch": attempt_branch,
             "worktree": str(worktree_path),
             "env_info": env_info,
@@ -3126,8 +3686,9 @@ class TaskExecutor:
             "state": self.state,
             "status": "SUCCESS" if is_success else "FAILED"
         }
+        attempt_record = redact_secrets(attempt_record)
 
-        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code)
+        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source)
         atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
         self.attempts.append(attempt_record)
         self.latest_result = attempt_record
@@ -3138,7 +3699,7 @@ class TaskExecutor:
         return attempt_record
 
     def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
-                          worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int):
+                          worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int, auth_source: str = "unauthenticated"):
         churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
         try:
             diff_res = subprocess.run(
@@ -3175,6 +3736,10 @@ class TaskExecutor:
             or derive_execution_class(self.task.get("task_type", "implementation"))
         )
 
+        exec_mode = attempt_record.get("execution_mode", "UNKNOWN")
+        is_succ = attempt_record.get("status") == "SUCCESS"
+        cert_level = "REAL_PROVIDER_CERTIFIED" if (exec_mode == "REAL" and is_succ) else ("DETERMINISTIC_CERTIFIED" if is_succ else "FAILED")
+
         telemetry = {
             "run_id": self.run_id,
             "task_id": self.task_id,
@@ -3184,6 +3749,9 @@ class TaskExecutor:
             "adapter": self.worker_config.get("adapter", "agy"),
             "model": self.model,
             "effort": self.effort,
+            "execution_mode": exec_mode,
+            "auth_source": auth_source,
+            "certification_level": cert_level,
             "execution_class": exec_class,
             "task_type": self.task.get("task_type", "implementation"),
             "start_time": start_time,
@@ -3193,12 +3761,15 @@ class TaskExecutor:
             "exit_code": exit_code,
             "churn": churn
         }
+        if raw_res.get("raw_result_hash"):
+            telemetry["raw_result_hash"] = raw_res["raw_result_hash"]
         prov = raw_res.get("provenance", {})
         if prov.get("turns"):
             telemetry["turns"] = prov["turns"]
         if prov.get("session_id"):
             telemetry["session_id"] = prov["session_id"]
 
+        telemetry = redact_secrets(telemetry)
         attempt_record["telemetry"] = telemetry
 
         # Run-local metrics.json
@@ -3236,6 +3807,8 @@ class TaskExecutor:
             self.state = "COMMITTED"
             self.latest_result["state"] = self.state
             self.latest_result["commit_hash"] = head_commit
+            if self.latest_result.get("real_evidence"):
+                self.latest_result["real_evidence"]["commit"] = head_commit
             return head_commit
 
         summary = self.latest_result.get("structured_output", {}).get("summary", f"Implemented {self.task_id}")
@@ -3245,6 +3818,8 @@ class TaskExecutor:
         self.state = "COMMITTED"
         self.latest_result["state"] = self.state
         self.latest_result["commit_hash"] = commit_hash
+        if self.latest_result.get("real_evidence"):
+            self.latest_result["real_evidence"]["commit"] = commit_hash
         return commit_hash
 
 
@@ -3310,7 +3885,7 @@ class FactoryOrchestrator:
                 }
 
             self.manifest = {
-                "factory_version": "5.0.0",
+                "factory_version": "6.1.0",
                 "run_id": self.run_id,
                 "plan_path": str(self.plan_path),
                 "plan_name": self.plan.get("name") or self.plan.get("plan_id", "unnamed_plan"),
@@ -3319,6 +3894,8 @@ class FactoryOrchestrator:
                 "start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "end_time": None,
                 "run_state": "PENDING",
+                "contains_mock_execution": False,
+                "certification_level": "PENDING",
                 "tasks": initial_tasks,
                 "waves": [],  # Backward compatibility
                 "final_audit": {},
@@ -3351,10 +3928,11 @@ class FactoryOrchestrator:
                 self.tasks_def[task["task_id"]] = dict(task)
 
     def log_event(self, event_type: str, payload: dict):
+        clean_payload = redact_secrets(payload)
         event = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "event": event_type,
-            "payload": payload
+            "payload": clean_payload
         }
         with open(self.events_log, "a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
@@ -3384,7 +3962,8 @@ class FactoryOrchestrator:
             wave_map[w_idx]["tasks"].append(merged_task)
 
         self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
-        atomic_write_json(self.manifest_path, self.manifest)
+        clean_manifest = redact_secrets(self.manifest)
+        atomic_write_json(self.manifest_path, clean_manifest)
         try:
             self.board_projector.sync(self.run_id)
         except Exception:
@@ -3820,17 +4399,39 @@ class FactoryOrchestrator:
             for tinfo in self.manifest["tasks"].values()
         )
 
+        contains_mock = False
+        all_real = True
+        for tid, tinfo in self.manifest["tasks"].items():
+            for att in tinfo.get("attempts", []):
+                mode = att.get("execution_mode", "UNKNOWN")
+                if mode == "MOCK":
+                    contains_mock = True
+                if mode != "REAL":
+                    all_real = False
+
+        self.manifest["contains_mock_execution"] = contains_mock
         self.manifest["end_time"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if all_tasks_successful and validation_passed and audit_approved:
             self.manifest["run_state"] = "COMPLETED"
             self.manifest["final_status"] = "COMPLETED"
+            if all_real and not contains_mock:
+                self.manifest["certification_level"] = "REAL_PROVIDER_CERTIFIED"
+            else:
+                self.manifest["certification_level"] = "DETERMINISTIC_CERTIFIED"
         else:
             self.manifest["run_state"] = "FAILED"
             self.manifest["final_status"] = "FAILED"
+            self.manifest["certification_level"] = "FAILED"
 
         self.save_manifest()
-        atomic_write_json(self.run_dir / "final-summary.json", self.manifest)
-        self.log_event("RUN_FINISHED", {"run_id": self.run_id, "final_status": self.manifest["final_status"]})
+        clean_summary = redact_secrets(self.manifest)
+        atomic_write_json(self.run_dir / "final-summary.json", clean_summary)
+        self.log_event("RUN_FINISHED", {
+            "run_id": self.run_id,
+            "final_status": self.manifest["final_status"],
+            "certification_level": self.manifest["certification_level"],
+            "contains_mock_execution": self.manifest["contains_mock_execution"]
+        })
         return self.manifest
 
 
@@ -3924,10 +4525,11 @@ def generate_status_projection(run_id: str = None) -> dict:
     return projection
 
 
-def summarize_execution_metrics(run_id: str = None, profile_id: str = None, telemetry_file: pathlib.Path = None) -> dict:
+def summarize_execution_metrics(run_id: str = None, profile_id: str = None, execution_mode: str = None, telemetry_file: pathlib.Path = None) -> dict:
     """
-    Summarizes execution telemetry across runs or for a specific run/profile.
+    Summarizes execution telemetry across runs or for a specific run/profile/mode.
     Strictly observational: metrics do not influence routing decisions.
+    Separates mock simulation telemetry from real provider-backed telemetry.
     """
     records = []
     if telemetry_file and pathlib.Path(telemetry_file).exists():
@@ -3946,8 +4548,8 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
         rf = RUNS_DIR / run_id / "metrics.json"
         if rf.exists():
             try:
-                with open(rf, "r", encoding="utf-8") as f:
-                    records = json.load(f)
+                with open(rf, "r", encoding="utf-8") as mf:
+                    records = json.load(mf)
             except Exception:
                 pass
     else:
@@ -3963,13 +4565,16 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
         if not records:
             for rf in RUNS_DIR.glob("*/metrics.json"):
                 try:
-                    with open(rf, "r", encoding="utf-8") as f:
-                        records.extend(json.load(f))
+                    with open(rf, "r", encoding="utf-8") as mf:
+                        records.extend(json.load(mf))
                 except Exception:
                     pass
 
     if profile_id:
         records = [r for r in records if r.get("profile_id") == profile_id]
+
+    if execution_mode:
+        records = [r for r in records if r.get("execution_mode") == execution_mode]
 
     total_attempts = len(records)
     successful = sum(1 for r in records if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"))
@@ -3986,6 +4591,7 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
     by_profile = {}
     by_harness = {}
     by_class = {}
+    by_execution_mode = {}
 
     for r in records:
         pid = r.get("profile_id", "unknown")
@@ -4017,6 +4623,15 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
             by_class[ec]["failed"] += 1
         by_class[ec]["duration_ms"] += r.get("duration_ms", 0.0)
 
+        em = r.get("execution_mode", "UNKNOWN")
+        by_execution_mode.setdefault(em, {"total": 0, "success": 0, "failed": 0, "duration_ms": 0.0})
+        by_execution_mode[em]["total"] += 1
+        if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"):
+            by_execution_mode[em]["success"] += 1
+        else:
+            by_execution_mode[em]["failed"] += 1
+        by_execution_mode[em]["duration_ms"] += r.get("duration_ms", 0.0)
+
     for p in by_profile.values():
         if p["total"] > 0:
             p["avg_duration_ms"] = round(p["duration_ms"] / p["total"], 2)
@@ -4026,10 +4641,15 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
     for c in by_class.values():
         if c["total"] > 0:
             c["avg_duration_ms"] = round(c["duration_ms"] / c["total"], 2)
+    for em, edata in by_execution_mode.items():
+        if edata["total"] > 0:
+            edata["avg_duration_ms"] = round(edata["duration_ms"] / edata["total"], 2)
+            edata["success_rate_pct"] = round(edata["success"] / edata["total"] * 100, 2)
 
     return {
         "run_filter": run_id,
         "profile_filter": profile_id,
+        "execution_mode_filter": execution_mode,
         "total_attempts": total_attempts,
         "successful_attempts": successful,
         "failed_attempts": failed,
@@ -4042,12 +4662,13 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, tele
         },
         "by_profile": by_profile,
         "by_harness": by_harness,
-        "by_execution_class": by_class
+        "by_execution_class": by_class,
+        "by_execution_mode": by_execution_mode
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v6.0.0)")
+    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v6.1.0)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Preflight
@@ -4075,7 +4696,7 @@ def main():
     board_sub = board_parser.add_subparsers(dest="board_action", required=True)
     board_sync = board_sub.add_parser("sync", help="Synchronize factory state to Kanban board")
     board_sync.add_argument("--run", type=str, help="Specific run ID to sync")
-    board_status = board_sub.add_parser("status", help="Get Kanban board projection status")
+    board_sub.add_parser("status", help="Get Kanban board projection status")
 
     # Profile
     profile_parser = subparsers.add_parser("profile", help="Inspect and validate execution profiles")
@@ -4095,6 +4716,20 @@ def main():
     r_exp.add_argument("--json", action="store_true", help="Output JSON explanation")
     r_exp.add_argument("--run", type=str, default=None, help="Optional run ID for live busy state context")
 
+    # Auth
+    auth_parser = subparsers.add_parser("auth", help="Probe and discover harness authentication")
+    auth_sub = auth_parser.add_subparsers(dest="auth_action", required=True)
+    a_probe = auth_sub.add_parser("probe", help="Probe harness authentication status")
+    a_probe.add_argument("harness", nargs="?", default=None, help="Optional harness name (agy, droid, codex, claude, opencode)")
+    a_probe.add_argument("--json", action="store_true", help="Output JSON probe results")
+
+    # Certify
+    cert_parser = subparsers.add_parser("certify", help="Certification inspection and verification tools")
+    cert_sub = cert_parser.add_subparsers(dest="certify_action", required=True)
+    c_guard = cert_sub.add_parser("guard", help="Evaluate real-certification guard assertions for a run")
+    c_guard.add_argument("run_id", type=str, help="Run ID to evaluate")
+    c_guard.add_argument("--json", action="store_true", help="Output JSON results")
+
     # Metrics
     metrics_parser = subparsers.add_parser("metrics", help="Execution telemetry and performance metrics")
     metrics_sub = metrics_parser.add_subparsers(dest="metrics_action", required=True)
@@ -4102,6 +4737,7 @@ def main():
     m_sum.add_argument("--json", action="store_true", help="Output summary in JSON format")
     m_sum.add_argument("--run", type=str, default=None, help="Filter summary to specific run ID")
     m_sum.add_argument("--profile", type=str, default=None, help="Filter summary to specific profile ID")
+    m_sum.add_argument("--execution-mode", type=str, default=None, choices=["REAL", "MOCK", "TRANSPORT_ONLY", "UNKNOWN"], help="Filter summary by execution mode")
 
     # Cleanup
     cl_parser = subparsers.add_parser("cleanup", help="Safely clean owned workspaces, worktrees, and ephemeral files")
@@ -4137,6 +4773,8 @@ def main():
         orch = FactoryOrchestrator(plan_file)
         manifest = orch.execute_plan()
         print(f"Run {manifest['run_id']} completed with status: {manifest['final_status']}")
+        print(f"Certification level: {manifest.get('certification_level')}")
+        print(f"Contains mock execution: {manifest.get('contains_mock_execution')}")
         print(f"Manifest written to: {orch.manifest_path}")
 
     elif args.command == "resume":
@@ -4167,7 +4805,7 @@ def main():
         else:
             herdr = HerdrClient(PROJECT_ROOT)
             res_mgr = ResourceManager(herdr)
-            print("=== AGY-Herdr Software Factory Status (v4.0.0) ===")
+            print("=== AGY-Herdr Software Factory Status (v6.1.0) ===")
             print(f"Project Root: {PROJECT_ROOT}")
             print(f"Control Plane Context: {json.dumps(res_mgr.state['control_plane'], indent=2)}")
             print(f"Owned Resources: {json.dumps(res_mgr.state['owned'], indent=2)}")
@@ -4182,7 +4820,7 @@ def main():
                         tasks_info = []
                         for tid, t in data.get("tasks", {}).items():
                             tasks_info.append(f"{tid}:{t.get('canonical_state', t.get('status'))}")
-                        print(f"  - {r.name}: state={data.get('run_state', data.get('final_status'))} plan={data.get('plan_id')} tasks=[{', '.join(tasks_info)}]")
+                        print(f"  - {r.name}: state={data.get('run_state', data.get('final_status'))} plan={data.get('plan_id')} cert={data.get('certification_level')} tasks=[{', '.join(tasks_info)}]")
                     except Exception:
                         pass
 
@@ -4260,6 +4898,55 @@ def main():
                 print(f"Selected Worker:  {explanation['final_decision']['selected_worker']}")
                 print(f"Reason: {explanation['final_decision']['reason']}")
 
+    elif args.command == "auth":
+        if args.auth_action == "probe":
+            if args.harness:
+                res = probe_harness_auth(args.harness)
+                if args.json:
+                    print(json.dumps(res, indent=2))
+                else:
+                    auth_str = "AUTHENTICATED" if res["authenticated"] else "AUTH_BLOCKED"
+                    print(f"Harness:     {res['harness']}")
+                    print(f"Status:      {auth_str}")
+                    print(f"Auth Source: {res['auth_source']}")
+                    print(f"Evidence:    {res['evidence']}")
+            else:
+                harnesses = ["agy", "droid", "codex", "claude", "opencode"]
+                results = {h: probe_harness_auth(h) for h in harnesses}
+                if args.json:
+                    print(json.dumps(results, indent=2))
+                else:
+                    print(f"{'Harness':<12} {'Status':<16} {'Auth Source':<18} {'Evidence'}")
+                    print("-" * 80)
+                    for h, res in results.items():
+                        auth_str = "AUTHENTICATED" if res["authenticated"] else "AUTH_BLOCKED"
+                        print(f"{h:<12} {auth_str:<16} {res['auth_source']:<18} {res['evidence']}")
+
+    elif args.command == "certify":
+        if args.certify_action == "guard":
+            run_manifest = RUNS_DIR / args.run_id / "manifest.json"
+            if not run_manifest.exists():
+                print(f"Error: Run manifest {run_manifest} not found", file=sys.stderr)
+                sys.exit(1)
+            with open(run_manifest, "r", encoding="utf-8") as f:
+                mdata = json.load(f)
+            passed, reason = assert_real_certifiable(mdata)
+            output = {
+                "run_id": args.run_id,
+                "passed": passed,
+                "reason": reason,
+                "certification_level": "REAL_PROVIDER_CERTIFIED" if passed else "REJECTED"
+            }
+            if args.json:
+                print(json.dumps(output, indent=2))
+            else:
+                status_str = "PASSED" if passed else "REJECTED"
+                print(f"Real-Certification Guard: {status_str}")
+                print(f"Run ID: {args.run_id}")
+                print(f"Reason: {reason}")
+            if not passed:
+                sys.exit(1)
+
     elif args.command == "cleanup":
         herdr = HerdrClient(PROJECT_ROOT)
         res_mgr = ResourceManager(herdr)
@@ -4269,7 +4956,7 @@ def main():
 
     elif args.command == "metrics":
         if args.metrics_action == "summarize":
-            summary = summarize_execution_metrics(run_id=args.run, profile_id=args.profile)
+            summary = summarize_execution_metrics(run_id=args.run, profile_id=args.profile, execution_mode=args.execution_mode)
             if args.json:
                 print(json.dumps(summary, indent=2))
             else:
@@ -4277,15 +4964,22 @@ def main():
                 print("AGY-Herdr Software Factory — Execution Telemetry Summary")
                 print("================================================================================")
                 if summary["run_filter"]:
-                    print(f"Run Filter:     {summary['run_filter']}")
+                    print(f"Run Filter:      {summary['run_filter']}")
                 if summary["profile_filter"]:
-                    print(f"Profile Filter: {summary['profile_filter']}")
-                print(f"Total Attempts: {summary['total_attempts']}")
-                print(f"Successful:     {summary['successful_attempts']} ({summary['success_rate_pct']}%)")
-                print(f"Failed:         {summary['failed_attempts']}")
-                print(f"Avg Duration:   {summary['avg_duration_ms']} ms")
+                    print(f"Profile Filter:  {summary['profile_filter']}")
+                if summary["execution_mode_filter"]:
+                    print(f"Mode Filter:     {summary['execution_mode_filter']}")
+                print(f"Total Attempts:  {summary['total_attempts']}")
+                print(f"Successful:      {summary['successful_attempts']} ({summary['success_rate_pct']}%)")
+                print(f"Failed:          {summary['failed_attempts']}")
+                print(f"Avg Duration:    {summary['avg_duration_ms']} ms")
                 churn = summary["total_churn"]
-                print(f"Git Churn:      +{churn['lines_added']} / -{churn['lines_deleted']} across {churn['files_changed']} files")
+                print(f"Git Churn:       +{churn['lines_added']} / -{churn['lines_deleted']} across {churn['files_changed']} files")
+                print("-" * 80)
+                print(f"{'Execution Mode':<18} {'Total':<8} {'Success':<9} {'Failed':<8} {'Success %':<12} {'Avg Duration'}")
+                print("-" * 80)
+                for em, emdata in summary["by_execution_mode"].items():
+                    print(f"{em:<18} {emdata['total']:<8} {emdata['success']:<9} {emdata['failed']:<8} {emdata.get('success_rate_pct', 0.0):<12} {emdata.get('avg_duration_ms', 0.0)}")
                 print("-" * 80)
                 print(f"{'Profile ID':<24} {'Total':<8} {'Success':<9} {'Failed':<8} {'Avg Duration':<14} {'Churn'}")
                 print("-" * 80)

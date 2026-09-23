@@ -13,7 +13,7 @@ lock_file = project_root / "toolchain.lock.json"
 profiles_file = project_root / "harness_profiles.json"
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v6.0.0) — Environment Diagnostics (doctor)")
+print("AGY-Herdr Software Factory (v6.1.0) — Environment Diagnostics (doctor)")
 print("=" * 80)
 
 structural_ok = True
@@ -183,53 +183,17 @@ else:
 # 4. Authenticated Real-Provider Prerequisites
 print("\n[4. AUTHENTICATED REAL-PROVIDER PREREQUISITES]")
 
-# AGY Authentication Check
-agy_test_out, agy_test_err, agy_test_code = run_cmd(["agy", "models"])
-if agy_test_code == 0 and "gemini-3.8-flash" in agy_test_out:
-    print("  [OK] AGY Provider Authentication: Verified (gemini-3.8-flash available)")
-else:
-    print("  [WARN] AGY Provider Authentication: Models unverified or missing")
-    auth_warnings.append("AGY authentication unverified")
+# Use canonical read-only harness auth discovery from factory
+sys.path.insert(0, str(project_root))
+from tools.factory import probe_harness_auth
 
-# Droid Authentication Check
-factory_api_key = os.environ.get("FACTORY_API_KEY")
-if factory_api_key:
-    print("  [OK] Droid Provider Authentication: FACTORY_API_KEY is present")
-else:
-    print("  [WARN] Droid Provider Authentication: FACTORY_API_KEY environment variable is NOT set.")
-    print("         Real Droid worker execution requires FACTORY_API_KEY.")
-    print("         Deterministic tests and mock DroidAdapter harness remain fully functional.")
-    auth_warnings.append("FACTORY_API_KEY not set (Droid AUTH_BLOCKED)")
-
-# Codex Authentication Check
-openai_api_key = os.environ.get("OPENAI_API_KEY")
-if openai_api_key:
-    print("  [OK] Codex Provider Authentication: OPENAI_API_KEY is present")
-else:
-    print("  [WARN] Codex Provider Authentication: OPENAI_API_KEY environment variable is NOT set.")
-    print("         Real Codex worker execution requires OPENAI_API_KEY.")
-    print("         Deterministic tests and mock CodexAdapter harness remain fully functional.")
-    auth_warnings.append("OPENAI_API_KEY not set (Codex AUTH_BLOCKED)")
-
-# Claude Code Authentication Check
-claude_token = os.environ.get("CLAUDE_CODE_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
-if claude_token:
-    print("  [OK] Claude Code Provider Authentication: Token is present")
-else:
-    print("  [WARN] Claude Code Provider Authentication: CLAUDE_CODE_TOKEN / ANTHROPIC_API_KEY not set.")
-    print("         Real Claude worker execution requires CLAUDE_CODE_TOKEN.")
-    print("         Deterministic tests and mock ClaudeAdapter harness remain fully functional.")
-    auth_warnings.append("CLAUDE_CODE_TOKEN not set (Claude AUTH_BLOCKED)")
-
-# OpenCode Authentication Check
-opencode_token = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_API_KEY")
-if opencode_token:
-    print("  [OK] OpenCode Provider Authentication: Token is present")
-else:
-    print("  [WARN] OpenCode Provider Authentication: OPENROUTER_API_KEY / OPENCODE_API_KEY not set.")
-    print("         Real OpenCode worker execution requires OPENROUTER_API_KEY.")
-    print("         Deterministic tests and mock OpenCodeAdapter harness remain fully functional.")
-    auth_warnings.append("OPENROUTER_API_KEY not set (OpenCode AUTH_BLOCKED)")
+for h in ["agy", "droid", "codex", "claude", "opencode"]:
+    probe = probe_harness_auth(h)
+    if probe["authenticated"]:
+        print(f"  [OK] {h.upper()} Provider Authentication: {probe['auth_source']} ({probe['evidence']})")
+    else:
+        print(f"  [WARN] {h.upper()} Provider Authentication: AUTH_BLOCKED ({probe['evidence']})")
+        auth_warnings.append(f"{h.upper()} AUTH_BLOCKED")
 
 # 5. Final Verdict
 print("\n" + "=" * 80)

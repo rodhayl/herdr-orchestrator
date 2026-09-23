@@ -103,6 +103,43 @@
     },
     "session_id": {
       "type": "string"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "REAL",
+        "MOCK",
+        "TRANSPORT_ONLY",
+        "UNKNOWN"
+      ]
+    },
+    "certification_level": {
+      "type": "string",
+      "enum": [
+        "DETERMINISTIC_CERTIFIED",
+        "TRANSPORT_CERTIFIED",
+        "REAL_PROVIDER_CERTIFIED",
+        "AUTH_BLOCKED",
+        "PROFILE_INVALID",
+        "PROFILE_UNAVAILABLE",
+        "EXTERNAL_COMPATIBILITY_BLOCKED",
+        "FAILED"
+      ]
+    },
+    "auth_source": {
+      "type": "string",
+      "enum": [
+        "stored_oauth",
+        "subscription_login",
+        "api_key_env",
+        "provider_credentials",
+        "local_free",
+        "unauthenticated",
+        "unknown"
+      ]
+    },
+    "raw_result_hash": {
+      "type": "string"
     }
   }
 }

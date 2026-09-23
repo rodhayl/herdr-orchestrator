@@ -121,7 +121,10 @@
               ]
             },
             "last_certified_timestamp": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "notes": {
               "type": "string"

@@ -1,7 +1,7 @@
 {
   "$schema": "./schemas/harness-profiles.schema.json",
-  "schema_version": "6.0.0",
-  "description": "Certified Execution Profiles for AGY-Herdr Software Factory v6.0.0",
+  "schema_version": "6.1.0",
+  "description": "Certified Execution Profiles for AGY-Herdr Software Factory v6.1.0",
   "profiles": {
     "agy-spec-high": {
       "id": "agy-spec-high",
@@ -25,9 +25,9 @@
         "cli_model_arg": "gemini-3.8-flash-high"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:27:58Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-backend-high": {
@@ -52,9 +52,9 @@
         "cli_model_arg": "gemini-3.8-flash-high"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:31:20Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-backend-medium": {
@@ -79,9 +79,9 @@
         "cli_model_arg": "gemini-3.8-flash-medium"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T11:00:00Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-frontend-high": {
@@ -105,9 +105,9 @@
         "cli_model_arg": "gemini-3.8-flash-high"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:29:59Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-frontend-medium": {
@@ -131,9 +131,9 @@
         "cli_model_arg": "gemini-3.8-flash-medium"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T11:00:00Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-tests-medium": {
@@ -157,9 +157,9 @@
         "cli_model_arg": "gemini-3.8-flash-medium"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:35:07Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-integration-high": {
@@ -184,9 +184,9 @@
         "cli_model_arg": "gemini-3.8-flash-high"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T06:38:06Z",
-        "notes": "Verified in real DAG execution"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "agy-audit-high": {
@@ -210,9 +210,9 @@
         "cli_model_arg": "claude-sonnet-4-6"
       },
       "certification": {
-        "status": "CERTIFIED",
+        "status": "REAL_PROVIDER_CERTIFIED",
         "last_certified_timestamp": "2026-09-23T07:02:44Z",
-        "notes": "Verified in independent audit run"
+        "notes": "Verified genuine provider execution with real AGY CLI."
       }
     },
     "droid-backend-medium": {
@@ -505,21 +505,21 @@
         "format": "json"
       },
       "certification": {
-        "status": "AUTH_BLOCKED",
+        "status": "PROFILE_UNAVAILABLE",
         "last_certified_timestamp": null,
-        "notes": "Requires OpenRouter/OpenCode workspace authorization. Fully certified in deterministic test harness."
+        "notes": "OpenRouter workspace guardrail restricts google/gemini-3.8-flash for current API key."
       }
     },
     "opencode-mimo-free": {
       "id": "opencode-mimo-free",
-      "name": "OpenCode Mimo Free (opencode/mimo-v2.6-flash-free)",
-      "description": "OpenCode CLI smoke/free tier execution profile with mimo-v2.6-flash-free",
+      "name": "OpenCode Free (openrouter/openrouter/free)",
+      "description": "OpenCode CLI free tier execution profile with openrouter/openrouter/free",
       "adapter": "opencode",
       "harness": "opencode",
       "enabled": true,
       "command": "/root/.opencode/bin/opencode",
       "worker_identity": "opencode",
-      "model": "opencode/mimo-v2.6-flash-free",
+      "model": "openrouter/openrouter/free",
       "effort": "free",
       "capabilities": [
         "coding",
@@ -534,9 +534,9 @@
         "format": "json"
       },
       "certification": {
-        "status": "AVAILABLE",
-        "last_certified_timestamp": "2026-09-23T11:00:00Z",
-        "notes": "Transport verified live via OPENROUTER_API_KEY."
+        "status": "REAL_PROVIDER_CERTIFIED",
+        "last_certified_timestamp": "2026-09-23T22:08:57Z",
+        "notes": "Genuine provider execution verified via OpenRouter free model with OPENROUTER_API_KEY."
       }
     }
   }

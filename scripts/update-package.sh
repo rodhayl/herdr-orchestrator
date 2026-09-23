@@ -104,8 +104,8 @@ matrix = [
     {
         "component": "Factory Engine",
         "prev_certified": prev_lock.get("factory", {}).get("version", "5.0.0"),
-        "installed": "6.0.0",
-        "latest_stable": "6.0.0",
+        "installed": "6.1.0",
+        "latest_stable": "6.1.0",
         "action": "Maintain",
         "evidence": "Local package declaration"
     },
@@ -162,7 +162,7 @@ matrix = [
         "prev_certified": prev_lock.get("claude", {}).get("cli_version", "2.1.263"),
         "installed": claude_ver,
         "latest_stable": claude_ver,
-        "action": "Lock Target",
+        "action": "Check Only",
         "evidence": f"claude --version ({claude_ver})"
     },
     {
@@ -170,7 +170,7 @@ matrix = [
         "prev_certified": prev_lock.get("opencode", {}).get("cli_version", "1.18.31"),
         "installed": opencode_ver,
         "latest_stable": opencode_ver,
-        "action": "Lock Target",
+        "action": "Check Only",
         "evidence": f"opencode --version ({opencode_ver})"
     },
     {
@@ -200,7 +200,7 @@ matrix = [
 ]
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v6.0.0) — Toolchain & Package Update Gate")
+print("AGY-Herdr Software Factory (v6.1.0) — Toolchain & Package Update Gate")
 print("=" * 80)
 header_fmt = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
 row_fmt    = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
@@ -251,7 +251,7 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
 if mode == "--apply":
     print("\n[APPLY MODE]")
     new_lock = {
-        "factory": {"version": "6.0.0", "schema_version": "6.0.0"},
+        "factory": {"version": "6.1.0", "schema_version": "6.1.0"},
         "certified_environment": {
             "os": os.uname().sysname,
             "architecture": os.uname().machine,
@@ -301,9 +301,9 @@ if mode == "--apply":
         },
         "opencode": {
             "cli_version": opencode_ver,
-            "certified_model": "google/gemini-3.8-flash",
-            "certified_effort": "high",
-            "catalog_status": f"Installed opencode CLI ({opencode_ver}) verified. OpenCodeAdapter is fully implemented and deterministically tested via test harness. Requires OPENROUTER_API_KEY for live execution."
+            "certified_model": "openrouter/openrouter/free",
+            "certified_effort": "free",
+            "catalog_status": f"Installed opencode CLI ({opencode_ver}) verified. Genuine execution certified via OPENROUTER_API_KEY with openrouter/openrouter/free."
         },
         "certified_profiles": list(profiles_data.keys()),
         "python": {
@@ -326,7 +326,7 @@ if mode == "--apply":
     }
     with open(lock_file, "w", encoding="utf-8") as f:
         json.dump(new_lock, f, indent=2)
-    print("  -> Updated toolchain.lock.json to v6.0.0 successfully.")
+    print("  -> Updated toolchain.lock.json to v6.1.0 successfully.")
 
 print("=" * 80)
 EOF

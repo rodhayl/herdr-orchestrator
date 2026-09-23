@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "6.0.0",
-    "schema_version": "6.0.0"
+    "version": "6.1.0",
+    "schema_version": "6.1.0"
   },
   "certified_environment": {
     "os": "Linux",
@@ -60,9 +60,9 @@
   },
   "opencode": {
     "cli_version": "1.18.31",
-    "certified_model": "google/gemini-3.8-flash",
-    "certified_effort": "high",
-    "catalog_status": "Installed opencode CLI (1.18.31) verified. OpenCodeAdapter is fully implemented and deterministically tested via test harness. Requires OPENROUTER_API_KEY for live execution."
+    "certified_model": "openrouter/openrouter/free",
+    "certified_effort": "free",
+    "catalog_status": "Installed opencode CLI (1.18.31) verified. Genuine execution certified via OPENROUTER_API_KEY with openrouter/openrouter/free."
   },
   "certified_profiles": [
     "agy-spec-high",
