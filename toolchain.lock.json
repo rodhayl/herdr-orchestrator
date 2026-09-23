@@ -1,0 +1,64 @@
+{
+  "factory": {
+    "version": "4.0.0",
+    "schema_version": "4.0.0"
+  },
+  "certified_environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "kernel": "6.8.0-139-generic"
+  },
+  "herdr": {
+    "version": "0.9.1",
+    "protocol": 22,
+    "relevant_api_schema_hash": "dfc5451a8c0e690ccea360935cf413ddafb7908660c6e32b8fcc839374e00418"
+  },
+  "herdr_board": {
+    "selected_release": "v0.17.0",
+    "git_commit": "b6c9bce7a2307053a3ba039db31eb880c8979230",
+    "required_herdr_version": "0.9.0",
+    "required_herdr_protocol": 22,
+    "board_protocol": "board.v1",
+    "sqlite_schema": "v1",
+    "compatibility_status": "BLOCKED_EXTERNAL_COMPATIBILITY",
+    "compatibility_notes": "herdr-board v0.17.0 requires Herdr 0.9.0 (protocol 22); host has Herdr 0.9.1 (protocol 22)."
+  },
+  "agy": {
+    "cli_version": "1.2.9",
+    "worker_profiles": [
+      "agy",
+      "agy2",
+      "agy3",
+      "agy4",
+      "agy5",
+      "agy6",
+      "agy7"
+    ],
+    "certified_model": "gemini-3.8-flash-high",
+    "certified_effort": "high"
+  },
+  "droid": {
+    "cli_version": "0.225.1",
+    "certified_model": "qwen3.8-max",
+    "certified_effort": "xhigh",
+    "certified_autonomy": "low",
+    "catalog_status": "Installed droid CLI v0.224.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
+  },
+  "python": {
+    "version": "3.12.3",
+    "implementation": "CPython",
+    "policy": "stdlib_only"
+  },
+  "git": {
+    "version": "2.43.0"
+  },
+  "rustc": {
+    "version": null,
+    "installed": false
+  },
+  "cargo": {
+    "version": null,
+    "installed": false
+  },
+  "certified_at": "2026-09-23T07:52:00Z"
+}
