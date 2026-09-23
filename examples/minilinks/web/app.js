@@ -557,6 +557,14 @@
     titleLink.textContent = bookmark.title;
 
     titleH3.appendChild(titleLink);
+
+    if (isArch) {
+      const badge = document.createElement('span');
+      badge.className = 'badge badge-archived';
+      badge.textContent = 'Archived';
+      titleH3.appendChild(badge);
+    }
+
     titleRow.appendChild(titleH3);
 
     // Favorite / Star toggle button (★ / ☆)
