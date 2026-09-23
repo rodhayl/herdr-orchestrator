@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "minilinks_v3_favorite",
+  "name": "MiniLinks v3 Favorite/Star Bookmarks Feature DAG Orchestration Plan",
+  "version": "3.0.0",
+  "target_application": {
+    "name": "MiniLinks",
+    "description": "Lightweight SQLite-backed bookmark manager with favorites/starring support",
+    "root_directory": "examples/minilinks"
+  },
+  "max_concurrency": 2,
+  "tasks": [
+    {
+      "task_id": "spec",
+      "worker_id": "agy2",
+      "dependencies": [],
+      "description": "Update examples/minilinks/SPEC.md to specify the Bookmarks Favorite/Star feature. Define the is_favorite boolean attribute (stored as INTEGER DEFAULT 0 in SQLite, serialized as boolean in JSON payloads), update PATCH /api/bookmarks/<id> contract to accept {'is_favorite': true/false}, update GET /api/bookmarks contract to support query parameter ?favorites=true to return only favorite bookmarks, and specify the frontend bookmark card star button (★/☆) toggle and filter bar favorites button.",
+      "allowed_paths": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "expected_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "backend",
+      "worker_id": "agy3",
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement the is_favorite feature in the MiniLinks backend. In examples/minilinks/app/database.py: update SQLite schema to include 'is_favorite INTEGER DEFAULT 0' (with backward-compatible table migration adding the column via ALTER TABLE if missing), support favorites_only filter in get_all_bookmarks, support is_favorite in update_bookmark, and ensure row-to-dict returns 'is_favorite' as a Python boolean. In examples/minilinks/app/server.py: parse ?favorites=true in GET /api/bookmarks, parse is_favorite in PATCH /api/bookmarks/<id>, and ensure JSON response includes is_favorite.",
+      "allowed_paths": [
+        "examples/minilinks/app/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/app/database.py",
+        "examples/minilinks/app/server.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "frontend",
+      "worker_id": "agy4",
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement the favorite/star bookmark UI in examples/minilinks/web/. In index.html: add a 'Favorites' filter button or tab in the search/filter controls. In app.js: add a star/favorite toggle button (★ / ☆) to each rendered bookmark card that triggers a PATCH /api/bookmarks/<id> with {'is_favorite': !current} and updates UI state; implement filtering by favorites when the Favorites filter is active. In style.css: add styling for the favorite toggle button and active star highlight color.",
+      "allowed_paths": [
+        "examples/minilinks/web/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/web/index.html",
+        "examples/minilinks/web/style.css",
+        "examples/minilinks/web/app.js"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "backend_tests",
+      "worker_id": "agy5",
+      "dependencies": [
+        "backend"
+      ],
+      "description": "Add comprehensive test coverage for the is_favorite feature in examples/minilinks/tests/. In test_api.py: test that newly created bookmarks have is_favorite=False by default, test PATCH /api/bookmarks/<id> toggling is_favorite to true and false, test GET /api/bookmarks?favorites=true returns only favorites, and test validation on invalid is_favorite values. In test_persistence.py: test that is_favorite status persists accurately across SQLite database server restarts.",
+      "allowed_paths": [
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/tests/test_api.py",
+        "examples/minilinks/tests/test_persistence.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "integration",
+      "worker_id": "agy6",
+      "dependencies": [
+        "frontend",
+        "backend_tests"
+      ],
+      "is_repair": true,
+      "description": "Harden integration between backend, frontend, and tests. Update examples/minilinks/scripts/smoke_test.py to verify favorite toggling via PATCH and favorites filtering via GET /api/bookmarks?favorites=true in the deterministic smoke test. Fix any defects across app, web, tests, or scripts so all unit tests and the smoke test pass with zero errors.",
+      "allowed_paths": [
+        "examples/minilinks/scripts/**",
+        "examples/minilinks/app/**",
+        "examples/minilinks/web/**",
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "audit",
+      "worker_id": "agy7",
+      "dependencies": [
+        "integration"
+      ],
+      "review_only": true,
+      "description": "Perform an independent, rigorous final audit of the complete MiniLinks favorite/star implementation across database schema, REST API contracts, static frontend UI, test suites, and smoke test against examples/minilinks/SPEC.md.",
+      "allowed_paths": [],
+      "expected_files": [],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    }
+  ],
+  "post_validation": [
+    {
+      "name": "minilinks_unit_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "examples/minilinks/tests",
+        "-v"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "minilinks_smoke_test",
+      "command": [
+        "python3",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "miniboard_regression_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "factory_core_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "factory_tests",
+        "-v"
+      ],
+      "timeout": 60
+    }
+  ]
+}
