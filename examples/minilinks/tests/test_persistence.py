@@ -1489,6 +1489,154 @@ class TestMiniLinksPersistence(unittest.TestCase):
                     pass
             temp_dir.cleanup()
 
+    def test_sqlite_backward_compatibility_migration_all_legacy_columns(self) -> None:
+        """Verifies automatic database migration adds all missing columns (notes, tags, is_favorite, archived) to an ancient SQLite schema."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "ancient_bare_schema.db")
+        server1: Optional[MiniLinksServer] = None
+        server2: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Create a bare table schema with ONLY id, title, url, created_at, updated_at
+            conn = sqlite3.connect(db_path)
+            with conn:
+                conn.execute("""
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        "Ancient Legacy Bookmark",
+                        "https://ancient.example.com",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+            conn.close()
+
+            # 2. Start Server 1 (should automatically migrate schema adding notes, tags, is_favorite, archived)
+            server1 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base1 = f"http://127.0.0.1:{server1.server_port}"
+
+            # Verify legacy bookmark returns with all defaults: notes="", tags=[], is_favorite=False, archived=False
+            status, bms = send_http_request(base1, "GET", "/api/bookmarks")
+            self.assertEqual(status, 200)
+            self.assertEqual(len(bms), 1)
+            bm = bms[0]
+            legacy_id = bm["id"]
+            self.assertEqual(bm["title"], "Ancient Legacy Bookmark")
+            self.assertEqual(bm["url"], "https://ancient.example.com")
+            self.assertEqual(bm["notes"], "")
+            self.assertEqual(bm["tags"], [])
+            self.assertIs(bm["is_favorite"], False)
+            self.assertIs(bm["archived"], False)
+
+            # Update legacy bookmark via PATCH to populate all 4 migrated fields
+            status_patch, patched = send_http_request(
+                base1,
+                "PATCH",
+                f"/api/bookmarks/{legacy_id}",
+                {
+                    "notes": "Added notes after full migration",
+                    "tags": ["ancient", "migrated"],
+                    "is_favorite": True,
+                    "archived": True,
+                },
+            )
+            self.assertEqual(status_patch, 200)
+            self.assertEqual(patched["notes"], "Added notes after full migration")
+            self.assertEqual(patched["tags"], ["ancient", "migrated"])
+            self.assertIs(patched["is_favorite"], True)
+            self.assertIs(patched["archived"], True)
+
+            # Shut down Server 1 cleanly
+            server1.shutdown()
+            server1.server_close()
+            server1 = None
+
+            # 3. Direct SQLite verification of the migrated columns and values while offline
+            conn2 = sqlite3.connect(db_path)
+            conn2.row_factory = sqlite3.Row
+            try:
+                cursor = conn2.cursor()
+                cursor.execute("PRAGMA table_info(bookmarks)")
+                col_names = {row["name"] for row in cursor.fetchall()}
+                self.assertIn("notes", col_names)
+                self.assertIn("tags", col_names)
+                self.assertIn("is_favorite", col_names)
+                self.assertIn("archived", col_names)
+
+                cursor.execute(
+                    "SELECT id, title, url, notes, tags, is_favorite, archived FROM bookmarks WHERE id = ?",
+                    (legacy_id,),
+                )
+                row = cursor.fetchone()
+                self.assertEqual(row["notes"], "Added notes after full migration")
+                self.assertEqual(json.loads(row["tags"]), ["ancient", "migrated"])
+                self.assertEqual(row["is_favorite"], 1)
+                self.assertEqual(row["archived"], 1)
+            finally:
+                conn2.close()
+
+            # 4. Start Server 2 pointing to the same migrated DB
+            server2 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base2 = f"http://127.0.0.1:{server2.server_port}"
+
+            # Since it is archived, default GET should return 0 items
+            status_def, bms_def = send_http_request(base2, "GET", "/api/bookmarks")
+            self.assertEqual(status_def, 200)
+            self.assertEqual(len(bms_def), 0)
+
+            # GET ?archived=true should return it
+            status_arch, bms_arch = send_http_request(base2, "GET", "/api/bookmarks?archived=true")
+            self.assertEqual(status_arch, 200)
+            self.assertEqual(len(bms_arch), 1)
+            self.assertEqual(bms_arch[0]["id"], legacy_id)
+            self.assertEqual(bms_arch[0]["notes"], "Added notes after full migration")
+            self.assertEqual(bms_arch[0]["tags"], ["ancient", "migrated"])
+            self.assertIs(bms_arch[0]["is_favorite"], True)
+            self.assertIs(bms_arch[0]["archived"], True)
+
+            # Restore via POST /api/bookmarks/<id>/restore on Server 2
+            status_restore, restored = send_http_request(base2, "POST", f"/api/bookmarks/{legacy_id}/restore")
+            self.assertEqual(status_restore, 200)
+            self.assertIs(restored["archived"], False)
+
+            # Verify it is now in active list
+            status_active, bms_active = send_http_request(base2, "GET", "/api/bookmarks")
+            self.assertEqual(status_active, 200)
+            self.assertEqual(len(bms_active), 1)
+            self.assertEqual(bms_active[0]["id"], legacy_id)
+            self.assertIs(bms_active[0]["archived"], False)
+
+            server2.shutdown()
+            server2.server_close()
+            server2 = None
+        finally:
+            if server1:
+                try:
+                    server1.shutdown()
+                    server1.server_close()
+                except Exception:
+                    pass
+            if server2:
+                try:
+                    server2.shutdown()
+                    server2.server_close()
+                except Exception:
+                    pass
+            temp_dir.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
+

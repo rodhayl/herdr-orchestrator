@@ -1686,11 +1686,23 @@ class TestMiniLinksAPI(unittest.TestCase):
         status, arch_res, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/archive")
         self.assertEqual(status, 200)
         self.assertTrue(arch_res["archived"])
+        self.assertEqual(arch_res["created_at"], bm1["created_at"])
+
+        # Idempotent archive: calling /archive again when already archived returns 200
+        status_idemp, arch_idemp, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/archive")
+        self.assertEqual(status_idemp, 200)
+        self.assertTrue(arch_idemp["archived"])
 
         # Restore bm1 via dedicated endpoint
         status, rest_res, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/restore")
         self.assertEqual(status, 200)
         self.assertFalse(rest_res["archived"])
+        self.assertEqual(rest_res["created_at"], bm1["created_at"])
+
+        # Idempotent restore: calling /restore again when already active returns 200
+        status_rest_idemp, rest_idemp, _, _ = self.make_request("POST", f"/api/bookmarks/{bm1_id}/restore")
+        self.assertEqual(status_rest_idemp, 200)
+        self.assertFalse(rest_idemp["archived"])
 
         # Archive bm1 via PATCH
         status, patch_res, _, _ = self.make_request(
@@ -1698,6 +1710,13 @@ class TestMiniLinksAPI(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertTrue(patch_res["archived"])
+
+        # Unarchive bm1 via PATCH
+        status, unpatch_res, _, _ = self.make_request(
+            "PATCH", f"/api/bookmarks/{bm1_id}", {"archived": False}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(unpatch_res["archived"])
 
         # Reject invalid archived type on PATCH
         status, err, _, _ = self.make_request(
@@ -1719,44 +1738,89 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status, 400)
 
     def test_archived_filtering(self) -> None:
-        """Verifies GET /api/bookmarks filtering by archived status."""
-        # Insert active bookmark
-        self.make_request(
+        """Verifies GET /api/bookmarks filtering by archived status and combinations with favorites, q, and tags."""
+        # Insert active bookmark (favorite)
+        _, active_fav, _, _ = self.make_request(
             "POST",
             "/api/bookmarks",
-            {"title": "Active One", "url": "https://active1.example.com", "notes": "active notes"},
+            {"title": "Active One", "url": "https://active1.example.com", "notes": "active notes", "is_favorite": True, "tags": ["active", "web"]},
         )
-        # Insert archived bookmark
-        self.make_request(
+        # Insert active bookmark (non-favorite)
+        _, active_nonfav, _, _ = self.make_request(
             "POST",
             "/api/bookmarks",
-            {"title": "Archived One", "url": "https://archived1.example.com", "notes": "archived notes", "archived": True},
+            {"title": "Active Two", "url": "https://active2.example.com", "notes": "active two notes", "is_favorite": False, "tags": ["active"]},
+        )
+        # Insert archived bookmark (favorite)
+        _, arch_fav, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Archived One", "url": "https://archived1.example.com", "notes": "archived notes", "is_favorite": True, "archived": True, "tags": ["archived", "web"]},
+        )
+        # Insert archived bookmark (non-favorite)
+        _, arch_nonfav, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            {"title": "Archived Two", "url": "https://archived2.example.com", "notes": "archived two notes", "is_favorite": False, "archived": True, "tags": ["archived"]},
         )
 
         # Default GET /api/bookmarks: only active
         status, active_bms, _, _ = self.make_request("GET", "/api/bookmarks")
         self.assertEqual(status, 200)
-        self.assertEqual(len(active_bms), 1)
-        self.assertEqual(active_bms[0]["title"], "Active One")
-        self.assertFalse(active_bms[0]["archived"])
+        self.assertEqual(len(active_bms), 2)
+        self.assertEqual([b["id"] for b in active_bms], [active_fav["id"], active_nonfav["id"]])
+        for b in active_bms:
+            self.assertFalse(b["archived"])
 
         # Explicit ?archived=false: only active
         status, false_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=false")
         self.assertEqual(status, 200)
-        self.assertEqual(len(false_bms), 1)
-        self.assertEqual(false_bms[0]["title"], "Active One")
+        self.assertEqual(len(false_bms), 2)
+        self.assertEqual([b["id"] for b in false_bms], [active_fav["id"], active_nonfav["id"]])
 
         # Explicit ?archived=true: only archived
         status, arch_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=true")
         self.assertEqual(status, 200)
-        self.assertEqual(len(arch_bms), 1)
-        self.assertEqual(arch_bms[0]["title"], "Archived One")
-        self.assertTrue(arch_bms[0]["archived"])
+        self.assertEqual(len(arch_bms), 2)
+        self.assertEqual([b["id"] for b in arch_bms], [arch_fav["id"], arch_nonfav["id"]])
+        for b in arch_bms:
+            self.assertTrue(b["archived"])
 
-        # Explicit ?archived=all: both
+        # Explicit ?archived=all: all 4
         status, all_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=all")
         self.assertEqual(status, 200)
-        self.assertEqual(len(all_bms), 2)
+        self.assertEqual(len(all_bms), 4)
+
+        # Combined filter: ?archived=true&favorites=true
+        status, arch_fav_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=true&favorites=true")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(arch_fav_bms), 1)
+        self.assertEqual(arch_fav_bms[0]["id"], arch_fav["id"])
+
+        # Combined filter: ?archived=false&favorites=true
+        status, act_fav_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=false&favorites=true")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(act_fav_bms), 1)
+        self.assertEqual(act_fav_bms[0]["id"], active_fav["id"])
+
+        # Combined filter: ?archived=all&favorites=true
+        status, all_fav_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=all&favorites=true")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(all_fav_bms), 2)
+        self.assertEqual([b["id"] for b in all_fav_bms], [active_fav["id"], arch_fav["id"]])
+
+        # Combined filter: ?archived=true&q=One
+        status, q_arch_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=true&q=One")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(q_arch_bms), 1)
+        self.assertEqual(q_arch_bms[0]["id"], arch_fav["id"])
+
+        # Combined filter: ?archived=all&tag=web
+        status, tag_all_bms, _, _ = self.make_request("GET", "/api/bookmarks?archived=all&tag=web")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(tag_all_bms), 2)
+        self.assertEqual([b["id"] for b in tag_all_bms], [active_fav["id"], arch_fav["id"]])
+
 
 
 if __name__ == "__main__":

@@ -607,6 +607,11 @@ def run_smoke_test() -> None:
         finally:
             conn.close()
 
+        # Idempotent archive: calling /archive again when already archived returns 200
+        status_arch_idemp, payload_arch_idemp, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/archive")
+        assert status_arch_idemp == 200, f"Expected HTTP 200 on repeated archive, got {status_arch_idemp}"
+        assert payload_arch_idemp.get("archived") is True
+
         # 2. Verify default GET /api/bookmarks returns 0 items (active only by default)
         status_unarch_list, payload_unarch_list, _ = http_request(base_url, "GET", "/api/bookmarks")
         assert status_unarch_list == 200
@@ -676,6 +681,11 @@ def run_smoke_test() -> None:
             assert row is not None and row[0] == 0, f"Expected archived=0 in sqlite3 after restore, got {row}"
         finally:
             conn.close()
+
+        # Idempotent restore: calling /restore again when already active returns 200
+        status_rest_idemp, payload_rest_idemp, _ = http_request(base_url, "POST", f"/api/bookmarks/{bm_id}/restore")
+        assert status_rest_idemp == 200, f"Expected HTTP 200 on repeated restore, got {status_rest_idemp}"
+        assert payload_rest_idemp.get("archived") is False
 
         # 8. Verify default GET /api/bookmarks now returns the bookmark again
         status_rest_list, payload_rest_list, _ = http_request(base_url, "GET", "/api/bookmarks")

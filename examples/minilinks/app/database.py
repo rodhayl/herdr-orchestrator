@@ -673,19 +673,30 @@ def update_bookmark(
 
 
 def archive_bookmark(
-    id: Union[int, str],
+    id: Optional[Union[int, str]] = None,
     db_path: Union[str, Path] = DEFAULT_DB_PATH,
+    *,
+    bookmark_id: Optional[Union[int, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Marks a bookmark as archived (archived = 1)."""
-    return update_bookmark(id=id, archived=True, db_path=db_path)
+    raw_id = id if id is not None else bookmark_id
+    if raw_id is None:
+        return None
+    return update_bookmark(id=raw_id, archived=True, db_path=db_path)
 
 
 def restore_bookmark(
-    id: Union[int, str],
+    id: Optional[Union[int, str]] = None,
     db_path: Union[str, Path] = DEFAULT_DB_PATH,
+    *,
+    bookmark_id: Optional[Union[int, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Restores an archived bookmark (archived = 0)."""
-    return update_bookmark(id=id, archived=False, db_path=db_path)
+    raw_id = id if id is not None else bookmark_id
+    if raw_id is None:
+        return None
+    return update_bookmark(id=raw_id, archived=False, db_path=db_path)
+
 
 
 def delete_bookmark(
