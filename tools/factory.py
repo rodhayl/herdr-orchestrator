@@ -3078,7 +3078,7 @@ class TaskExecutor:
             and agy_data.get("status") in ("SUCCESS", "COMPLETED")
             and not path_violations
             and not missing_expected
-            and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected))
+            and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected) or self.task_type in ("support", "fixture"))
         )
 
         self.state = "PATH_VALIDATED" if is_success else "FAILED"
