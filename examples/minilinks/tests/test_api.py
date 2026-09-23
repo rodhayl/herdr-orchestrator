@@ -1822,6 +1822,5 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual([b["id"] for b in tag_all_bms], [active_fav["id"], arch_fav["id"]])
 
 
-
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,7 @@ def _migrate_notes_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in cursor.fetchall()]
     if cols and "notes" not in cols:
         cursor.execute("ALTER TABLE bookmarks ADD COLUMN notes TEXT DEFAULT ''")
+    if cols:
         cursor.execute("UPDATE bookmarks SET notes = '' WHERE notes IS NULL")
 
 
@@ -42,6 +43,7 @@ def _migrate_tags_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in cursor.fetchall()]
     if cols and "tags" not in cols:
         cursor.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT DEFAULT '[]'")
+    if cols:
         cursor.execute("UPDATE bookmarks SET tags = '[]' WHERE tags IS NULL OR tags = ''")
 
 
@@ -52,6 +54,7 @@ def _migrate_favorite_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in cursor.fetchall()]
     if cols and "is_favorite" not in cols:
         cursor.execute("ALTER TABLE bookmarks ADD COLUMN is_favorite INTEGER DEFAULT 0")
+    if cols:
         cursor.execute("UPDATE bookmarks SET is_favorite = 0 WHERE is_favorite IS NULL")
 
 
@@ -62,6 +65,7 @@ def _migrate_archived_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in cursor.fetchall()]
     if cols and "archived" not in cols:
         cursor.execute("ALTER TABLE bookmarks ADD COLUMN archived INTEGER DEFAULT 0")
+    if cols:
         cursor.execute("UPDATE bookmarks SET archived = 0 WHERE archived IS NULL")
 
 
@@ -262,7 +266,7 @@ def get_bookmarks(
         if tag_filter:
             tag_lower = tag_filter.lower()
             conditions.append(
-                "(EXISTS (SELECT 1 FROM json_each(bookmarks.tags) WHERE LOWER(json_each.value) = ?) OR "
+                "(EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(bookmarks.tags) THEN bookmarks.tags ELSE '[]' END) WHERE LOWER(json_each.value) = ?) OR "
                 "instr(LOWER(COALESCE(tags, '[]')), LOWER(?)) > 0)"
             )
             params.extend([tag_lower, f'"{tag_lower}"'])
@@ -288,7 +292,7 @@ def get_bookmarks(
             cursor.execute(sql, params)
         except sqlite3.OperationalError as e:
             err_msg = str(e)
-            if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived")):
+            if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived", "no such column")):
                 with conn:
                     _migrate_notes_column(conn)
                     _migrate_tags_column(conn)
@@ -327,7 +331,7 @@ def get_all_tags(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> List[str]:
         try:
             cursor.execute("""
                 SELECT DISTINCT json_each.value
-                FROM bookmarks, json_each(bookmarks.tags)
+                FROM bookmarks, json_each(CASE WHEN json_valid(bookmarks.tags) THEN bookmarks.tags ELSE '[]' END)
                 WHERE json_each.value IS NOT NULL AND trim(json_each.value) != ''
                 ORDER BY LOWER(json_each.value) ASC
             """)
@@ -378,7 +382,7 @@ def get_bookmark_by_id(
             cursor.execute(sql, (target_id,))
         except sqlite3.OperationalError as e:
             err_msg = str(e)
-            if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived")):
+            if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived", "no such column")):
                 with conn:
                     _migrate_notes_column(conn)
                     _migrate_tags_column(conn)
@@ -481,7 +485,7 @@ def create_bookmark(
                 )
             except sqlite3.OperationalError as e:
                 err_msg = str(e)
-                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived")):
+                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived", "no such column")):
                     _migrate_notes_column(conn)
                     _migrate_tags_column(conn)
                     _migrate_favorite_column(conn)
@@ -625,7 +629,7 @@ def update_bookmark(
                 )
             except sqlite3.OperationalError as e:
                 err_msg = str(e)
-                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived")):
+                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived", "no such column")):
                     _migrate_notes_column(conn)
                     _migrate_tags_column(conn)
                     _migrate_favorite_column(conn)
@@ -648,7 +652,7 @@ def update_bookmark(
                 )
             except sqlite3.OperationalError as e:
                 err_msg = str(e)
-                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived")):
+                if any(col in err_msg for col in ("is_favorite", "notes", "tags", "archived", "no such column")):
                     _migrate_notes_column(conn)
                     _migrate_tags_column(conn)
                     _migrate_favorite_column(conn)
@@ -696,7 +700,6 @@ def restore_bookmark(
     if raw_id is None:
         return None
     return update_bookmark(id=raw_id, archived=False, db_path=db_path)
-
 
 
 def delete_bookmark(
