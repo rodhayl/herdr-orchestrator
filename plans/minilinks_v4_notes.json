@@ -141,6 +141,7 @@
       "context_files": [
         "examples/minilinks/SPEC.md"
       ],
+      "model": "claude-sonnet-4-6",
       "timeout": 360
     }
   ],
