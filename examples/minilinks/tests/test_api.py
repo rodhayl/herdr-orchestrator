@@ -202,6 +202,85 @@ class TestMiniLinksAPI(unittest.TestCase):
         finally:
             conn.close()
 
+    # 3a. Newly created bookmarks accept notes
+    def test_create_bookmark_accepts_notes(self) -> None:
+        """Verifies newly created bookmarks accept notes (standard, multiline, unicode, markdown)."""
+        # Standard single-line notes
+        data1 = {
+            "title": "Standard Notes Test",
+            "url": "https://example.com/standard",
+            "notes": "A concise note describing the bookmark",
+        }
+        status1, payload1, _, _ = self.make_request("POST", "/api/bookmarks", data=data1)
+        self.assertEqual(status1, 201)
+        self.assertEqual(payload1.get("notes"), "A concise note describing the bookmark")
+        bm1_id = payload1["id"]
+
+        # Multiline notes with newlines and indentation
+        multiline_notes = "Line 1: Overview\nLine 2: Key Details\n  - Sub-item A\n  - Sub-item B\nLine 3: Conclusion"
+        data2 = {
+            "title": "Multiline Notes Test",
+            "url": "https://example.com/multiline",
+            "notes": multiline_notes,
+        }
+        status2, payload2, _, _ = self.make_request("POST", "/api/bookmarks", data=data2)
+        self.assertEqual(status2, 201)
+        self.assertEqual(payload2.get("notes"), multiline_notes)
+        bm2_id = payload2["id"]
+
+        # Unicode and special characters
+        unicode_notes = "🚀 MiniLinks Bookmarks — 100% stdlib! Tag: #python #sqlite (special chars: <>&\"'/$%^*)"
+        data3 = {
+            "title": "Unicode Notes Test",
+            "url": "https://example.com/unicode",
+            "notes": unicode_notes,
+        }
+        status3, payload3, _, _ = self.make_request("POST", "/api/bookmarks", data=data3)
+        self.assertEqual(status3, 201)
+        self.assertEqual(payload3.get("notes"), unicode_notes)
+        bm3_id = payload3["id"]
+
+        # Markdown formatted notes
+        markdown_notes = "## API Reference\n```python\nimport sqlite3\nconn = sqlite3.connect('minilinks.db')\n```\n[Link](https://docs.python.org)"
+        data4 = {
+            "title": "Markdown Notes Test",
+            "url": "https://example.com/markdown",
+            "notes": markdown_notes,
+        }
+        status4, payload4, _, _ = self.make_request("POST", "/api/bookmarks", data=data4)
+        self.assertEqual(status4, 201)
+        self.assertEqual(payload4.get("notes"), markdown_notes)
+        bm4_id = payload4["id"]
+
+        # Direct database inspection
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, notes FROM bookmarks WHERE id IN (?, ?, ?, ?) ORDER BY id ASC",
+                (bm1_id, bm2_id, bm3_id, bm4_id),
+            )
+            rows = cursor.fetchall()
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(rows[0][1], "A concise note describing the bookmark")
+            self.assertEqual(rows[1][1], multiline_notes)
+            self.assertEqual(rows[2][1], unicode_notes)
+            self.assertEqual(rows[3][1], markdown_notes)
+        finally:
+            conn.close()
+
+        # Verify via GET /api/bookmarks/<id>
+        for bm_id, expected_notes in [
+            (bm1_id, "A concise note describing the bookmark"),
+            (bm2_id, multiline_notes),
+            (bm3_id, unicode_notes),
+            (bm4_id, markdown_notes),
+        ]:
+            status_get, bm_get, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+            self.assertEqual(status_get, 200)
+            self.assertEqual(bm_get.get("notes"), expected_notes)
+
+    # 3b. Default empty notes when omitted or null
     def test_create_bookmark_default_notes(self) -> None:
         """Verifies POST /api/bookmarks handles omitted or None notes with empty string default."""
         data1 = {
@@ -226,6 +305,69 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status2, 201)
         self.assertEqual(payload2.get("notes"), "")
         self.assertIs(payload2.get("is_favorite"), False)
+
+    def test_create_bookmark_default_empty_notes(self) -> None:
+        """Verifies default empty notes string when notes attribute is omitted, null, or empty string."""
+        # 1. Notes omitted entirely
+        data_omitted = {
+            "title": "Omitted Notes Bookmark",
+            "url": "https://example.com/omitted",
+        }
+        status1, payload1, _, _ = self.make_request("POST", "/api/bookmarks", data=data_omitted)
+        self.assertEqual(status1, 201)
+        self.assertIn("notes", payload1)
+        self.assertEqual(payload1["notes"], "")
+        self.assertIsInstance(payload1["notes"], str)
+        bm1_id = payload1["id"]
+
+        # 2. Notes explicitly null / None
+        data_null = {
+            "title": "Null Notes Bookmark",
+            "url": "https://example.com/null-notes",
+            "notes": None,
+        }
+        status2, payload2, _, _ = self.make_request("POST", "/api/bookmarks", data=data_null)
+        self.assertEqual(status2, 201)
+        self.assertIn("notes", payload2)
+        self.assertEqual(payload2["notes"], "")
+        self.assertIsInstance(payload2["notes"], str)
+        bm2_id = payload2["id"]
+
+        # 3. Notes explicitly empty string ""
+        data_empty = {
+            "title": "Empty String Notes Bookmark",
+            "url": "https://example.com/empty-notes",
+            "notes": "",
+        }
+        status3, payload3, _, _ = self.make_request("POST", "/api/bookmarks", data=data_empty)
+        self.assertEqual(status3, 201)
+        self.assertIn("notes", payload3)
+        self.assertEqual(payload3["notes"], "")
+        self.assertIsInstance(payload3["notes"], str)
+        bm3_id = payload3["id"]
+
+        # Direct database inspection
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, notes FROM bookmarks WHERE id IN (?, ?, ?) ORDER BY id ASC",
+                (bm1_id, bm2_id, bm3_id),
+            )
+            rows = cursor.fetchall()
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(rows[0][1], "")
+            self.assertEqual(rows[1][1], "")
+            self.assertEqual(rows[2][1], "")
+        finally:
+            conn.close()
+
+        # Verify via GET /api/bookmarks/<id>
+        for bm_id in [bm1_id, bm2_id, bm3_id]:
+            status_get, bm_get, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+            self.assertEqual(status_get, 200)
+            self.assertEqual(bm_get.get("notes"), "")
+            self.assertIsNotNone(bm_get.get("notes"))
 
     def test_create_bookmark_default_is_favorite(self) -> None:
         """Verifies newly created bookmarks have is_favorite=False by default."""
@@ -465,6 +607,65 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("error", payload)
 
+    # 4b. Validation on invalid notes
+    def test_validation_on_invalid_notes(self) -> None:
+        """Verifies POST and PATCH reject non-string notes with 400 Bad Request."""
+        invalid_notes = [
+            123,
+            0,
+            -45,
+            3.14159,
+            True,
+            False,
+            ["note1", "note2"],
+            [],
+            {"text": "note"},
+            {},
+        ]
+
+        # 1. Test POST with non-string notes
+        for val in invalid_notes:
+            with self.subTest(post_invalid_notes=val):
+                status, payload, _, _ = self.make_request(
+                    "POST",
+                    "/api/bookmarks",
+                    data={
+                        "title": "Invalid Notes Post",
+                        "url": "https://example.com/invalid-notes",
+                        "notes": val,
+                    },
+                )
+                self.assertEqual(status, 400)
+                self.assertIsInstance(payload, dict)
+                self.assertIn("error", payload)
+                self.assertEqual(payload.get("error"), "Notes must be a string if provided")
+
+        # 2. Test PATCH with non-string notes
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={"title": "Patch Target", "url": "https://example.com/target", "notes": "Initial"},
+        )
+        bm_id = created["id"]
+
+        invalid_patch_notes = invalid_notes + [None]
+        for val in invalid_patch_notes:
+            with self.subTest(patch_invalid_notes=val):
+                status, payload, _, _ = self.make_request(
+                    "PATCH",
+                    f"/api/bookmarks/{bm_id}",
+                    data={"notes": val},
+                )
+                self.assertEqual(status, 400)
+                self.assertIsInstance(payload, dict)
+                self.assertIn("error", payload)
+                self.assertEqual(payload.get("error"), "Invalid update payload")
+
+        # Verify bookmark notes was not mutated
+        status_get, bm_get, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+        self.assertEqual(status_get, 200)
+        self.assertEqual(bm_get["notes"], "Initial")
+
     # 5. Search filtering
     def test_search_filtering(self) -> None:
         """Verifies GET /api/bookmarks?q= matches title, url, or notes case-insensitively."""
@@ -529,13 +730,103 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(results), 3)
 
+    # 5b. Search filtering matching notes
+    def test_search_filtering_matching_notes(self) -> None:
+        """Verifies GET /api/bookmarks?q= matches substrings in notes case-insensitively, in multiline text, and combined with favorites."""
+        bm1 = {
+            "title": "Alpha Resource",
+            "url": "https://alpha.example.com",
+            "notes": "Comprehensive guide on neural network architectures and deep learning",
+            "is_favorite": True,
+        }
+        bm2 = {
+            "title": "Beta Framework",
+            "url": "https://beta.example.com",
+            "notes": "Reinforcement learning techniques and policy gradients",
+            "is_favorite": False,
+        }
+        bm3 = {
+            "title": "Gamma Tool",
+            "url": "https://gamma.example.com",
+            "notes": "Line 1: Setup instructions\nLine 2: SecretTokenInNotes for auth\nLine 3: Teardown",
+            "is_favorite": True,
+        }
+        bm4 = {
+            "title": "Delta Library",
+            "url": "https://delta.example.com",
+            "notes": "",
+            "is_favorite": False,
+        }
+        _, b1, _, _ = self.make_request("POST", "/api/bookmarks", data=bm1)
+        _, b2, _, _ = self.make_request("POST", "/api/bookmarks", data=bm2)
+        _, b3, _, _ = self.make_request("POST", "/api/bookmarks", data=bm3)
+        _, b4, _, _ = self.make_request("POST", "/api/bookmarks", data=bm4)
+
+        # 1. Match keyword present ONLY in notes of BM1
+        status, res, _, _ = self.make_request("GET", "/api/bookmarks?q=architectures")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["id"], b1["id"])
+
+        # 2. Case-insensitive notes match: uppercase, lowercase, mixed case
+        for query in ["NEURAL", "neural", "nEuRaL", "DEEP LEARNING"]:
+            with self.subTest(query=query):
+                status, res, _, _ = self.make_request("GET", f"/api/bookmarks?q={urllib.parse.quote(query)}")
+                self.assertEqual(status, 200)
+                self.assertEqual(len(res), 1)
+                self.assertEqual(res[0]["id"], b1["id"])
+
+        # 3. Match keyword in multiline notes (Line 2)
+        status_multi, res_multi, _, _ = self.make_request("GET", "/api/bookmarks?q=SecretTokenInNotes")
+        self.assertEqual(status_multi, 200)
+        self.assertEqual(len(res_multi), 1)
+        self.assertEqual(res_multi[0]["id"], b3["id"])
+
+        status_line, res_line, _, _ = self.make_request("GET", "/api/bookmarks?q=Setup%20instructions")
+        self.assertEqual(status_line, 200)
+        self.assertEqual(len(res_line), 1)
+        self.assertEqual(res_line[0]["id"], b3["id"])
+
+        # 4. Match common word present in notes of BM1 and BM2 ("learning")
+        status_common, res_common, _, _ = self.make_request("GET", "/api/bookmarks?q=learning")
+        self.assertEqual(status_common, 200)
+        self.assertEqual(len(res_common), 2)
+        common_ids = [b["id"] for b in res_common]
+        self.assertEqual(common_ids, [b1["id"], b2["id"]])
+
+        # 5. Combined with favorites filter:
+        # "learning" matches BM1 and BM2, but only BM1 is favorite
+        status_fav_combo, res_fav_combo, _, _ = self.make_request(
+            "GET", "/api/bookmarks?favorites=true&q=learning"
+        )
+        self.assertEqual(status_fav_combo, 200)
+        self.assertEqual(len(res_fav_combo), 1)
+        self.assertEqual(res_fav_combo[0]["id"], b1["id"])
+
+        # "policy" matches BM2, but BM2 is NOT favorite -> empty list []
+        status_not_fav, res_not_fav, _, _ = self.make_request(
+            "GET", "/api/bookmarks?favorites=true&q=policy"
+        )
+        self.assertEqual(status_not_fav, 200)
+        self.assertEqual(res_not_fav, [])
+
+        # 6. Non-matching term
+        status_none, res_none, _, _ = self.make_request("GET", "/api/bookmarks?q=NoSuchKeywordEver")
+        self.assertEqual(status_none, 200)
+        self.assertEqual(res_none, [])
+
+        # 7. Whitespace-only search query returns all
+        status_ws, res_ws, _, _ = self.make_request("GET", "/api/bookmarks?q=%20%20%20")
+        self.assertEqual(status_ws, 200)
+        self.assertEqual(len(res_ws), 4)
+
     # 6. Retrieve single bookmark by ID
     def test_get_bookmark_by_id(self) -> None:
         """Verifies GET /api/bookmarks/<id> returns 200, 404 for missing, and 400 for invalid ID."""
         _, created, _, _ = self.make_request(
             "POST",
             "/api/bookmarks",
-            data={"title": "Test", "url": "https://test.com", "notes": "Notes"},
+            data={"title": "Test", "url": "https://test.com", "notes": "Detailed Notes String"},
         )
         bm_id = created["id"]
 
@@ -544,6 +835,8 @@ class TestMiniLinksAPI(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(bm["id"], bm_id)
         self.assertEqual(bm["title"], "Test")
+        self.assertEqual(bm["url"], "https://test.com")
+        self.assertEqual(bm["notes"], "Detailed Notes String")
         self.assertIs(bm["is_favorite"], False)
 
         # Non-existent ID
@@ -695,6 +988,101 @@ class TestMiniLinksAPI(unittest.TestCase):
         status_get, bm_get, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
         self.assertEqual(status_get, 200)
         self.assertIs(bm_get["is_favorite"], False)
+
+    # 7b. PATCH /api/bookmarks/<id> updating notes
+    def test_patch_update_notes(self) -> None:
+        """Verifies PATCH /api/bookmarks/<id> updating notes, clearing notes, and updating with other fields."""
+        # 1. Create a bookmark with initial notes
+        _, created, _, _ = self.make_request(
+            "POST",
+            "/api/bookmarks",
+            data={
+                "title": "Patch Notes Target",
+                "url": "https://example.com/patch-target",
+                "notes": "Original initial notes text",
+            },
+        )
+        bm_id = created["id"]
+        orig_updated_at = created["updated_at"]
+        self.assertEqual(created["notes"], "Original initial notes text")
+
+        time.sleep(1.05)
+
+        # 2. Update notes to a new single-line string
+        status_update, updated, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"notes": "Updated new notes text"},
+        )
+        self.assertEqual(status_update, 200)
+        self.assertEqual(updated["id"], bm_id)
+        self.assertEqual(updated["notes"], "Updated new notes text")
+        self.assertNotEqual(updated["updated_at"], orig_updated_at)
+        time1_updated_at = updated["updated_at"]
+
+        # Verify via GET /api/bookmarks/<id>
+        status_get1, bm_get1, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+        self.assertEqual(status_get1, 200)
+        self.assertEqual(bm_get1["notes"], "Updated new notes text")
+
+        time.sleep(1.05)
+
+        # 3. Update notes to multiline content
+        multiline = "Line A\nLine B\nLine C: updated multiline notes"
+        status_multi, updated_multi, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"notes": multiline},
+        )
+        self.assertEqual(status_multi, 200)
+        self.assertEqual(updated_multi["notes"], multiline)
+        self.assertNotEqual(updated_multi["updated_at"], time1_updated_at)
+        time2_updated_at = updated_multi["updated_at"]
+
+        time.sleep(1.05)
+
+        # 4. Clear notes by sending empty string ""
+        status_clear, updated_clear, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={"notes": ""},
+        )
+        self.assertEqual(status_clear, 200)
+        self.assertEqual(updated_clear["notes"], "")
+        self.assertIsInstance(updated_clear["notes"], str)
+        self.assertNotEqual(updated_clear["updated_at"], time2_updated_at)
+
+        # Direct database inspection to ensure cleared in SQLite
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT notes FROM bookmarks WHERE id = ?", (bm_id,))
+            row = cursor.fetchone()
+            self.assertEqual(row[0], "")
+        finally:
+            conn.close()
+
+        # Verify via GET /api/bookmarks/<id>
+        status_get2, bm_get2, _, _ = self.make_request("GET", f"/api/bookmarks/{bm_id}")
+        self.assertEqual(status_get2, 200)
+        self.assertEqual(bm_get2["notes"], "")
+
+        # 5. Update notes alongside title, url, and is_favorite
+        status_combo, updated_combo, _, _ = self.make_request(
+            "PATCH",
+            f"/api/bookmarks/{bm_id}",
+            data={
+                "title": "Fully Updated Title",
+                "url": "https://example.com/fully-updated",
+                "notes": "Restored notes with favorite",
+                "is_favorite": True,
+            },
+        )
+        self.assertEqual(status_combo, 200)
+        self.assertEqual(updated_combo["title"], "Fully Updated Title")
+        self.assertEqual(updated_combo["url"], "https://example.com/fully-updated")
+        self.assertEqual(updated_combo["notes"], "Restored notes with favorite")
+        self.assertIs(updated_combo["is_favorite"], True)
 
     # 8. Favorite filtering
     def test_get_bookmarks_favorites_filter(self) -> None:

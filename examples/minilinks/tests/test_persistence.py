@@ -307,6 +307,7 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 base2, "GET", f"/api/bookmarks/{bm2_id}"
             )
             self.assertEqual(status_single2, 200)
+            self.assertEqual(single_res2["notes"], "Self-contained SQL engine")
             self.assertIs(single_res2["is_favorite"], False)
 
         finally:
@@ -318,6 +319,346 @@ class TestMiniLinksPersistence(unittest.TestCase):
                 except Exception:
                     pass
             if server2 is not None:
+                try:
+                    server2.shutdown()
+                    server2.server_close()
+                except Exception:
+                    pass
+            temp_dir.cleanup()
+
+    def test_notes_persistence_across_server_restart(self) -> None:
+        """
+        Validates that bookmark notes persist accurately across SQLite database server restarts:
+        1. Starts Server 1 on an ephemeral port with a temporary db_path.
+        2. Inserts bookmarks with varied notes (multiline, markdown, standard, omitted, null, empty).
+        3. Updates notes via PATCH (modifying notes and clearing notes).
+        4. Shuts down Server 1 cleanly.
+        5. Verifies database file integrity directly using sqlite3 module while server is stopped.
+        6. Starts Server 2 pointing to the same db_path on a new ephemeral port.
+        7. Verifies all notes persist accurately via GET /api/bookmarks and GET /api/bookmarks/<id>.
+        8. Verifies notes search filtering works accurately on Server 2.
+        9. Mutates notes on Server 2, restarts into Server 3, and verifies persisted changes.
+        10. Shuts down servers and cleans up.
+        """
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "notes_persistence.db")
+        server1: Optional[MiniLinksServer] = None
+        server2: Optional[MiniLinksServer] = None
+        server3: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Start Server 1 on an ephemeral port
+            server1 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base1 = f"http://127.0.0.1:{server1.server_port}"
+
+            # 2. Insert bookmarks into Server 1
+            # BM1: Multiline notes with newlines and indentation
+            bm1_notes = "Line 1: Project Architecture\nLine 2: SQLite Persistence\n  - ACID Compliant\n  - Embedded Engine\nLine 3: Conclusion"
+            status1, bm1 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {
+                    "title": "BM1 Multiline",
+                    "url": "https://bm1.example.com",
+                    "notes": bm1_notes,
+                    "is_favorite": True,
+                },
+            )
+            self.assertEqual(status1, 201)
+            bm1_id = bm1["id"]
+
+            # BM2: Markdown with special characters and tags
+            bm2_notes = "## Documentation Guide\n* Bullet 1\n* Bullet 2\nTags: #python #sqlite (test <>&'\"/)"
+            status2, bm2 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {
+                    "title": "BM2 Markdown",
+                    "url": "https://bm2.example.com",
+                    "notes": bm2_notes,
+                    "is_favorite": False,
+                },
+            )
+            self.assertEqual(status2, 201)
+            bm2_id = bm2["id"]
+
+            # BM3: Standard single-line notes
+            bm3_notes = "Standard concise bookmark note"
+            status3, bm3 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM3 Standard", "url": "https://bm3.example.com", "notes": bm3_notes},
+            )
+            self.assertEqual(status3, 201)
+            bm3_id = bm3["id"]
+
+            # BM4: Omitted notes (default empty string)
+            status4, bm4 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM4 Omitted Notes", "url": "https://bm4.example.com"},
+            )
+            self.assertEqual(status4, 201)
+            bm4_id = bm4["id"]
+            self.assertEqual(bm4["notes"], "")
+
+            # BM5: Explicit None notes (default empty string)
+            status5, bm5 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM5 Null Notes", "url": "https://bm5.example.com", "notes": None},
+            )
+            self.assertEqual(status5, 201)
+            bm5_id = bm5["id"]
+            self.assertEqual(bm5["notes"], "")
+
+            # BM6: Initial notes that will be updated
+            status6, bm6 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM6 To Be Updated", "url": "https://bm6.example.com", "notes": "Initial BM6 Note"},
+            )
+            self.assertEqual(status6, 201)
+            bm6_id = bm6["id"]
+
+            # BM7: Initial notes that will be cleared
+            status7, bm7 = send_http_request(
+                base1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "BM7 To Be Cleared", "url": "https://bm7.example.com", "notes": "Initial BM7 Note"},
+            )
+            self.assertEqual(status7, 201)
+            bm7_id = bm7["id"]
+
+            # 3. Update BM6 and BM7 via PATCH on Server 1
+            updated_bm6_notes = "Updated BM6 Note: New Research Content"
+            patch6_status, patch6_res = send_http_request(
+                base1, "PATCH", f"/api/bookmarks/{bm6_id}", {"notes": updated_bm6_notes}
+            )
+            self.assertEqual(patch6_status, 200)
+            self.assertEqual(patch6_res["notes"], updated_bm6_notes)
+
+            # Clear notes on BM7 by sending ""
+            patch7_status, patch7_res = send_http_request(
+                base1, "PATCH", f"/api/bookmarks/{bm7_id}", {"notes": ""}
+            )
+            self.assertEqual(patch7_status, 200)
+            self.assertEqual(patch7_res["notes"], "")
+
+            # 4. Clean shutdown of Server 1
+            server1.shutdown()
+            server1.server_close()
+            server1 = None
+
+            # 5. Verify database file integrity directly using sqlite3 module while offline
+            self.assertTrue(os.path.exists(db_path))
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(bookmarks)")
+                cols = {row["name"]: row["type"].upper() for row in cursor.fetchall()}
+                self.assertIn("notes", cols)
+                self.assertIn("TEXT", cols["notes"])
+
+                cursor.execute("SELECT id, title, url, notes, is_favorite FROM bookmarks ORDER BY id ASC")
+                db_rows = cursor.fetchall()
+                self.assertEqual(len(db_rows), 7)
+
+                notes_by_id = {row["id"]: row["notes"] for row in db_rows}
+                self.assertEqual(notes_by_id[bm1_id], bm1_notes)
+                self.assertEqual(notes_by_id[bm2_id], bm2_notes)
+                self.assertEqual(notes_by_id[bm3_id], bm3_notes)
+                self.assertEqual(notes_by_id[bm4_id], "")
+                self.assertEqual(notes_by_id[bm5_id], "")
+                self.assertEqual(notes_by_id[bm6_id], updated_bm6_notes)
+                self.assertEqual(notes_by_id[bm7_id], "")
+            finally:
+                conn.close()
+
+            # 6. Start Server 2 pointing to the same db_path on a new ephemeral port
+            server2 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base2 = f"http://127.0.0.1:{server2.server_port}"
+
+            # 7. Verify all bookmarks and notes via GET /api/bookmarks on Server 2
+            status_list, list_res = send_http_request(base2, "GET", "/api/bookmarks")
+            self.assertEqual(status_list, 200)
+            self.assertEqual(len(list_res), 7)
+
+            api_notes_by_id = {b["id"]: b["notes"] for b in list_res}
+            self.assertEqual(api_notes_by_id[bm1_id], bm1_notes)
+            self.assertEqual(api_notes_by_id[bm2_id], bm2_notes)
+            self.assertEqual(api_notes_by_id[bm3_id], bm3_notes)
+            self.assertEqual(api_notes_by_id[bm4_id], "")
+            self.assertEqual(api_notes_by_id[bm5_id], "")
+            self.assertEqual(api_notes_by_id[bm6_id], updated_bm6_notes)
+            self.assertEqual(api_notes_by_id[bm7_id], "")
+
+            # Ensure all notes are strings and never None
+            for b in list_res:
+                self.assertIsInstance(b["notes"], str)
+
+            # Verify GET /api/bookmarks/<id> for individual bookmarks
+            status_single1, single1 = send_http_request(base2, "GET", f"/api/bookmarks/{bm1_id}")
+            self.assertEqual(status_single1, 200)
+            self.assertEqual(single1["notes"], bm1_notes)
+
+            status_single7, single7 = send_http_request(base2, "GET", f"/api/bookmarks/{bm7_id}")
+            self.assertEqual(status_single7, 200)
+            self.assertEqual(single7["notes"], "")
+
+            # 8. Verify search filtering across persisted notes on Server 2
+            # Match multiline notes term
+            status_q1, q1_res = send_http_request(base2, "GET", "/api/bookmarks?q=Architecture")
+            self.assertEqual(status_q1, 200)
+            self.assertEqual(len(q1_res), 1)
+            self.assertEqual(q1_res[0]["id"], bm1_id)
+
+            # Match markdown notes term
+            status_q2, q2_res = send_http_request(base2, "GET", "/api/bookmarks?q=Documentation")
+            self.assertEqual(status_q2, 200)
+            self.assertEqual(len(q2_res), 1)
+            self.assertEqual(q2_res[0]["id"], bm2_id)
+
+            # Match updated notes term
+            status_q6, q6_res = send_http_request(
+                base2, "GET", f"/api/bookmarks?q={urllib.parse.quote('Research Content')}"
+            )
+            self.assertEqual(status_q6, 200)
+            self.assertEqual(len(q6_res), 1)
+            self.assertEqual(q6_res[0]["id"], bm6_id)
+
+            # 9. Mutate notes on Server 2: update BM4 (was empty) to have notes, restart into Server 3
+            send_http_request(base2, "PATCH", f"/api/bookmarks/{bm4_id}", {"notes": "BM4 now has notes on S2"})
+
+            server2.shutdown()
+            server2.server_close()
+            server2 = None
+
+            # Start Server 3
+            server3 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base3 = f"http://127.0.0.1:{server3.server_port}"
+
+            status_s3, bm4_s3 = send_http_request(base3, "GET", f"/api/bookmarks/{bm4_id}")
+            self.assertEqual(status_s3, 200)
+            self.assertEqual(bm4_s3["notes"], "BM4 now has notes on S2")
+
+            server3.shutdown()
+            server3.server_close()
+            server3 = None
+
+        finally:
+            for s in [server1, server2, server3]:
+                if s is not None:
+                    try:
+                        s.shutdown()
+                        s.server_close()
+                    except Exception:
+                        pass
+            temp_dir.cleanup()
+
+    def test_sqlite_backward_compatibility_migration_notes(self) -> None:
+        """Verifies database migration automatically adds notes column when opening an older SQLite database lacking notes."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "legacy_no_notes.db")
+        server1: Optional[MiniLinksServer] = None
+        server2: Optional[MiniLinksServer] = None
+
+        try:
+            # 1. Create a legacy table schema WITHOUT notes column
+            conn = sqlite3.connect(db_path)
+            with conn:
+                conn.execute("""
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        is_favorite INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute(
+                    """
+                    INSERT INTO bookmarks (title, url, is_favorite, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Legacy Without Notes",
+                        "https://legacy-no-notes.example.com",
+                        1,
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+            conn.close()
+
+            # 2. Start Server 1 (should automatically migrate schema adding notes column)
+            server1 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base1 = f"http://127.0.0.1:{server1.server_port}"
+
+            # Verify legacy bookmark returns with notes=""
+            status, bms = send_http_request(base1, "GET", "/api/bookmarks")
+            self.assertEqual(status, 200)
+            self.assertEqual(len(bms), 1)
+            legacy_id = bms[0]["id"]
+            self.assertEqual(bms[0]["title"], "Legacy Without Notes")
+            self.assertEqual(bms[0]["notes"], "")
+            self.assertIs(bms[0]["is_favorite"], True)
+
+            # Update legacy bookmark notes via PATCH
+            status_patch, patched = send_http_request(
+                base1, "PATCH", f"/api/bookmarks/{legacy_id}", {"notes": "Added notes to legacy record"}
+            )
+            self.assertEqual(status_patch, 200)
+            self.assertEqual(patched["notes"], "Added notes to legacy record")
+
+            # Clean shutdown Server 1
+            server1.shutdown()
+            server1.server_close()
+            server1 = None
+
+            # 3. Direct SQLite verification
+            conn2 = sqlite3.connect(db_path)
+            try:
+                cursor = conn2.cursor()
+                cursor.execute("PRAGMA table_info(bookmarks)")
+                col_names = [col[1] for col in cursor.fetchall()]
+                self.assertIn("notes", col_names)
+
+                cursor.execute("SELECT id, notes FROM bookmarks WHERE id = ?", (legacy_id,))
+                row = cursor.fetchone()
+                self.assertEqual(row[1], "Added notes to legacy record")
+            finally:
+                conn2.close()
+
+            # 4. Start Server 2 pointing to the same migrated DB
+            server2 = create_server(host="127.0.0.1", port=0, db_path=db_path)
+            base2 = f"http://127.0.0.1:{server2.server_port}"
+
+            status_get, bm_get = send_http_request(base2, "GET", f"/api/bookmarks/{legacy_id}")
+            self.assertEqual(status_get, 200)
+            self.assertEqual(bm_get["notes"], "Added notes to legacy record")
+
+            server2.shutdown()
+            server2.server_close()
+            server2 = None
+
+        finally:
+            if server1:
+                try:
+                    server1.shutdown()
+                    server1.server_close()
+                except Exception:
+                    pass
+            if server2:
                 try:
                     server2.shutdown()
                     server2.server_close()
@@ -338,13 +679,22 @@ class TestMiniLinksPersistence(unittest.TestCase):
             b1 = f"http://127.0.0.1:{s1.server_port}"
 
             _, bm1 = send_http_request(
-                b1, "POST", "/api/bookmarks", {"title": "Alpha", "url": "https://alpha.example.com", "is_favorite": True}
+                b1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Alpha", "url": "https://alpha.example.com", "is_favorite": True},
             )
             _, bm2 = send_http_request(
-                b1, "POST", "/api/bookmarks", {"title": "Beta", "url": "https://beta.example.com", "is_favorite": False}
+                b1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Beta", "url": "https://beta.example.com", "is_favorite": False},
             )
             _, bm3 = send_http_request(
-                b1, "POST", "/api/bookmarks", {"title": "Gamma", "url": "https://gamma.example.com"}
+                b1,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Gamma", "url": "https://gamma.example.com"},
             )
             # Toggle BM2 to True on Server 1
             send_http_request(b1, "PATCH", f"/api/bookmarks/{bm2['id']}", {"is_favorite": True})
@@ -371,7 +721,10 @@ class TestMiniLinksPersistence(unittest.TestCase):
             send_http_request(b2, "PATCH", f"/api/bookmarks/{bm3['id']}", {"is_favorite": True})
             # Create BM4 as favorite
             _, bm4 = send_http_request(
-                b2, "POST", "/api/bookmarks", {"title": "Delta", "url": "https://delta.example.com", "is_favorite": True}
+                b2,
+                "POST",
+                "/api/bookmarks",
+                {"title": "Delta", "url": "https://delta.example.com", "is_favorite": True},
             )
 
             # Verify favorites on Server 2: BM2, BM3, BM4
