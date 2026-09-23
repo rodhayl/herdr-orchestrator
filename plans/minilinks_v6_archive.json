@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "plan_id": "minilinks_v6_archive",
+  "name": "MiniLinks v6 Archived Feature Multi-Harness 5-Engine Execution Profile Routed DAG",
+  "version": "6.0.0",
+  "target_application": {
+    "name": "MiniLinks",
+    "description": "Lightweight SQLite-backed bookmark manager with tags, notes, favorites, and archived status",
+    "root_directory": "examples/minilinks"
+  },
+  "max_concurrency": 2,
+  "tasks": [
+    {
+      "task_id": "spec",
+      "task_type": "specification",
+      "execution_class": "deep",
+      "requires": [
+        "planning",
+        "specification"
+      ],
+      "dependencies": [],
+      "description": "Update examples/minilinks/SPEC.md to thoroughly specify the bookmark archived feature. Document the 'archived' boolean attribute (stored as INTEGER DEFAULT 0 in SQLite, serialized in JSON payloads as a native boolean false for active and true for archived), update REST API contracts (POST /api/bookmarks accepts optional archived boolean defaulting to false, PATCH /api/bookmarks/<id> accepts archived boolean updates, POST /api/bookmarks/<id>/archive and POST /api/bookmarks/<id>/restore dedicated endpoints, GET /api/bookmarks returning unarchived bookmarks by default and supporting ?archived=true and ?archived=all query filtering), and specify the frontend UI bookmark card archive button, visual indicators, and filter toggle interface.",
+      "allowed_paths": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "expected_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "backend",
+      "task_type": "backend",
+      "execution_class": "deep",
+      "requires": [
+        "coding",
+        "backend"
+      ],
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement and verify the bookmark archived feature in the MiniLinks backend. In examples/minilinks/app/database.py: ensure SQLite schema defines 'archived INTEGER DEFAULT 0', implement automatic table migration if the archived column is absent, implement archive_bookmark, restore_bookmark, update get_bookmarks to support ?archived=true/false/all filter, and ensure row_to_dict returns a boolean for 'archived'. In examples/minilinks/app/server.py: ensure POST /api/bookmarks/<id>/archive and /restore endpoints update state and return 200, ensure POST /api/bookmarks accepts optional archived, ensure PATCH /api/bookmarks/<id> validates and updates archived boolean, and ensure GET /api/bookmarks defaults to active bookmarks.",
+      "allowed_paths": [
+        "examples/minilinks/app/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/app/database.py",
+        "examples/minilinks/app/server.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "frontend",
+      "task_type": "frontend",
+      "execution_class": "standard",
+      "requires": [
+        "coding",
+        "frontend"
+      ],
+      "dependencies": [
+        "spec"
+      ],
+      "description": "Implement and verify the bookmark archived UI in examples/minilinks/web/. In index.html: add filter button for viewing archived bookmarks. In app.js: add archive and restore action buttons to bookmark cards, handle POST /api/bookmarks/<id>/archive and /restore requests, render visual archived badges for archived bookmarks, and handle filter state toggling between active and archived views. In style.css: add styling for archived badges, buttons, and state indicators.",
+      "allowed_paths": [
+        "examples/minilinks/web/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/web/index.html",
+        "examples/minilinks/web/style.css",
+        "examples/minilinks/web/app.js"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    },
+    {
+      "task_id": "tests",
+      "task_type": "testing",
+      "execution_class": "standard",
+      "requires": [
+        "coding",
+        "testing"
+      ],
+      "dependencies": [
+        "backend"
+      ],
+      "description": "Implement and verify comprehensive automated tests in examples/minilinks/tests/ for the bookmark archived feature. In test_api.py: test POST /api/bookmarks accepting archived, test invalid archived types rejected with 400 Bad Request, test POST /api/bookmarks/<id>/archive and /restore, test GET /api/bookmarks default active exclusion, and test ?archived=true and ?archived=all query filtering. In test_persistence.py: test that archived status persists accurately across SQLite database server restarts and test migration on pre-existing database without archived column.",
+      "allowed_paths": [
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/tests/test_api.py",
+        "examples/minilinks/tests/test_persistence.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 240
+    },
+    {
+      "task_id": "support",
+      "task_type": "support",
+      "execution_class": "routine",
+      "requires": [
+        "coding",
+        "support"
+      ],
+      "dependencies": [
+        "backend"
+      ],
+      "description": "Maintain and verify support fixtures, helpers, and verification assets across examples/minilinks for the archived bookmark release.",
+      "allowed_paths": [
+        "examples/minilinks/**"
+      ],
+      "expected_files": [],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 180
+    },
+    {
+      "task_id": "integration",
+      "task_type": "integration",
+      "execution_class": "standard",
+      "requires": [
+        "integration",
+        "debugging"
+      ],
+      "dependencies": [
+        "frontend",
+        "tests",
+        "support"
+      ],
+      "is_repair": false,
+      "description": "Harden integration between backend, frontend, tests, and support for the bookmark archived feature. Update examples/minilinks/scripts/smoke_test.py to verify archive and restore toggling, default unarchived listing, and archived query filtering in the deterministic smoke test. Fix any defects across app, web, tests, or scripts so all unit tests and the smoke test pass with zero errors.",
+      "allowed_paths": [
+        "examples/minilinks/scripts/**",
+        "examples/minilinks/app/**",
+        "examples/minilinks/web/**",
+        "examples/minilinks/tests/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    },
+    {
+      "task_id": "integration_hardening",
+      "task_type": "integration",
+      "execution_class": "deep",
+      "requires": [
+        "integration",
+        "debugging"
+      ],
+      "dependencies": [
+        "integration"
+      ],
+      "is_repair": true,
+      "description": "Deep integration verification and regression checks across the MiniLinks full stack, ensuring database migrations, REST endpoints, static assets, and test suites are completely aligned and deterministic.",
+      "allowed_paths": [
+        "examples/minilinks/**"
+      ],
+      "expected_files": [],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    },
+    {
+      "task_id": "audit",
+      "task_type": "audit",
+      "execution_class": "deep",
+      "requires": [
+        "review",
+        "audit"
+      ],
+      "dependencies": [
+        "integration_hardening"
+      ],
+      "review_only": true,
+      "description": "Perform an independent, rigorous final audit of the complete MiniLinks archived feature implementation across database schema, REST API contracts, static frontend UI, test suites, and smoke test against examples/minilinks/SPEC.md.",
+      "allowed_paths": [],
+      "expected_files": [],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "timeout": 360
+    }
+  ],
+  "post_validation": [
+    {
+      "name": "minilinks_unit_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "examples/minilinks/tests",
+        "-v"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "minilinks_smoke_test",
+      "command": [
+        "python3",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "miniboard_regression_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "factory_core_tests",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "factory_tests",
+        "-v"
+      ],
+      "timeout": 60
+    }
+  ]
+}
