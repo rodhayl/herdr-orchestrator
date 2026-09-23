@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Overview
 
-**MiniLinks** is a zero-dependency, lightweight, single-user bookmark manager web application designed for local operation. It provides an intuitive, responsive web interface for saving, organizing, searching, editing, and deleting bookmarks with associated notes and URLs. The application is backed by a robust, standard-library-only Python HTTP server and SQLite database storage.
+**MiniLinks** is a zero-dependency, lightweight, single-user bookmark manager web application designed for local operation. It provides an intuitive, responsive web interface for saving, organizing, favoriting, searching, editing, and deleting bookmarks with associated notes and URLs. The application is backed by a robust, standard-library-only Python HTTP server and SQLite database storage.
 
 ### Core Architectural Principles
 - **Zero Third-Party Dependencies**: Built strictly using the Python 3 standard library (`http.server`, `sqlite3`, `json`, `urllib`, `unittest`, `threading`, `pathlib`, `os`) and standard web technologies (vanilla HTML5, CSS3, and modern ES6+ JavaScript).
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     title TEXT NOT NULL,
     url TEXT NOT NULL,
     notes TEXT DEFAULT '',
+    is_favorite INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 | `title` | `TEXT` | `NOT NULL` | Human-readable title of the bookmark. Cannot be NULL or empty string. | `"Python Documentation"` |
 | `url` | `TEXT` | `NOT NULL` | Destination web URL. Cannot be NULL or empty string. | `"https://docs.python.org/3/"` |
 | `notes` | `TEXT` | `DEFAULT ''` | Optional user notes, tags, or description. Defaults to empty string if omitted. | `"Official Python 3 library reference"` |
+| `is_favorite` | `INTEGER` | `DEFAULT 0` | Boolean flag indicating whether the bookmark is starred/favorited (`0` for false, `1` for true). Serialized as a native boolean (`true`/`false`) in JSON API payloads. | `0` (serialized as `false`) |
 | `created_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp recorded when the bookmark record is first inserted. | `"2026-09-23T00:00:00Z"` |
 | `updated_at`| `TEXT` | `NOT NULL` | ISO 8601 UTC timestamp updated on initial creation and every subsequent modification. | `"2026-09-23T00:05:00Z"` |
 
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 - `title`: Must be a non-empty string after whitespace stripping.
 - `url`: Must be a non-empty string after whitespace stripping.
 - `notes`: If not provided or `None`, defaults to an empty string `""`.
+- `is_favorite`: Stored as SQLite `INTEGER` (`0` for `false`, `1` for `true`) with default `0`. In JSON API request and response payloads, it is represented and serialized as a native boolean (`true` or `false`). Non-boolean values in API payloads (such as strings or arbitrary numbers other than strict boolean deserialization) must be rejected with `400 Bad Request`.
 - `created_at`: Set automatically at insert time; never mutated on updates.
 - `updated_at`: Set automatically at insert time; updated to current ISO 8601 UTC timestamp on every `PATCH` modification.
 
@@ -80,9 +83,10 @@ Retrieves a list of bookmarks, with optional query parameter filtering.
 
 - **Request**:
   - Method: `GET`
-  - Path: `/api/bookmarks` or `/api/bookmarks?q=<searchterm>`
+  - Path: `/api/bookmarks`, `/api/bookmarks?q=<searchterm>`, `/api/bookmarks?favorites=true`, or `/api/bookmarks?favorites=true&q=<searchterm>`
   - Query Parameters:
-    - `q` (optional, `string`): Search keyword. When provided, filters bookmarks where `title`, `url`, or `notes` contains the search term (case-insensitive substring match). When omitted or empty, all bookmarks are returned.
+    - `q` (optional, `string`): Search keyword. When provided, filters bookmarks where `title`, `url`, or `notes` contains the search term (case-insensitive substring match). When omitted or empty, search term filtering is not applied.
+    - `favorites` (optional, `string`): Favorite filter flag. When set to `'true'` (case-insensitive, e.g. `?favorites=true`), returns only bookmarks marked as favorite (`is_favorite = 1`). When omitted, empty, or `'false'`, all bookmarks (matching `q` if present) are returned without favorite filtering.
 - **Response**:
   - Status: `200 OK`
   - Body: JSON array of bookmark objects ordered by `id ASC` (or `created_at DESC`). Returns an empty array `[]` if no bookmarks match.
@@ -93,6 +97,7 @@ Retrieves a list of bookmarks, with optional query parameter filtering.
         "title": "Python Documentation",
         "url": "https://docs.python.org/3/",
         "notes": "Official Python 3 library reference",
+        "is_favorite": true,
         "created_at": "2026-09-23T00:00:00Z",
         "updated_at": "2026-09-23T00:00:00Z"
       },
@@ -101,6 +106,7 @@ Retrieves a list of bookmarks, with optional query parameter filtering.
         "title": "SQLite Tutorial",
         "url": "https://www.sqlite.org/",
         "notes": "SQLite syntax and architecture",
+        "is_favorite": false,
         "created_at": "2026-09-23T00:01:00Z",
         "updated_at": "2026-09-23T00:05:00Z"
       }
@@ -121,28 +127,31 @@ Creates a new bookmark.
     {
       "title": "MDN Web Docs",
       "url": "https://developer.mozilla.org/",
-      "notes": "Web standards and guides"
+      "notes": "Web standards and guides",
+      "is_favorite": false
     }
     ```
     - `title` (required, `string`): Non-empty title.
     - `url` (required, `string`): Non-empty URL.
     - `notes` (optional, `string`): Optional notes (defaults to `""` if omitted).
+    - `is_favorite` (optional, `boolean`): Optional favorite flag (defaults to `false` if omitted).
 - **Success Response**:
   - Status: `201 Created`
-  - Body: Complete bookmark object including generated `id`, `created_at`, and `updated_at`.
+  - Body: Complete bookmark object including generated `id`, `created_at`, `updated_at`, and `is_favorite`.
     ```json
     {
       "id": 3,
       "title": "MDN Web Docs",
       "url": "https://developer.mozilla.org/",
       "notes": "Web standards and guides",
+      "is_favorite": false,
       "created_at": "2026-09-23T00:10:00Z",
       "updated_at": "2026-09-23T00:10:00Z"
     }
     ```
 - **Error Responses**:
   - Status: `400 Bad Request`
-  - Conditions: Missing request body, invalid JSON syntax, missing `title`, empty/whitespace-only `title`, missing `url`, empty/whitespace-only `url`, or fields not of expected string type.
+  - Conditions: Missing request body, invalid JSON syntax, missing `title`, empty/whitespace-only `title`, missing `url`, empty/whitespace-only `url`, or fields not of expected type (including non-boolean `is_favorite` when provided).
   - Body:
     ```json
     {
@@ -153,7 +162,7 @@ Creates a new bookmark.
 ---
 
 ### 3.4 `PATCH /api/bookmarks/<id>`
-Partially updates an existing bookmark's `title`, `url`, `notes`, or any combination thereof.
+Partially updates an existing bookmark's `title`, `url`, `notes`, `is_favorite`, or any combination thereof.
 
 - **Request**:
   - Method: `PATCH`
@@ -162,16 +171,22 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, or any combina
   - Body: JSON containing one or more fields to update:
     ```json
     {
-      "notes": "Updated research notes"
+      "is_favorite": true
     }
     ```
     or
     ```json
     {
       "title": "MDN Web Docs - Updated",
-      "url": "https://developer.mozilla.org/en-US/"
+      "url": "https://developer.mozilla.org/en-US/",
+      "is_favorite": true
     }
     ```
+    - Updatable fields:
+      - `title` (`string`, optional): Non-empty string after stripping whitespace.
+      - `url` (`string`, optional): Non-empty string after stripping whitespace.
+      - `notes` (`string`, optional): String notes value.
+      - `is_favorite` (`boolean`, optional): Boolean value (`true` or `false`) to update favorite/starred status.
 - **Success Response**:
   - Status: `200 OK`
   - Body: Complete updated bookmark object with refreshed `updated_at` timestamp.
@@ -180,7 +195,8 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, or any combina
       "id": 3,
       "title": "MDN Web Docs - Updated",
       "url": "https://developer.mozilla.org/en-US/",
-      "notes": "Updated research notes",
+      "notes": "Web standards and guides",
+      "is_favorite": true,
       "created_at": "2026-09-23T00:10:00Z",
       "updated_at": "2026-09-23T00:15:00Z"
     }
@@ -195,7 +211,7 @@ Partially updates an existing bookmark's `title`, `url`, `notes`, or any combina
       }
       ```
   - Status: `400 Bad Request`
-    - Conditions: Non-integer `<id>` in URL, malformed JSON body, empty update payload (no updatable fields provided), empty or whitespace-only `title` or `url` when provided, or invalid field types.
+    - Conditions: Non-integer `<id>` in URL, malformed JSON body, empty update payload (no updatable fields provided), empty or whitespace-only `title` or `url` when provided, or invalid field types (e.g., non-boolean `is_favorite`).
     - Body:
       ```json
       {
@@ -257,8 +273,8 @@ The backend server serves static front-end assets located in the `web/` director
 ## 5. Python Backend Architecture & Programmatic Interface
 
 ### 5.1 Module Structure
-- `app/database.py`: Encapsulates SQLite connection management, table initialization, and CRUD query functions (`init_db`, `get_bookmarks(q=None)`, `create_bookmark(title, url, notes)`, `update_bookmark(id, title=None, url=None, notes=None)`, `delete_bookmark(id)`).
-- `app/server.py`: Implements custom `http.server.BaseHTTPRequestHandler` routing, request dispatching, JSON serialization, query parameter parsing, static file delivery, and the programmatic factory function `create_server`.
+- `app/database.py`: Encapsulates SQLite connection management, table initialization, and CRUD query functions (`init_db`, `get_bookmarks(q=None, favorites_only=False)`, `create_bookmark(title, url, notes, is_favorite=False)`, `update_bookmark(id, title=None, url=None, notes=None, is_favorite=None)`, `delete_bookmark(id)`).
+- `app/server.py`: Implements custom `http.server.BaseHTTPRequestHandler` routing, request dispatching, JSON serialization and deserialization (converting SQLite integer `0`/`1` to JSON boolean `false`/`true`), query parameter parsing (supporting `q` search term and `favorites=true` filter), static file delivery, and the programmatic factory function `create_server`.
 
 ### 5.2 Server Factory Interface: `create_server`
 
@@ -300,8 +316,13 @@ The frontend lives in `web/` and consists of three standard files:
 - `web/app.js`: Vanilla JavaScript client logic communicating with the REST API.
 
 ### 6.1 Layout & Components
-- **Header**: MiniLinks title/branding, search bar, and an operational status/notification banner.
-- **Search Bar**: Input field (`id="search-input"`) with real-time or debounced query filtering that triggers `GET /api/bookmarks?q=<term>` and updates the displayed cards list.
+- **Header**: MiniLinks title/branding, search bar, filter bar, and an operational status/notification banner.
+- **Search Bar**: Input field (`id="search-input"`) with real-time or debounced query filtering that triggers `GET /api/bookmarks?q=<term>` (preserving the active favorites filter state) and updates the displayed cards list.
+- **Filter Bar & Favorites Toggle**:
+  - Filter control bar containing the favorites filter toggle button (`id="filter-favorites-btn"`).
+  - Toggles between showing all bookmarks and showing only favorited bookmarks.
+  - When favorites filter is active, triggers `GET /api/bookmarks?favorites=true` (combining with `q` search term if present).
+  - Provides visual active indicator (e.g. active CSS class, highlighted styling, and star icon state: `★ Favorites` active vs `☆ Favorites` inactive).
 - **Bookmark Creation Form**:
   - Input for `title` (required text input, `id="bookmark-title"`).
   - Input for `url` (required URL/text input, `id="bookmark-url"`).
@@ -309,15 +330,19 @@ The frontend lives in `web/` and consists of three standard files:
   - Submit button (`id="bookmark-submit-btn"`) to create the bookmark via `POST /api/bookmarks`.
 - **Bookmarks List / Cards Grid**:
   - Container (`id="bookmarks-list"`) rendering responsive bookmark cards.
-  - Displays an empty state message if no bookmarks exist or no bookmarks match the search query.
+  - Displays an empty state message if no bookmarks exist or no bookmarks match the search/filter criteria.
 
 ### 6.2 Bookmark Card Elements & Interactions
 Each bookmark card rendered must display:
+- **Favorite / Star Toggle Button**: Star button (`id="favorite-btn-<id>"` or class `favorite-toggle-btn`) displaying a filled star `★` if favorited (`is_favorite: true`) or an outlined star `☆` if not favorited (`is_favorite: false`).
+  - Clicking the star button dispatches `PATCH /api/bookmarks/<id>` with payload `{"is_favorite": !currentStatus}`.
+  - On receiving `200 OK`, immediately updates the star icon (`★` $\leftrightarrow$ `☆`), updates the card's internal state, and if the favorites filter is currently active and the item was unfavorited, removes or hides the card from the view.
 - **Title**: Formatted title displaying the bookmark name, linking directly to the URL (`target="_blank"`, `rel="noopener noreferrer"`).
 - **URL**: Visible destination URL with clean truncation if long.
 - **Notes**: Formatted notes block if notes are present.
 - **Timestamps**: Display created and/or updated timestamp.
 - **Action Controls**:
+  - **Star Button**: Inline toggle for favorite status.
   - **Edit Button**: Enables editing title, url, and notes (inline form or modal/prompt) and dispatches `PATCH /api/bookmarks/<id>`.
   - **Delete Button**: Dispatches `DELETE /api/bookmarks/<id>` with immediate removal from the DOM and success confirmation.
 - **Error & Status Notifications**: Clear visual feedback (banner or toast) on network failures, validation errors, and successful operations.
@@ -338,23 +363,25 @@ Testing is implemented strictly using Python's standard library `unittest`, `url
 Validates all HTTP API endpoints against a live server running on an ephemeral port with an isolated temporary SQLite database:
 1. Server bootstrap and `GET /health` responding with `200 OK` and `{"status": "ok"}`.
 2. Initial bookmark listing `GET /api/bookmarks` returning an empty array `[]`.
-3. Creating bookmarks via `POST /api/bookmarks` with valid payloads (title, url, notes) and verifying `201 Created`.
+3. Creating bookmarks via `POST /api/bookmarks` with valid payloads (title, url, notes) and verifying `201 Created` with default `is_favorite: false`.
 4. Creating bookmarks with invalid payloads (missing title, empty url, non-string values) verifying `400 Bad Request`.
 5. Search filtering via `GET /api/bookmarks?q=<searchterm>` verifying matching by title, url, or notes, and verifying empty results for non-matching queries.
 6. Updating bookmarks via `PATCH /api/bookmarks/<id>` for title, url, and notes, verifying `200 OK` and updated fields.
-7. Error responses: verifying `400 Bad Request` on malformed JSON or invalid payload, and `404 Not Found` for non-existent IDs on `PATCH` and `DELETE`.
-8. Deleting bookmarks via `DELETE /api/bookmarks/<id>` verifying `200 OK` and subsequent 404 response on repeated deletion.
-9. Static file delivery: verifying retrieval of `/`, `/index.html`, `/style.css`, and `/app.js` with correct MIME types.
-10. Directory traversal protection: verifying requests with `../` or encoded traversal paths are rejected with `403` or `404`.
+7. Toggling favorite status via `PATCH /api/bookmarks/<id>` with `{"is_favorite": true}` and `{"is_favorite": false}`, verifying `200 OK` and boolean serialization.
+8. Favorite filtering via `GET /api/bookmarks?favorites=true` verifying only favorited bookmarks are returned, and combining `favorites=true` with search query `q`.
+9. Error responses: verifying `400 Bad Request` on malformed JSON, invalid payload, or non-boolean `is_favorite`, and `404 Not Found` for non-existent IDs on `PATCH` and `DELETE`.
+10. Deleting bookmarks via `DELETE /api/bookmarks/<id>` verifying `200 OK` and subsequent 404 response on repeated deletion.
+11. Static file delivery: verifying retrieval of `/`, `/index.html`, `/style.css`, and `/app.js` with correct MIME types.
+12. Directory traversal protection: verifying requests with `../` or encoded traversal paths are rejected with `403` or `404`.
 
 #### 7.1.2 `tests/test_persistence.py`
 Validates SQLite persistence across server lifecycle restarts:
 1. Starts Server 1 on an ephemeral port with a temporary `db_path`.
-2. Inserts bookmarks into Server 1 via `POST /api/bookmarks`.
+2. Inserts bookmarks into Server 1 via `POST /api/bookmarks` and toggles favorite status via `PATCH /api/bookmarks/<id>`.
 3. Shuts down Server 1 cleanly (`server.shutdown()`, `server.server_close()`).
-4. Verifies database file integrity directly using the `sqlite3` module.
+4. Verifies database file integrity directly using the `sqlite3` module, including `is_favorite` stored as `0` or `1`.
 5. Starts Server 2 pointing to the same `db_path` on a new ephemeral port.
-6. Verifies all previously created bookmarks, updated notes, and timestamps persist and are queryable via `GET /api/bookmarks`.
+6. Verifies all previously created bookmarks, updated notes, favorite status, and timestamps persist and are queryable via `GET /api/bookmarks`.
 7. Shuts down Server 2 and cleans up temporary database files.
 
 ---
@@ -367,11 +394,11 @@ Validates SQLite persistence across server lifecycle restarts:
 1. **Step 1 - Server Bootstrap**: Start `create_server(host='127.0.0.1', port=0, db_path=temp_db)` on an ephemeral port; acquire bound port.
 2. **Step 2 - Health Check**: Send `GET /health`; assert HTTP 200 and payload `{"status": "ok"}`.
 3. **Step 3 - Initial Empty State**: Send `GET /api/bookmarks`; assert HTTP 200 and payload is an empty list `[]`.
-4. **Step 4 - Create Bookmark (Valid)**: Send `POST /api/bookmarks` with `{"title": "Python Docs", "url": "https://docs.python.org", "notes": "Official Docs"}`; assert HTTP 201, `id` is positive integer, fields match, and timestamps are populated.
+4. **Step 4 - Create Bookmark (Valid)**: Send `POST /api/bookmarks` with `{"title": "Python Docs", "url": "https://docs.python.org", "notes": "Official Docs"}`; assert HTTP 201, `id` is positive integer, `is_favorite` defaults to `False`, fields match, and timestamps are populated.
 5. **Step 5 - Create Bookmark Validation Error**: Send `POST /api/bookmarks` with invalid payload `{"title": ""}`; assert HTTP 400.
 6. **Step 6 - Verify Bookmark Listing**: Send `GET /api/bookmarks`; assert HTTP 200 and list contains exactly 1 bookmark matching Step 4.
 7. **Step 7 - Search Filtering**: Send `GET /api/bookmarks?q=Python`; assert HTTP 200 with 1 result. Send `GET /api/bookmarks?q=NonExistentTerm`; assert HTTP 200 with 0 results.
-8. **Step 8 - Update Bookmark**: Send `PATCH /api/bookmarks/<id>` with `{"notes": "Updated Documentation Notes"}`; assert HTTP 200, notes updated, `updated_at` updated.
+8. **Step 8 - Update Bookmark & Favorite**: Send `PATCH /api/bookmarks/<id>` with `{"notes": "Updated Documentation Notes", "is_favorite": true}`; assert HTTP 200, notes updated, `is_favorite` is `True`, `updated_at` updated. Also verify `GET /api/bookmarks?favorites=true` returns the bookmark.
 9. **Step 9 - Update Non-Existent Bookmark**: Send `PATCH /api/bookmarks/99999` with `{"notes": "Ghost"}`; assert HTTP 404.
 10. **Step 10 - Delete Bookmark**: Send `DELETE /api/bookmarks/<id>`; assert HTTP 200 and payload `{"status": "deleted", "id": <id>}`.
 11. **Step 11 - Delete Non-Existent Bookmark**: Send `DELETE /api/bookmarks/99999`; assert HTTP 404.
