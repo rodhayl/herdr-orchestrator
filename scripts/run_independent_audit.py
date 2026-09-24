@@ -54,16 +54,16 @@ def main():
         "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
         "\n".join(ctx_lines[335:540]),
         "\n### ContextSource & Sensitive File Pattern Matcher:",
-        "\n".join(ctx_lines[615:745]),
+        "\n".join(ctx_lines[615:770]),
         "\n### ContextPacket & Cryptographic Staleness Verification:",
         "\n".join(ctx_lines[1050:1200]),
         "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
         "\n".join(ctx_lines[1345:1570]),
         "\n".join(ctx_lines[1635:1715]),
         "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
-        "\n".join(ctx_lines[2145:2225]),
-        "\n### Atomic Persistence (Temp File + os.replace):",
-        "\n".join(ctx_lines[2225:2305]),
+        "\n".join(ctx_lines[2170:2255]),
+        "\n### Atomic Persistence (Temp File + Flush + Fsync + os.replace):",
+        "\n".join(ctx_lines[2255:2325]),
     ]
     context_core_code = "\n".join(ctx_sections)
 
