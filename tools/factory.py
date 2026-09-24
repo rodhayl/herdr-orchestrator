@@ -21,6 +21,7 @@ import glob
 import hashlib
 import inspect
 import json
+import math
 import os
 import pathlib
 import re
@@ -73,6 +74,7 @@ try:
         redact_secrets,
         snapshot_secret_env,
         register_secret_env,
+        get_secret_env_fingerprint,
         validate_criterion_provenance,
         VALID_PROVENANCES,
     )
@@ -116,6 +118,7 @@ except ImportError:
         redact_secrets,
         snapshot_secret_env,
         register_secret_env,
+        get_secret_env_fingerprint,
         validate_criterion_provenance,
         VALID_PROVENANCES,
     )
@@ -329,6 +332,19 @@ SECRET_PATTERNS = [
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
+
+_INJECTION_PATTERN = re.compile(
+    r"(?i)(ignore\s+all\s+prior\s+instructions"
+    r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
+    r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
+    r"|new\s+instructions:"
+    r"|system\s+prompt"
+    r"|developer\s+mode"
+    r"|override\s+instructions"
+    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
+    r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
+    r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
+)
 
 
 # Note: redact_secrets is imported directly from tools.context for consistent load-time secret snapshotting
@@ -3656,15 +3672,15 @@ class TaskExecutor:
                 "title": clean_title,
                 "acceptance_criteria": [
                     {
-                        "id": redact_secrets(str(cid)[:32]),
-                        "title": redact_secrets(str(cid)[:32]),
-                        "description": redact_secrets(f"Requirement {str(cid)[:32]}"),
+                        "id": f"REQ_{i+1}",
+                        "title": f"Requirement {i+1}",
+                        "description": f"Synthesized fallback requirement {i+1} for task {self.task_id}",
                         "provenance": "DERIVED",
                         "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
-                        "rationale": redact_secrets(f"Synthesized fallback requirement for task {self.task_id}"),
+                        "rationale": f"Synthesized fallback requirement {i+1} for task {self.task_id}",
                     }
-                    for cid in plan_task.get("satisfies", [])
-                    if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-.:]{1,32}$", cid)
+                    for i, cid in enumerate(plan_task.get("satisfies", []))
+                    if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_]{1,32}$", cid)
                 ]
             }
             audit_metrics = DerivedRequirementAuditor.audit_requirements(self.goal_spec)
@@ -3741,6 +3757,7 @@ class TaskExecutor:
                 "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                 "plan": sha256_text(canonical_json_dump(self.plan)),
                 "stable_prefix": packet.source_hashes.get("stable_prefix"),
+                "secret_env": get_secret_env_fingerprint(),
             }
             is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
             if is_stale:
@@ -3771,8 +3788,7 @@ class TaskExecutor:
             extra_referenced_files=extra_refs
         )
 
-        stable_prefix, prefix_hash, prefix_bytes = StablePrefixManager.get_stable_prefix("task")
-        prompt_content = stable_prefix + "\n" + packet.rendered_tail
+        prompt_content = packet.render_full_prompt()
 
         # Required Anchor Gate: verify 100% anchor recall in rendered prompt
         recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
@@ -3789,7 +3805,8 @@ class TaskExecutor:
             "plan": sha256_text(canonical_json_dump(self.plan)),
             "task_def": sha256_text(canonical_json_dump(self.task)),
             "retry_info": sha256_text(canonical_json_dump(r_info if isinstance(r_info, dict) else {})),
-            "stable_prefix": prefix_hash,
+            "stable_prefix": packet.source_hashes.get("stable_prefix"),
+            "secret_env": get_secret_env_fingerprint(),
         }
         is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
         if is_stale:
@@ -3838,6 +3855,7 @@ class TaskExecutor:
                         "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
                         "plan": sha256_text(canonical_json_dump(snap_plan)),
                         "stable_prefix": prefix_hash,
+                        "secret_env": get_secret_env_fingerprint(),
                     }
                 else:
                     curr_hashes = {
@@ -3846,6 +3864,7 @@ class TaskExecutor:
                         "task_def": sha256_text(canonical_json_dump(snap_task)),
                         "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
                         "stable_prefix": prefix_hash,
+                        "secret_env": get_secret_env_fingerprint(),
                     }
                 if (not self.current_context_packet) or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
                     prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
@@ -4221,7 +4240,7 @@ class TaskExecutor:
             provider_reasoning_tokens = usage.get("reasoning_tokens") if usage.get("reasoning_tokens") is not None else usage.get("thinking_tokens")
 
             def _valid_token_int(val):
-                return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0 else None
+                return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0 else None
 
             valid_in_tokens = _valid_token_int(provider_input_tokens)
 
@@ -4310,36 +4329,42 @@ class TaskExecutor:
         # Context Packet Verification: ensure attempt has a validated context packet before committing
         attempt_dir = self.task_root_dir / f"att-{attempt_id}"
         pkt_file = attempt_dir / "context_packet.json"
-        if not self.current_context_packet:
-            if pkt_file.exists():
-                self.current_context_packet = load_context_packet(pkt_file)
-            else:
-                raise ContextError(
-                    f"MISSING_CONTEXT_PACKET: Attempt #{attempt_id} has no context_packet.json on disk to verify at commit time"
-                )
+        lock = getattr(self, "_packet_lock", None)
+        if lock is None:
+            lock = contextlib.nullcontext()
+        with lock:
+            if not self.current_context_packet:
+                if pkt_file.exists():
+                    self.current_context_packet = load_context_packet(pkt_file)
+                else:
+                    raise ContextError(
+                        f"MISSING_CONTEXT_PACKET: Attempt #{attempt_id} has no context_packet.json on disk to verify at commit time"
+                    )
 
-        # Staleness verification at commit time (gate against mid-run drift)
-        is_rev = getattr(self, "review_only", False)
-        _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
-        raw_rinfo = getattr(self, "retry_info", None)
-        snap_rinfo = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
-        if is_rev:
-            commit_source_hashes = {
-                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                "plan": sha256_text(canonical_json_dump(self.plan)),
-                "stable_prefix": prefix_hash,
-            }
-        else:
-            commit_source_hashes = {
-                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                "plan": sha256_text(canonical_json_dump(self.plan)),
-                "task_def": sha256_text(canonical_json_dump(self.task)),
-                "retry_info": sha256_text(canonical_json_dump(snap_rinfo)),
-                "stable_prefix": prefix_hash,
-            }
-        is_stale, reasons = self.current_context_packet.verify_staleness(commit_source_hashes)
-        if is_stale:
-            raise StaleContextPacketError(f"Context packet is stale at commit time for attempt #{attempt_id}: {reasons}")
+            # Staleness verification at commit time (gate against mid-run drift)
+            is_rev = getattr(self, "review_only", False)
+            _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
+            raw_rinfo = getattr(self, "retry_info", None)
+            snap_rinfo = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
+            if is_rev:
+                commit_source_hashes = {
+                    "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(self.plan)),
+                    "stable_prefix": prefix_hash,
+                    "secret_env": get_secret_env_fingerprint(),
+                }
+            else:
+                commit_source_hashes = {
+                    "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(self.plan)),
+                    "task_def": sha256_text(canonical_json_dump(self.task)),
+                    "retry_info": sha256_text(canonical_json_dump(snap_rinfo)),
+                    "stable_prefix": prefix_hash,
+                    "secret_env": get_secret_env_fingerprint(),
+                }
+            is_stale, reasons = self.current_context_packet.verify_staleness(commit_source_hashes)
+            if is_stale:
+                raise StaleContextPacketError(f"Context packet is stale at commit time for attempt #{attempt_id}: {reasons}")
 
         subprocess.run(["git", "add", "-A"], cwd=str(worktree_path), check=True)
         diff_check = subprocess.run(["git", "status", "--porcelain"], cwd=str(worktree_path), capture_output=True, text=True)
@@ -4490,6 +4515,12 @@ class FactoryOrchestrator:
 
     def create_task_handoff(self, task_id: str, attempt_id: int, commit_hash: str, attempt_result: dict) -> HandoffPacket:
         """Constructs and persists a bounded HandoffPacket upon successful task integration."""
+        if not isinstance(task_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", task_id):
+            raise ValueError(f"Invalid task_id for handoff: {task_id}")
+        handoff_file = (self.handoffs_dir / f"{task_id}.json").resolve()
+        if handoff_file.parent != self.handoffs_dir.resolve():
+            raise ValueError(f"Path traversal detected for task_id: {task_id}")
+
         tdef = self.tasks_def.get(task_id, {})
         changed_paths = attempt_result.get("changed_paths", [])
         satisfied = tdef.get("satisfies", [])
@@ -4501,6 +4532,8 @@ class FactoryOrchestrator:
             if not isinstance(val, str):
                 return ""
             val = unicodedata.normalize("NFKC", str(val))
+            # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
+            val = "".join(c for c in val if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
             val = redact_secrets(val)
             # Strip ANSI escape sequences
             cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", val)
@@ -4509,20 +4542,8 @@ class FactoryOrchestrator:
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Filter adversarial prompt injection variants and role markers
-            injection_pattern = re.compile(
-                r"(?i)(ignore\s+all\s+prior\s+instructions"
-                r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
-                r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
-                r"|new\s+instructions:"
-                r"|system\s+prompt"
-                r"|developer\s+mode"
-                r"|override\s+instructions"
-                r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
-                r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
-                r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
-            )
-            cleaned = injection_pattern.sub("[FILTERED]", cleaned)
+            # Filter adversarial prompt injection variants and role markers using module-level pattern
+            cleaned = _INJECTION_PATTERN.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
         ctx_src = getattr(self.context_compiler, "source", None)
@@ -4553,7 +4574,6 @@ class FactoryOrchestrator:
             known_risks=known_risks_text,
             validation_result={"passed": is_passed, "exit_code": actual_exit_code}
         )
-        handoff_file = self.handoffs_dir / f"{task_id}.json"
         save_handoff_packet(handoff, handoff_file)
         return handoff
 
@@ -4562,10 +4582,14 @@ class FactoryOrchestrator:
         task_deps = tdef.get("dependencies", [])
         task_handoffs = []
         for dep_id in task_deps:
+            if not isinstance(dep_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", dep_id):
+                raise ValueError(f"Invalid dep_id for handoff: {dep_id}")
+            ho_file = (self.handoffs_dir / f"{dep_id}.json").resolve()
+            if ho_file.parent != self.handoffs_dir.resolve():
+                raise ValueError(f"Path traversal detected for dep_id: {dep_id}")
             if dep_id in self.active_handoffs:
                 task_handoffs.append(self.active_handoffs[dep_id])
             else:
-                ho_file = self.handoffs_dir / f"{dep_id}.json"
                 if ho_file.exists():
                     try:
                         task_handoffs.append(load_handoff_packet(ho_file))
@@ -4649,8 +4673,9 @@ class FactoryOrchestrator:
                 wave_map[w_idx]["tasks"].append(merged_task)
 
             self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
-            clean_manifest = redact_secrets(self.manifest)
-            atomic_write_json(self.manifest_path, clean_manifest)
+            clean_manifest = copy.deepcopy(redact_secrets(self.manifest))
+
+        atomic_write_json(self.manifest_path, clean_manifest)
 
         # Sync board projector outside _manifest_lock critical section to prevent deadlocks
         try:
@@ -5259,7 +5284,11 @@ class FactoryOrchestrator:
                                 _, sp_hash, _ = StablePrefixManager.get_stable_prefix(role)
                                 curr_hashes[k] = sp_hash
                             elif k == "raw_goal":
-                                curr_hashes[k] = sha256_text(getattr(self, "goal_text", ""))
+                                curr_hashes[k] = sha256_text((getattr(self, "goal_text", "") or (self.goal_spec.get("raw_goal", "") if isinstance(self.goal_spec, dict) else "")).strip())
+                            elif k == "secret_env":
+                                curr_hashes[k] = get_secret_env_fingerprint()
+                            elif k == "base_commit":
+                                curr_hashes[k] = sha256_text(self.manifest.get("base_commit", ""))
                             else:
                                 curr_hashes[k] = ctx_src.get_file_hash(k)
                         is_stale, stale_reasons = pkt.verify_staleness(curr_hashes)

@@ -127,7 +127,7 @@ def snapshot_secret_env() -> dict[str, str]:
                             parsed = json.loads(stripped)
                             if isinstance(parsed, dict):
                                 for sub_k, sub_v in parsed.items():
-                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 16:
                                         if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                             _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
                         except Exception:
@@ -147,11 +147,18 @@ def register_secret_env(key: str, val: str) -> None:
                         parsed = json.loads(stripped)
                         if isinstance(parsed, dict):
                             for sub_k, sub_v in parsed.items():
-                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 16:
                                     if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                         _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
                     except Exception:
                         pass
+
+
+def get_secret_env_fingerprint() -> str:
+    """Returns SHA-256 fingerprint of registered secret env keys to detect secret registration drift."""
+    with _SECRET_ENV_LOCK:
+        keys_summary = "|".join(f"{k}:{len(v)}" for k, v in sorted(_INITIAL_SECRET_ENV.items()))
+    return sha256_text(keys_summary)
 
 
 # Initial module-load snapshot
@@ -465,11 +472,30 @@ class HandoffPacket:
             if isinstance(self.decisions, str):
                 self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
-                self.decisions = self.decisions[:5]
+                self.decisions = [str(d)[:alloc] for d in self.decisions[:3]]
             if isinstance(self.known_risks, str):
                 self.known_risks = self.known_risks.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.known_risks, list):
-                self.known_risks = self.known_risks[:5]
+                self.known_risks = [str(r)[:alloc] for r in self.known_risks[:3]]
+
+        # Ensure total serialized size is strictly within max_bytes before computing final handoff_bytes
+        for _ in range(10):
+            cur_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
+            if cur_raw_bytes <= max_bytes - 128:
+                break
+            if isinstance(self.decisions, list) and len(self.decisions) > 1:
+                self.decisions = self.decisions[:1]
+                continue
+            if isinstance(self.known_risks, list) and len(self.known_risks) > 1:
+                self.known_risks = self.known_risks[:1]
+                continue
+            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 32:
+                self.consumer_notes = self.consumer_notes[:32] + "\n[TRUNCATED:BOUND]"
+                continue
+            if isinstance(self.contracts, str) and len(self.contracts) > 32:
+                self.contracts = self.contracts[:32] + "\n[TRUNCATED:BOUND]"
+                continue
+            break
 
         # Bound individual path lengths to 512 bytes
         self.changed_paths = [str(p)[:512] for p in self.changed_paths]
@@ -669,14 +695,13 @@ class FilesystemGitContextSource(ContextSource):
         raw_path = self.project_root / rel_path
         if raw_path.is_symlink():
             raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
-        target = raw_path.resolve()
-        if target.is_symlink():
-            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
-        # Path traversal guard
         try:
+            target = raw_path.resolve()
             target.relative_to(self.project_root)
-        except ValueError:
+        except (ValueError, RuntimeError):
             raise ContextError(f"Path traversal detected: {rel_path} escapes project root {self.project_root}")
+        if os.path.realpath(str(raw_path)) != str(target):
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
         return target
 
     def get_file_hash(self, rel_path: str) -> str:
@@ -1149,6 +1174,8 @@ def calculate_context_redundancy(texts: List[str], chunk_size: int = 64) -> Dict
     """Calculates deterministic chunk-level redundancy across a collection of text prompts.
 
     Uses bounded content-addressed line/chunk segmentation.
+    Redundancy ratio is defined as repeated_bytes / total_bytes where repeated_bytes counts
+    all occurrences of chunks appearing more than once across the collection.
     Returns:
         total_factory_supplied_bytes, unique_content_bytes, repeated_content_bytes, redundancy_ratio
     """
@@ -1488,6 +1515,7 @@ class ContextCompiler:
             "task_def": sha256_text(canonical_json_dump(task_def)),
             "retry_info": sha256_text(canonical_json_dump(retry_info or {})),
             "stable_prefix": prefix_hash,
+            "secret_env": get_secret_env_fingerprint(),
         }
 
         # Build scoped acceptance criteria
@@ -1744,10 +1772,12 @@ class ContextCompiler:
 
         stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
 
+        raw_goal = (raw_goal or "").strip()
         source_artifacts = ["GOAL.md"] if (self.source.project_root / "GOAL.md").exists() else []
         source_hashes = {
             "raw_goal": sha256_text(raw_goal),
             "stable_prefix": prefix_hash,
+            "secret_env": get_secret_env_fingerprint(),
         }
 
         anchors = [
@@ -1899,6 +1929,7 @@ class ContextCompiler:
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
             "stable_prefix": prefix_hash,
+            "secret_env": get_secret_env_fingerprint(),
         }
 
         # Build anchors for all criteria and deterministic validations
@@ -2057,6 +2088,7 @@ class ContextCompiler:
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "base_commit": sha256_text(base_commit),
             "stable_prefix": prefix_hash,
+            "secret_env": get_secret_env_fingerprint(),
         }
 
         # Build anchors
@@ -2194,7 +2226,8 @@ class DerivedRequirementAuditor:
         orphan_criteria = []
 
         explicit_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "MOCK", "TRANSPORT_ONLY", "REAL"}}
-        all_valid_parents = explicit_ids.union(set(cls.HARD_INVARIANTS.keys()))
+        valid_derived_parent_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "REAL"}}
+        all_valid_parents = valid_derived_parent_ids.union(set(cls.HARD_INVARIANTS.keys()))
 
         for c in criteria:
             validate_criterion_provenance(c)
