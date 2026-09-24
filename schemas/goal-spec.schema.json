@@ -46,6 +46,29 @@
           "provenance": {
             "type": "string",
             "enum": ["USER_EXPLICIT", "DERIVED"]
+          },
+          "derived_from": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Parent explicit criteria or hard project invariants this criterion is derived from"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Technical justification for deriving this requirement"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "Authoring component (e.g. GoalSpecCompiler, Planner)"
+          },
+          "downstream_tasks": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Task IDs implementing or verifying this criterion"
+          },
+          "downstream_validations": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Validation commands associated with this criterion"
           }
         },
         "required": ["id", "title", "description", "provenance"]

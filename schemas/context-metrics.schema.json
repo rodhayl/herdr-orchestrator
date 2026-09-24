@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ContextMetrics",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["8.0.0"]
+    },
+    "run_id": {
+      "type": ["string", "null"]
+    },
+    "goal_id": {
+      "type": ["string", "null"]
+    },
+    "task_id": {
+      "type": ["string", "null"]
+    },
+    "attempt_id": {
+      "type": ["integer", "null"]
+    },
+    "role": {
+      "type": "string",
+      "enum": ["planner", "reviewer", "task", "auditor", "remediation"]
+    },
+    "context_packet_id": {
+      "type": "string"
+    },
+    "context_packet_hash": {
+      "type": "string"
+    },
+    "stable_prefix_version": {
+      "type": "string"
+    },
+    "stable_prefix_hash": {
+      "type": "string"
+    },
+    "stable_prefix_bytes": {
+      "type": "integer"
+    },
+    "dynamic_packet_bytes": {
+      "type": "integer"
+    },
+    "referenced_file_count": {
+      "type": "integer"
+    },
+    "inline_file_count": {
+      "type": "integer"
+    },
+    "inline_file_bytes": {
+      "type": "integer"
+    },
+    "handoff_count": {
+      "type": "integer"
+    },
+    "handoff_bytes": {
+      "type": "integer"
+    },
+    "requirement_count": {
+      "type": "integer"
+    },
+    "required_anchor_count": {
+      "type": "integer"
+    },
+    "required_anchor_recall": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "factory_supplied_bytes": {
+      "type": "integer"
+    },
+    "repeated_bytes": {
+      "type": "integer"
+    },
+    "unique_bytes": {
+      "type": "integer"
+    },
+    "redundancy_ratio": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "provider_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_cached_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_output_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_reasoning_tokens": {
+      "type": ["integer", "null"]
+    },
+    "session_mode": {
+      "type": "string",
+      "enum": ["fresh", "resume"]
+    },
+    "session_reused": {
+      "type": "boolean"
+    },
+    "native_compaction_used": {
+      "type": "boolean"
+    },
+    "timestamp": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "role",
+    "context_packet_id",
+    "context_packet_hash",
+    "stable_prefix_version",
+    "stable_prefix_hash",
+    "stable_prefix_bytes",
+    "dynamic_packet_bytes",
+    "referenced_file_count",
+    "inline_file_count",
+    "inline_file_bytes",
+    "handoff_count",
+    "handoff_bytes",
+    "requirement_count",
+    "required_anchor_count",
+    "required_anchor_recall",
+    "factory_supplied_bytes",
+    "session_mode",
+    "session_reused",
+    "native_compaction_used"
+  ]
+}

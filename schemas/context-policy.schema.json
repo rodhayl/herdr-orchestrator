@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ContextPolicy",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["8.0.0"]
+    },
+    "description": { "type": "string" },
+    "default_session_mode": {
+      "type": "string",
+      "enum": ["fresh", "resume"]
+    },
+    "same_attempt_resume": {
+      "type": "boolean"
+    },
+    "same_task_retry_mode": {
+      "type": "string",
+      "enum": ["fresh_with_attempt_handoff", "fresh", "resume"]
+    },
+    "stable_prefix": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "string" },
+        "enforce_canonical_ordering": { "type": "boolean" }
+      },
+      "required": ["version", "enforce_canonical_ordering"]
+    },
+    "native_compaction_policy": {
+      "type": "object",
+      "properties": {
+        "agy": { "type": "string" },
+        "droid": { "type": "string" },
+        "codex": { "type": "string" },
+        "claude": { "type": "string" },
+        "opencode": { "type": "string" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["planner", "reviewer", "task", "auditor", "remediation"]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "soft_budget_bytes": {
+            "type": "integer",
+            "minimum": 100
+          },
+          "hard_budget_bytes": {
+            "type": "integer",
+            "minimum": 100
+          },
+          "session_mode": {
+            "type": "string",
+            "enum": ["fresh", "resume"]
+          },
+          "max_handoff_bytes": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 8192
+          },
+          "allow_zero_required_anchors": {
+            "type": "boolean",
+            "enum": [false]
+          }
+        },
+        "required": ["soft_budget_bytes", "hard_budget_bytes", "session_mode"]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "default_session_mode",
+    "same_attempt_resume",
+    "same_task_retry_mode",
+    "stable_prefix",
+    "roles"
+  ]
+}

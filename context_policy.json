@@ -1,0 +1,56 @@
+{
+  "$schema": "./schemas/context-policy.schema.json",
+  "schema_version": "8.0.0",
+  "description": "Deterministic context budgets and session policies for Factory v8.0.0",
+  "default_session_mode": "fresh",
+  "same_attempt_resume": true,
+  "same_task_retry_mode": "fresh_with_attempt_handoff",
+  "stable_prefix": {
+    "version": "1.0.0",
+    "enforce_canonical_ordering": true
+  },
+  "native_compaction_policy": {
+    "agy": "disabled_by_default_fresh_session",
+    "droid": "disabled_by_default_fresh_session",
+    "codex": "disabled_by_default_fresh_session",
+    "claude": "disabled_by_default_fresh_session",
+    "opencode": "disabled_by_default_fresh_session"
+  },
+  "roles": {
+    "planner": {
+      "soft_budget_bytes": 8192,
+      "hard_budget_bytes": 20480,
+      "session_mode": "fresh",
+      "max_handoff_bytes": 4096,
+      "allow_zero_required_anchors": false
+    },
+    "reviewer": {
+      "soft_budget_bytes": 8192,
+      "hard_budget_bytes": 20480,
+      "session_mode": "fresh",
+      "max_handoff_bytes": 4096,
+      "allow_zero_required_anchors": false
+    },
+    "task": {
+      "soft_budget_bytes": 4096,
+      "hard_budget_bytes": 12288,
+      "session_mode": "fresh",
+      "max_handoff_bytes": 4096,
+      "allow_zero_required_anchors": false
+    },
+    "auditor": {
+      "soft_budget_bytes": 10240,
+      "hard_budget_bytes": 24576,
+      "session_mode": "fresh",
+      "max_handoff_bytes": 4096,
+      "allow_zero_required_anchors": false
+    },
+    "remediation": {
+      "soft_budget_bytes": 6144,
+      "hard_budget_bytes": 16384,
+      "session_mode": "fresh",
+      "max_handoff_bytes": 4096,
+      "allow_zero_required_anchors": false
+    }
+  }
+}

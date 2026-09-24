@@ -201,8 +201,10 @@ class TestV3DAGScheduler(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
-        # Reset git state and prune worktrees
-        subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
+        # Reset git state and prune worktrees only if HEAD moved
+        cur_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
+        if cur_commit != self.orig_commit:
+            subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
         # Clean any test branches created during tests
         proc = subprocess.run(["git", "branch", "--list", "factory/run-*"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
         for br in proc.stdout.splitlines():
@@ -366,8 +368,10 @@ class TestV3GitConflictHandling(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
         FakeWorkerAdapter.behavior = "SUCCESS"
-        # Reset git state and prune worktrees
-        subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
+        # Reset git state and prune worktrees only if HEAD moved
+        cur_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
+        if cur_commit != self.orig_commit:
+            subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
         proc = subprocess.run(["git", "branch", "--list", "factory/run-*"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
         for br in proc.stdout.splitlines():
             b = br.strip().replace("*", "").strip()
@@ -516,8 +520,10 @@ class TestV3FailpointAndResume(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
-        # Reset git state and prune worktrees
-        subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
+        # Reset git state and prune worktrees only if HEAD moved
+        cur_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
+        if cur_commit != self.orig_commit:
+            subprocess.run(["git", "reset", "--hard", self.orig_commit], cwd=str(PROJECT_ROOT), capture_output=True)
         proc = subprocess.run(["git", "branch", "--list", "factory/run-*"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
         for br in proc.stdout.splitlines():
             b = br.strip().replace("*", "").strip()
