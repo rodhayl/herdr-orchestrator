@@ -8,6 +8,7 @@ binary files, path traversals, large file limits, and atomic crash recovery.
 
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -28,6 +29,7 @@ from tools.context import (
     HandoffPacket,
     canonical_json_dump,
     sha256_text,
+    redact_secrets,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -287,6 +289,81 @@ class TestV8MalformedAndEdgeCases(unittest.TestCase):
         recall, missing = calculate_rendered_anchor_recall([req_anchor], rendered_with_pass)
         self.assertEqual(recall, 1.0)
         self.assertEqual(len(missing), 0)
+
+    def test_path_boundary_anchor_recall_prevents_prefix_substring_match(self):
+        """Verifies strict boundary matching prevents path prefix substring collisions (e.g. '/src' in '/src/core')."""
+        path_anchor = Anchor(
+            anchor_id="path:src",
+            anchor_type="file_reference",
+            source="spec",
+            source_hash=sha256_text("/src"),
+            content="/src",
+            required=True,
+        )
+        rendered_with_subpath = "Inspect the /src/core/hasher.py file for implementation details."
+        recall, missing = calculate_rendered_anchor_recall([path_anchor], rendered_with_subpath)
+        self.assertEqual(recall, 0.0)
+        self.assertIn("path:src", missing)
+
+        rendered_with_exact = "Inspect the /src directory for implementation details."
+        recall, missing = calculate_rendered_anchor_recall([path_anchor], rendered_with_exact)
+        self.assertEqual(recall, 1.0)
+        self.assertEqual(len(missing), 0)
+
+    def test_redact_secrets_scans_dict_keys_and_broad_env_vars(self):
+        """Verifies redact_secrets redacts secret keys in dictionaries and broad env vars."""
+        d = {
+            "sk-12345678901234567890": "valid_value",
+            "normal_key": "Bearer my_secret_token_abcdef123456",
+        }
+        redacted = redact_secrets(d)
+        self.assertNotIn("sk-12345678901234567890", redacted)
+        self.assertIn("[REDACTED_SECRET]", redacted)
+        self.assertEqual(redacted["[REDACTED_SECRET]"], "valid_value")
+
+    def test_context_policy_non_integer_budget_override_raises(self):
+        """Verifies that non-integer, negative, or boolean budget overrides raise ContextError."""
+        policy = ContextPolicy.load()
+        with self.assertRaises(ContextError) as ctx:
+            policy.apply_project_overrides({"roles": {"task": {"soft_budget_bytes": "invalid"}}})
+        self.assertIn("must be a positive integer", str(ctx.exception))
+
+        with self.assertRaises(ContextError) as ctx:
+            policy.apply_project_overrides({"roles": {"task": {"soft_budget_bytes": -100}}})
+        self.assertIn("must be a positive integer", str(ctx.exception))
+
+        with self.assertRaises(ContextError) as ctx:
+            policy.apply_project_overrides({"roles": {"task": {"soft_budget_bytes": True}}})
+        self.assertIn("must be a positive integer", str(ctx.exception))
+
+    def test_handoff_packet_multi_field_proportional_bounding(self):
+        """Verifies that all 4 free-text fields are proportionally bounded within max_bytes."""
+        hp = HandoffPacket(
+            handoff_id="ho-test-multi",
+            producer_task_id="task_1",
+            producer_attempt=1,
+            changed_paths=["src/a.py"],
+            satisfied_criteria=["R1"],
+            contracts="C" * 2000,
+            decisions="D" * 2000,
+            consumer_notes="N" * 2000,
+            known_risks="K" * 2000,
+        )
+        total_ft = (
+            len(hp.contracts.encode("utf-8"))
+            + len(hp.decisions.encode("utf-8"))
+            + len(hp.consumer_notes.encode("utf-8"))
+            + len(hp.known_risks.encode("utf-8"))
+        )
+        self.assertLessEqual(total_ft, 4096)
+        self.assertLessEqual(hp.handoff_bytes, 4096)
+
+    def test_filesystem_git_symbolic_refs_allowed(self):
+        """Verifies symbolic refs like HEAD~1, HEAD^, main are allowed by VALID_REF_PATTERN."""
+        source = FilesystemGitContextSource(REPO_ROOT)
+        # Should not raise ContextError on valid symbolic ref syntax
+        c = source.get_git_commit("HEAD~1")
+        self.assertTrue(re.match(r"^[a-f0-9]{40}$", c))
 
 
 if __name__ == "__main__":

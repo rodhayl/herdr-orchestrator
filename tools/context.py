@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime
+import fnmatch
 import hashlib
 import json
 import os
@@ -84,25 +85,35 @@ KNOWN_SECRET_ENV_VARS = [
     "OPENROUTER_API_KEY",
     "OPENCODE_API_KEY",
     "HERDR_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GCP_SERVICE_ACCOUNT_KEY",
+    "DATABASE_URL",
+    "VAULT_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
 ]
 
 SECRET_PATTERNS = [
     re.compile(r"sk-[a-zA-Z0-9_\-]{20,}"),
     re.compile(r"fk-[a-zA-Z0-9_\-]{20,}"),
-    re.compile(r"ghp_[a-zA-Z0-9]{20,}"),
+    re.compile(r"gh[posr]_[a-zA-Z0-9]{20,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
+    re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
 ]
+
+ENV_SECRET_KEY_PATTERN = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE)", re.IGNORECASE)
 
 
 def redact_secrets(val: Any) -> Any:
-    """Recursively redacts secret API keys, tokens, and known secret env vars."""
+    """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
     if isinstance(val, str):
         res = val
-        for var in KNOWN_SECRET_ENV_VARS:
-            v = os.environ.get(var)
-            if v and len(v.strip()) >= 6:
-                res = res.replace(v.strip(), f"[REDACTED_{var}]")
+        for env_k, env_v in os.environ.items():
+            if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
+                if env_v and len(env_v.strip()) >= 6:
+                    res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
         return res
@@ -111,7 +122,7 @@ def redact_secrets(val: Any) -> Any:
     elif isinstance(val, tuple):
         return tuple(redact_secrets(item) for item in val)
     elif isinstance(val, dict):
-        return {k: redact_secrets(v) for k, v in val.items()}
+        return {redact_secrets(k): redact_secrets(v) for k, v in val.items()}
     return val
 
 
@@ -225,7 +236,7 @@ def calculate_rendered_anchor_recall(
     """Calculates recall ratio for required anchors in rendered prompt text: included / total_required.
 
     Fails closed if any required anchor is omitted from the rendered text.
-    Uses word-boundary-aware matching to avoid false substring collisions.
+    Uses strict boundary-aware matching to avoid false substring collisions.
     Returns:
         (recall_ratio, missing_anchor_ids)
     """
@@ -240,9 +251,10 @@ def calculate_rendered_anchor_recall(
         if not content:
             missing.append(req.anchor_id)
             continue
-        # Word-boundary matching to prevent false substring collisions (e.g. 'pass' in 'compass')
-        pattern = r"(?<!\w)" + re.escape(content) + r"(?!\w)"
-        if re.search(pattern, rendered_text) or (not content.isalnum() and content in rendered_text):
+        # Strict boundary matching: content must not be preceded or followed by alphanumeric or path characters
+        # Prevents false collisions for words ('pass' in 'compass') and paths ('/src' in '/src/core')
+        pattern = r"(?<![a-zA-Z0-9_/-])" + re.escape(content) + r"(?![a-zA-Z0-9_/-])"
+        if re.search(pattern, rendered_text):
             included_count += 1
         else:
             missing.append(req.anchor_id)
@@ -276,7 +288,8 @@ class HandoffPacket:
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        self.enforce_semantic_bounds()
+        if not self.handoff_hash:
+            self.enforce_semantic_bounds()
 
     def enforce_semantic_bounds(self, max_bytes: int = MAX_SEMANTIC_HANDOFF_BYTES) -> None:
         """Enforces hard bound on semantic free-text fields without losing deterministic facts."""
@@ -324,20 +337,36 @@ class HandoffPacket:
                 cur_b += item_len
             self.known_risks = bounded_risks
 
-        # Enforce total aggregate bound on free-text fields
-        free_text_fields = [
-            self.consumer_notes if isinstance(self.consumer_notes, str) else "",
-            self.contracts if isinstance(self.contracts, str) else "",
-            self.decisions if isinstance(self.decisions, str) else " ".join(self.decisions),
-            self.known_risks if isinstance(self.known_risks, str) else " ".join(self.known_risks),
-        ]
-        total_ft_bytes = sum(len(f.encode("utf-8")) for f in free_text_fields)
-        if total_ft_bytes > max_bytes:
-            excess = total_ft_bytes - max_bytes
-            cur_cn_b = len(self.consumer_notes.encode("utf-8"))
-            if cur_cn_b > excess + 32:
-                keep_b = cur_cn_b - excess - 32
-                self.consumer_notes = self.consumer_notes.encode("utf-8")[:keep_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+        # Enforce total aggregate bound proportionally across all four free-text fields
+        # Reserve envelope headroom so the overall serialized JSON remains <= max_bytes
+        ft_budget = max(512, max_bytes - 768)
+        for _ in range(50):
+            ft_parts = {
+                "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+                "known_risks": self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
+                "decisions": self.decisions if isinstance(self.decisions, str) else "\n".join(self.decisions),
+                "contracts": self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
+            }
+            total_ft_bytes = sum(len(v.encode("utf-8")) for v in ft_parts.values())
+            if total_ft_bytes <= ft_budget:
+                break
+            excess = total_ft_bytes - ft_budget
+            largest_field = max(ft_parts.keys(), key=lambda k: len(ft_parts[k].encode("utf-8")))
+            cur_val = getattr(self, largest_field)
+            if isinstance(cur_val, str):
+                cur_b = len(cur_val.encode("utf-8"))
+                trim_amount = min(cur_b, max(32, excess // 2 + 1))
+                new_b = max(0, cur_b - trim_amount)
+                new_str = cur_val.encode("utf-8")[:new_b].decode("utf-8", errors="ignore")
+                if new_str and not new_str.endswith("[TRUNCATED:BOUND]"):
+                    new_str += "\n[TRUNCATED:BOUND]"
+                setattr(self, largest_field, new_str)
+            elif isinstance(cur_val, list):
+                if cur_val:
+                    cur_val.pop()
+                    setattr(self, largest_field, cur_val)
+                else:
+                    break
 
         # Compute hash once at creation time if not already set
         if not self.handoff_hash:
@@ -348,7 +377,7 @@ class HandoffPacket:
         full_d["handoff_hash"] = self.handoff_hash
         full_d["handoff_bytes"] = 0
         b = len(canonical_json_dump(full_d).encode("utf-8"))
-        for _ in range(3):
+        for _ in range(20):
             full_d["handoff_bytes"] = b
             b_new = len(canonical_json_dump(full_d).encode("utf-8"))
             if b_new == b:
@@ -462,7 +491,7 @@ class FilesystemGitContextSource(ContextSource):
         re.compile(r"(^|/)\.netrc$", re.IGNORECASE),
     ]
 
-    VALID_REF_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
+    VALID_REF_PATTERN = re.compile(r"^[a-zA-Z0-9_./~^@{}-]{1,100}$")
 
     def __init__(self, project_root: pathlib.Path):
         self.project_root = project_root.resolve()
@@ -521,7 +550,12 @@ class FilesystemGitContextSource(ContextSource):
         return text, truncated, full_hash
 
     def get_bounded_file_inventory(self, max_files: int = 150, max_depth: int = 4) -> List[str]:
-        """Scans project repository deterministically, respecting boundaries and ignoring noisy directories."""
+        """Scans project repository deterministically, respecting boundaries and ignoring noisy directories.
+
+        Defense-in-depth ordering:
+        1. Dotfile & directory exclusion (primary guard): excludes hidden dirs/files (.git, .env, .aws, etc.).
+        2. _is_sensitive_path (secondary defense): excludes non-dotfile sensitive files (secrets.json, id_rsa, *.pem, etc.).
+        """
         ignore_dirs = {".git", ".agy-factory", "__pycache__", "node_modules", ".venv", ".pytest_cache", ".eggs"}
         found = []
 
@@ -560,7 +594,7 @@ class FilesystemGitContextSource(ContextSource):
         return sorted(found)
 
     def get_git_commit(self, ref: str = "HEAD") -> str:
-        if not self.VALID_REF_PATTERN.match(ref):
+        if not self.VALID_REF_PATTERN.match(ref) or ref.startswith("-") or ".." in ref:
             return "UNKNOWN"
         try:
             proc = subprocess.run(
@@ -580,9 +614,9 @@ class FilesystemGitContextSource(ContextSource):
 
     def get_git_diff(self, base_commit: str, target_commit: Optional[str] = None, max_bytes: int = 8192) -> Tuple[str, bool]:
         target = target_commit or "HEAD"
-        if not self.VALID_REF_PATTERN.match(base_commit) or base_commit.startswith("-"):
+        if not self.VALID_REF_PATTERN.match(base_commit) or base_commit.startswith("-") or ".." in base_commit:
             raise ContextError(f"Invalid git base_commit ref: '{base_commit}'")
-        if not self.VALID_REF_PATTERN.match(target) or target.startswith("-"):
+        if not self.VALID_REF_PATTERN.match(target) or target.startswith("-") or ".." in target:
             raise ContextError(f"Invalid git target_commit ref: '{target}'")
         if base_commit == target:
             return "", False
@@ -724,15 +758,22 @@ class ContextPolicy:
             for rk in odata:
                 if rk not in ("soft_budget_bytes", "hard_budget_bytes"):
                     raise ContextError(f"Project override for role '{role}' cannot modify field '{rk}'")
+            for b_field in ("soft_budget_bytes", "hard_budget_bytes"):
+                if b_field in odata:
+                    val = odata[b_field]
+                    if not isinstance(val, int) or isinstance(val, bool) or val <= 0:
+                        raise ContextError(
+                            f"Project override for role '{role}' field '{b_field}' must be a positive integer, got: {repr(val)}"
+                        )
             if role in self.roles:
                 cur = self.roles[role]
                 new_soft = cur["soft_budget_bytes"]
                 new_hard = cur["hard_budget_bytes"]
                 # Can only narrow (lower) budgets
                 if "soft_budget_bytes" in odata:
-                    new_soft = min(cur["soft_budget_bytes"], int(odata["soft_budget_bytes"]))
+                    new_soft = min(cur["soft_budget_bytes"], odata["soft_budget_bytes"])
                 if "hard_budget_bytes" in odata:
-                    new_hard = min(cur["hard_budget_bytes"], int(odata["hard_budget_bytes"]))
+                    new_hard = min(cur["hard_budget_bytes"], odata["hard_budget_bytes"])
                 if new_hard < new_soft:
                     raise ContextError(
                         f"Override for role '{role}' results in hard_budget_bytes ({new_hard}) < soft_budget_bytes ({new_soft})"
@@ -984,6 +1025,7 @@ class ContextPacket:
     constraints: List[str] = dataclasses.field(default_factory=list)
     rendered_tail: str = ""
     token_count: Optional[int] = None
+    token_count_source: Optional[str] = None
 
     def calculate_required_anchor_recall(self) -> Tuple[float, List[str]]:
         rendered = self.render_full_prompt()
@@ -1028,6 +1070,7 @@ class ContextPacket:
             "packet_bytes": self.packet_bytes,
             "packet_hash": self.packet_hash,
             "token_count": self.token_count,
+            "token_count_source": self.token_count_source,
             "compiler_version": self.compiler_version,
             "created_at": self.created_at,
             "rendered_tail": self.rendered_tail,
@@ -1070,6 +1113,7 @@ class ContextPacket:
             created_at=d.get("created_at", ""),
             rendered_tail=d.get("rendered_tail", ""),
             token_count=d.get("token_count"),
+            token_count_source=d.get("token_count_source"),
         )
 
 
@@ -1277,10 +1321,12 @@ class ContextCompiler:
             referenced_files.extend(extra_referenced_files)
         # Add dependency changed paths and normalize handoffs
         norm_handoffs: List[HandoffPacket] = []
+        handoff_required_paths: Set[str] = set()
         for ho in handoffs:
             if isinstance(ho, HandoffPacket):
                 norm_handoffs.append(ho)
                 referenced_files.extend(ho.changed_paths)
+                handoff_required_paths.update(ho.changed_paths)
             elif isinstance(ho, dict):
                 hp = HandoffPacket(
                     handoff_id=ho.get("handoff_id", f"ho-{uuid.uuid4().hex[:8]}"),
@@ -1297,7 +1343,22 @@ class ContextCompiler:
                 )
                 norm_handoffs.append(hp)
                 referenced_files.extend(hp.changed_paths)
+                handoff_required_paths.update(hp.changed_paths)
         handoffs = norm_handoffs
+
+        # Register handoff changed paths as required anchors to prevent silent loss
+        for ho_path in sorted(handoff_required_paths):
+            anchors.append(
+                Anchor(
+                    anchor_id=f"handoff_path:{sha256_text(ho_path)[:8]}",
+                    anchor_type="file_reference",
+                    source="predecessor_handoff",
+                    source_hash=sha256_text(ho_path),
+                    content=ho_path,
+                    required=True,
+                )
+            )
+
         referenced_files = sorted(set(referenced_files))
 
         # Check for inline files (none by default unless explicitly needed)
@@ -1320,9 +1381,23 @@ class ContextCompiler:
 
         if current_bytes > soft_budget:
             pruned = True
-            # Step 1: Remove duplicate/excess file references
+            # Step 1: Remove duplicate/excess file references using strict path matching
+            # Preserving all handoff_required_paths and allowed_paths
+            def _is_path_allowed(fpath: str) -> bool:
+                if fpath in {"GOAL.md", "README.md"} or fpath in handoff_required_paths:
+                    return True
+                try:
+                    p_file = pathlib.PurePosixPath(fpath)
+                    for pat in allowed_paths:
+                        p_pat = pathlib.PurePosixPath(pat)
+                        if p_file == p_pat or p_pat in p_file.parents or fnmatch.fnmatch(fpath, pat):
+                            return True
+                except Exception:
+                    pass
+                return False
+
             if len(referenced_files) > 10:
-                referenced_files = [f for f in referenced_files if any(p in f for p in allowed_paths) or f in {"GOAL.md", "README.md"}][:10]
+                referenced_files = [f for f in referenced_files if _is_path_allowed(f)][:15]
 
             # Step 2: Bound handoff notes
             compact_handoffs = []
@@ -1565,6 +1640,7 @@ class ContextCompiler:
 
         tail = "\n".join(sections) + "\n"
         tail_bytes = len(tail.encode("utf-8"))
+        original_bytes = tail_bytes
 
         # Pruning check
         pruned = False
@@ -1618,8 +1694,8 @@ class ContextCompiler:
             budget={
                 "soft_budget_bytes": soft_budget,
                 "hard_budget_bytes": hard_budget,
-                "original_bytes": tail_bytes,
-                "pruned_bytes": 0,
+                "original_bytes": original_bytes,
+                "pruned_bytes": max(0, original_bytes - tail_bytes),
                 "final_bytes": tail_bytes,
                 "was_pruned": pruned,
             },

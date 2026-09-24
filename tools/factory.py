@@ -261,24 +261,35 @@ KNOWN_SECRET_ENV_VARS = [
     "OPENROUTER_API_KEY",
     "OPENCODE_API_KEY",
     "HERDR_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GCP_SERVICE_ACCOUNT_KEY",
+    "DATABASE_URL",
+    "VAULT_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
 ]
 
 SECRET_PATTERNS = [
     re.compile(r"sk-[a-zA-Z0-9_\-]{20,}"),
     re.compile(r"fk-[a-zA-Z0-9_\-]{20,}"),
-    re.compile(r"ghp_[a-zA-Z0-9]{20,}"),
+    re.compile(r"gh[posr]_[a-zA-Z0-9]{20,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
+    re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
 ]
+
+ENV_SECRET_KEY_PATTERN = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE)", re.IGNORECASE)
 
 
 def redact_secrets(val):
-    """Recursively redacts secret API keys, tokens, and known secret env vars."""
+    """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
     if isinstance(val, str):
         res = val
-        for var in KNOWN_SECRET_ENV_VARS:
-            v = os.environ.get(var)
-            if v and len(v.strip()) >= 6:
-                res = res.replace(v.strip(), f"[REDACTED_{var}]")
+        for env_k, env_v in os.environ.items():
+            if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
+                if env_v and len(env_v.strip()) >= 6:
+                    res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
         return res
@@ -287,7 +298,7 @@ def redact_secrets(val):
     elif isinstance(val, tuple):
         return tuple(redact_secrets(item) for item in val)
     elif isinstance(val, dict):
-        return {k: redact_secrets(v) for k, v in val.items()}
+        return {redact_secrets(k): redact_secrets(v) for k, v in val.items()}
     return val
 
 
@@ -3677,6 +3688,18 @@ class TaskExecutor:
                 f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors: {missing}"
             )
 
+        # Staleness Verification Gate: ensure packet was not compiled from outdated source state
+        current_source_hashes = {
+            "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+            "plan": sha256_text(canonical_json_dump(self.plan)),
+            "task_def": sha256_text(canonical_json_dump(self.task)),
+        }
+        is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
+        if is_stale:
+            raise ContextError(
+                f"CONTEXT_PACKET_STALE: ContextPacket for task '{self.task_id}' is stale before dispatch: {stale_reasons}"
+            )
+
         self.current_context_packet = packet
         return prompt_content
 
@@ -4245,6 +4268,8 @@ class FactoryOrchestrator:
         clean_summary = _sanitize_worker_text(raw_summary, 256) or f"Completed {task_id}"
         clean_notes = _sanitize_worker_text(raw_notes, 512)
 
+        is_passed = attempt_result.get("status") in ("SUCCESS", "COMPLETED") and attempt_result.get("exit_code", 0) == 0
+        actual_exit_code = attempt_result.get("exit_code", 0 if is_passed else 1)
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
             producer_task_id=task_id,
@@ -4256,7 +4281,7 @@ class FactoryOrchestrator:
             decisions=f"Implemented {clean_summary}",
             consumer_notes=clean_notes or f"Changes integrated in commit {commit_hash[:8]}",
             known_risks="",
-            validation_result={"passed": True, "exit_code": attempt_result.get("exit_code", 0)}
+            validation_result={"passed": is_passed, "exit_code": actual_exit_code}
         )
         handoff_file = self.handoffs_dir / f"{task_id}.json"
         save_handoff_packet(handoff, handoff_file)
@@ -4631,6 +4656,7 @@ class FactoryOrchestrator:
                         # Collect predecessor handoffs (Factory v8.0.0)
                         task_deps = tdef.get("dependencies", [])
                         task_handoffs = []
+                        load_error = None
                         for dep_id in task_deps:
                             if dep_id in self.active_handoffs:
                                 task_handoffs.append(self.active_handoffs[dep_id])
@@ -4639,8 +4665,18 @@ class FactoryOrchestrator:
                                 if ho_file.exists():
                                     try:
                                         task_handoffs.append(load_handoff_packet(ho_file))
-                                    except Exception:
-                                        pass
+                                    except Exception as exc:
+                                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": str(exc)})
+                                        load_error = f"Failed to load dependency handoff {dep_id}: {exc}"
+                                        break
+                                else:
+                                    dep_tinfo = self.manifest["tasks"].get(dep_id, {})
+                                    if dep_tinfo.get("status") == "SUCCESS":
+                                        load_error = f"Required dependency handoff {dep_id} missing on disk at {ho_file}"
+                                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
+                                        break
+                        if load_error:
+                            raise RuntimeError(f"Cannot dispatch task {tid}: {load_error}")
 
                         executor = TaskExecutor(
                             self.run_id,
@@ -4859,8 +4895,8 @@ class FactoryOrchestrator:
                         if reqs and tail:
                             rec, _ = calculate_rendered_anchor_recall(reqs, tail)
                             observed_recalls.append(rec)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.log_event("WARNING_PACKET_RELOAD_FAILED", {"packet_file": str(pf), "error": str(exc)})
 
             min_recall = min(observed_recalls) if observed_recalls else 1.0
 
@@ -4875,8 +4911,13 @@ class FactoryOrchestrator:
                     "prompt_count": len(rendered_prompts),
                     "required_anchor_recall": round(min_recall, 4)
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            self.log_event("WARNING_CONTEXT_SUMMARY_FAILED", {"error": str(e)})
+            self.manifest["context_summary"] = {
+                "schema_version": "8.0.0",
+                "error": str(e),
+                "required_anchor_recall": None
+            }
 
         self.save_manifest()
         clean_summary = redact_secrets(self.manifest)
@@ -5428,8 +5469,17 @@ Output ONLY the JSON object.
 
     # Add derived technical criteria with rich provenance traceability (v8.0.0)
     explicit_ids = [c["id"] for c in acceptance_criteria]
-    test_parent = [cid for cid in explicit_ids if "12" in cid or "test" in cid.lower()] or ([explicit_ids[-1]] if explicit_ids else ["INVARIANT:DETERMINISTIC_TESTING"])
-    cli_parent = [cid for cid in explicit_ids if "11" in cid or "7" in cid or "error" in cid.lower()] or ([explicit_ids[0]] if explicit_ids else ["INVARIANT:STDLIB_ONLY"])
+    test_matches = [
+        c["id"] for c in acceptance_criteria
+        if re.search(r"\b(?:test|tests|testing|verify|verification|validate)\b", (c.get("title", "") + " " + c.get("description", "")), re.IGNORECASE)
+    ]
+    test_parent = test_matches or ([explicit_ids[-1]] if explicit_ids else ["INVARIANT:DETERMINISTIC_TESTING"])
+
+    cli_matches = [
+        c["id"] for c in acceptance_criteria
+        if re.search(r"\b(?:cli|command|argument|parser|options|error|exit)\b", (c.get("title", "") + " " + c.get("description", "")), re.IGNORECASE)
+    ]
+    cli_parent = cli_matches or ([explicit_ids[0]] if explicit_ids else ["INVARIANT:STDLIB_ONLY"])
 
     derived_criteria = [
         "Deterministic post-execution verification test suite passing 100%",

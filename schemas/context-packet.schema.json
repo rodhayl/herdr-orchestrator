@@ -151,6 +151,11 @@
       "type": ["integer", "null"],
       "description": "Provider-reported or exact tokenizer token count, null when not available"
     },
+    "token_count_source": {
+      "type": ["string", "null"],
+      "enum": ["MEASURED", "ESTIMATED", null],
+      "description": "Source of token count measurement: MEASURED (provider-reported) or ESTIMATED"
+    },
     "rendered_tail": {
       "type": "string",
       "description": "The rendered dynamic tail prompt content"
