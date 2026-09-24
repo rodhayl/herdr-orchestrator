@@ -632,7 +632,7 @@ def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{time.time()}")
     with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent)
+        json.dump(data, f, indent=indent, default=str)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
