@@ -501,7 +501,7 @@ class HandoffPacket:
                 elif isinstance(cur, dict):
                     setattr(self, f_name, canonical_json_dump(cur).encode("utf-8")[:alloc_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]")
 
-        for _ in range(50):
+        for _ in range(200):
             ft_parts = {
                 "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
                 "known_risks": self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
@@ -1422,8 +1422,14 @@ class ContextPacket:
         expected_prompt = redact_secrets(stable_prefix + "\n" + rendered_tail)
         computed_hash = sha256_text(expected_prompt)
         if computed_hash != stored_hash:
+            orig_prefix_hash = d.get("source_hashes", {}).get("stable_prefix")
+            current_prefix_hash = sha256_text(stable_prefix)
+            if orig_prefix_hash and orig_prefix_hash != current_prefix_hash:
+                raise MalformedContextPacketError(
+                    f"ContextPacket {d.get('packet_id')} invalid due to stable prefix drift: compiled with {orig_prefix_hash[:8]}, current is {current_prefix_hash[:8]}"
+                )
             raise MalformedContextPacketError(
-                f"ContextPacket integrity verification failed for {d.get('packet_id')}: stored hash {stored_hash[:8]} != computed hash {computed_hash[:8]}"
+                f"ContextPacket structural corruption detected for {d.get('packet_id')}: stored hash {stored_hash[:8]} != computed hash {computed_hash[:8]}"
             )
         anchors = [Anchor.from_dict(a) for a in d.get("required_anchors", [])]
         role = d.get("packet_role", "")
@@ -1703,6 +1709,8 @@ class ContextCompiler:
                     )
                 )
         for cf in task_def.get("context_files", []):
+            if isinstance(cf, str) and cf not in referenced_files:
+                referenced_files.append(cf)
             anchors.append(
                 Anchor(
                     anchor_id=f"context_file:{sha256_text(cf)[:8]}",
@@ -1779,6 +1787,7 @@ class ContextCompiler:
 
         original_bytes = len(tail.encode("utf-8"))
         pruned = False
+        dropped_files: List[str] = []
 
         # Pruning loop if above soft budget
         current_tail = tail
@@ -1801,9 +1810,11 @@ class ContextCompiler:
                     pass
                 return False
 
-            extra_files = [f for f in referenced_files if f not in handoff_required_paths and f not in {"GOAL.md", "README.md"}]
+            task_context_files = set(task_def.get("context_files", []))
+            core_files = sorted(set(list(handoff_required_paths) + [f for f in task_context_files if _is_path_allowed(f) and (self.source.project_root / f).exists()] + [f for f in {"GOAL.md", "README.md"} if (self.source.project_root / f).exists()]))
+            extra_files = [f for f in referenced_files if f not in core_files]
             filtered_extra = [f for f in extra_files if _is_path_allowed(f)][:10]
-            core_files = sorted(set(list(handoff_required_paths) + [f for f in {"GOAL.md", "README.md"} if (self.source.project_root / f).exists()]))
+            dropped_files = [f for f in extra_files if f not in core_files and f not in filtered_extra]
             referenced_files = sorted(set(core_files + filtered_extra))
 
             # Step 2: Bound handoff notes while preserving original handoff hash for traceability
@@ -1817,6 +1828,23 @@ class ContextCompiler:
                 h_copy.enforce_semantic_bounds(max_bytes=1024)
                 compact_handoffs.append(h_copy)
             handoffs = compact_handoffs
+
+            # Re-synchronize surviving handoff path anchors after compaction to prevent false anchor recall misses
+            surviving_paths = set()
+            for ho in handoffs:
+                surviving_paths.update([p for p in ho.changed_paths[:200] if not str(p).startswith("[+")])
+            anchors = [a for a in anchors if not (a.anchor_type == "file_reference" and a.source == "predecessor_handoff")]
+            for ho_path in sorted(surviving_paths):
+                anchors.append(
+                    Anchor(
+                        anchor_id=f"handoff_path:{sha256_text(ho_path)[:8]}",
+                        anchor_type="file_reference",
+                        source="predecessor_handoff",
+                        source_hash=sha256_text(ho_path),
+                        content=ho_path,
+                        required=True,
+                    )
+                )
 
             # Step 3: Remove inlined files if any
             included_files = []
@@ -1877,6 +1905,7 @@ class ContextCompiler:
                 "pruned_bytes": max(0, original_bytes - current_bytes),
                 "final_bytes": current_bytes,
                 "was_pruned": pruned,
+                "pruned_files": dropped_files,
             },
             packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
@@ -2453,10 +2482,22 @@ def load_context_packet(packet_file: pathlib.Path) -> ContextPacket:
     try:
         data = json.loads(packet_file.read_text(encoding="utf-8"))
     except Exception as e:
+        try:
+            corrupt_path = packet_file.with_suffix(packet_file.suffix + ".corrupt")
+            os.replace(packet_file, corrupt_path)
+        except Exception:
+            pass
         raise MalformedContextPacketError(f"Failed to parse ContextPacket JSON from {packet_file}: {e}")
     try:
         return ContextPacket.from_dict(data)
     except Exception as e:
+        try:
+            corrupt_path = packet_file.with_suffix(packet_file.suffix + ".corrupt")
+            os.replace(packet_file, corrupt_path)
+        except Exception:
+            pass
+        if isinstance(e, MalformedContextPacketError):
+            raise
         raise MalformedContextPacketError(f"Invalid ContextPacket structure in {packet_file}: {e}")
 
 

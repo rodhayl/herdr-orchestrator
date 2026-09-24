@@ -3661,26 +3661,28 @@ class TaskExecutor:
             raw_title = unicodedata.normalize("NFKC", str(plan_task.get("name", self.task_id))[:256])
             raw_title = redact_secrets(raw_title)
             clean_title = redact_secrets(re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id)
+            clean_task_id = redact_secrets(re.sub(r"[^\w\-_]", "", str(self.task_id))[:64])
             synthesized_criteria = []
             for cid in plan_task.get("satisfies", []):
                 if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-]{1,64}$", cid):
                     crit = {
                         "id": cid,
                         "title": f"Requirement {cid}",
-                        "description": f"Synthesized fallback requirement for task {self.task_id} satisfying {cid}",
+                        "description": f"Synthesized fallback requirement for task {clean_task_id} satisfying {cid}",
                         "provenance": "DERIVED",
                         "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
-                        "rationale": f"Synthesized fallback requirement for task {self.task_id}",
+                        "rationale": f"Synthesized fallback requirement for task {clean_task_id}",
                     }
                     validate_criterion_provenance(crit)
                     synthesized_criteria.append(crit)
 
-            self.goal_spec = {
+            fallback_spec = {
                 "goal_id": "goal-fallback",
                 "title": clean_title,
-                "raw_goal": f"Fallback goal for task {self.task_id}",
+                "raw_goal": f"Fallback goal for task {clean_title}",
                 "acceptance_criteria": synthesized_criteria
             }
+            self.goal_spec = redact_secrets(fallback_spec)
             audit_metrics = DerivedRequirementAuditor.audit_requirements(self.goal_spec)
             if audit_metrics.get("orphan_count", 0) > 0:
                 raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements in fallback goal_spec")
@@ -4317,7 +4319,7 @@ class TaskExecutor:
 
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
-            raw_tail_bytes = dynamic_bytes
+            raw_tail_bytes = len(pkt.rendered_tail.encode("utf-8"))
             factory_bytes = len((sp_prefix + "\n" + clean_tail).encode("utf-8"))
             rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
@@ -4369,6 +4371,13 @@ class TaskExecutor:
             }
             ctx_metrics = redact_secrets(ctx_metrics)
             attempt_record["context_metrics"] = ctx_metrics
+            if valid_in_tokens is not None:
+                pkt.token_count = valid_in_tokens
+                pkt.token_count_source = "provider_reported"
+                try:
+                    save_context_packet(pkt, attempt_dir / "context_packet.json")
+                except Exception:
+                    pass
             try:
                 record_context_telemetry(self.run_dir, ctx_metrics)
             except Exception:
@@ -4592,6 +4601,19 @@ class FactoryOrchestrator:
             self.save_manifest()
             self.log_event("RUN_INITIALIZED", {"run_id": self.run_id, "plan": self.manifest["plan_name"]})
 
+        # Cleanup orphan temp files in run_dir on startup
+        try:
+            if self.run_dir.exists():
+                cutoff = time.time() - 300
+                for tf in self.run_dir.glob("**/.tmp.*"):
+                    try:
+                        if tf.stat().st_mtime < cutoff:
+                            tf.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     def create_task_handoff(self, task_id: str, attempt_id: int, commit_hash: str, attempt_result: dict) -> HandoffPacket:
         """Constructs and persists a bounded HandoffPacket upon successful task integration."""
         if not isinstance(task_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", task_id):
@@ -4667,6 +4689,22 @@ class FactoryOrchestrator:
         val_result = {"passed": is_passed, "exit_code": actual_exit_code}
         if filtered_criteria:
             val_result["filtered_criteria"] = filtered_criteria
+        # Determine actual synthesis source / provenance mode
+        raw_mode = None
+        if isinstance(attempt_result.get("provenance"), dict):
+            raw_mode = attempt_result["provenance"].get("mode")
+        elif isinstance(attempt_result.get("routing_provenance"), dict):
+            raw_mode = attempt_result["routing_provenance"].get("mode")
+
+        if isinstance(raw_mode, str) and raw_mode.upper() in VALID_PROVENANCES and raw_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
+            synthesis_source = raw_mode.upper()
+        else:
+            executor_prov = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode", "REAL")
+            if executor_prov in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
+                synthesis_source = executor_prov
+            else:
+                synthesis_source = "REAL"
+
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
             producer_task_id=task_id,
@@ -4678,7 +4716,8 @@ class FactoryOrchestrator:
             decisions=decisions_text,
             consumer_notes=consumer_notes_text,
             known_risks=known_risks_text,
-            validation_result=val_result
+            validation_result=val_result,
+            synthesis_source=synthesis_source
         )
         save_handoff_packet(handoff, handoff_file)
         return handoff
@@ -4731,6 +4770,26 @@ class FactoryOrchestrator:
                     clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
                     self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
                     raise RuntimeError(clean_err)
+                anc_res = subprocess.run(
+                    ["git", "merge-base", "--is-ancestor", ho.commit, "HEAD"],
+                    cwd=str(PROJECT_ROOT),
+                    capture_output=True
+                )
+                if anc_res.returncode != 0:
+                    base_c = getattr(self, "base_commit", None)
+                    is_anc = False
+                    if base_c:
+                        base_anc = subprocess.run(
+                            ["git", "merge-base", "--is-ancestor", ho.commit, base_c],
+                            cwd=str(PROJECT_ROOT),
+                            capture_output=True
+                        )
+                        if base_anc.returncode == 0:
+                            is_anc = True
+                    if not is_anc:
+                        clean_err = f"Disjoint handoff {dep_id}: referenced commit {ho.commit} is not reachable from current HEAD or base commit"
+                        self.log_event("CRITICAL_HANDOFF_DISJOINT_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                        raise RuntimeError(clean_err)
             task_handoffs.append(ho)
         return task_handoffs
 
@@ -4945,17 +5004,23 @@ class FactoryOrchestrator:
                     )
                     executor.current_attempt_id = att_id
                     executor.latest_result = tinfo.get("latest_result", {})
-                    commit_hash = executor.commit_work(att_id)
-                    branch = f"factory/{self.run_id}/{tid}/att-{att_id}"
-                    merge_ok, conflicts = self.merge_task_branch(branch, tid)
-                    if merge_ok:
-                        tinfo["canonical_state"] = "INTEGRATED"
-                        tinfo["status"] = "SUCCESS"
-                        tinfo["latest_result"] = executor.latest_result
-                    else:
-                        tinfo["canonical_state"] = "CONFLICTED"
+                    try:
+                        commit_hash = executor.commit_work(att_id)
+                        branch = f"factory/{self.run_id}/{tid}/att-{att_id}"
+                        merge_ok, conflicts = self.merge_task_branch(branch, tid)
+                        if merge_ok:
+                            tinfo["canonical_state"] = "INTEGRATED"
+                            tinfo["status"] = "SUCCESS"
+                            tinfo["latest_result"] = executor.latest_result
+                        else:
+                            tinfo["canonical_state"] = "CONFLICTED"
+                            tinfo["status"] = "FAILED"
+                            tinfo["conflicted_files"] = conflicts
+                    except (StaleContextPacketError, ContextError) as err:
+                        self.log_event("RECONCILE_STALE_CONTEXT_ERROR", {"task_id": tid, "error": str(err)})
+                        tinfo["canonical_state"] = "FAILED"
                         tinfo["status"] = "FAILED"
-                        tinfo["conflicted_files"] = conflicts
+                        tinfo["error"] = str(err)
                     continue
 
             # Case D: RUNNING or DISPATCHING when process died
@@ -4993,15 +5058,21 @@ class FactoryOrchestrator:
                             tinfo["canonical_state"] = "COMPLETED"
                             tinfo["status"] = "SUCCESS"
                         else:
-                            executor.commit_work(att_id)
-                            merge_ok, conflicts = self.merge_task_branch(res["branch"], tid)
-                            if merge_ok:
-                                tinfo["canonical_state"] = "INTEGRATED"
-                                tinfo["status"] = "SUCCESS"
-                            else:
-                                tinfo["canonical_state"] = "CONFLICTED"
+                            try:
+                                executor.commit_work(att_id)
+                                merge_ok, conflicts = self.merge_task_branch(res["branch"], tid)
+                                if merge_ok:
+                                    tinfo["canonical_state"] = "INTEGRATED"
+                                    tinfo["status"] = "SUCCESS"
+                                else:
+                                    tinfo["canonical_state"] = "CONFLICTED"
+                                    tinfo["status"] = "FAILED"
+                                    tinfo["conflicted_files"] = conflicts
+                            except (StaleContextPacketError, ContextError) as err:
+                                self.log_event("RECONCILE_STALE_CONTEXT_ERROR", {"task_id": tid, "error": str(err)})
+                                tinfo["canonical_state"] = "FAILED"
                                 tinfo["status"] = "FAILED"
-                                tinfo["conflicted_files"] = conflicts
+                                tinfo["error"] = str(err)
                         tinfo["latest_result"] = executor.latest_result
                         continue
                 # If worker didn't finish, reset to READY for re-dispatch
@@ -5255,7 +5326,7 @@ class FactoryOrchestrator:
                                     loaded_canonical_hash = sha256_text(canonical_json_dump(verified_ho.to_dict()))
                                     if orig_canonical_hash != loaded_canonical_hash or verified_ho.handoff_hash != ho.handoff_hash:
                                         raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
-                                    self.save_manifest()
+                                self.save_manifest()
                             else:
                                 tinfo["canonical_state"] = "CONFLICTED"
                                 tinfo["status"] = "FAILED"
