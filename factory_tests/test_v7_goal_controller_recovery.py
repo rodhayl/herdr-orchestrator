@@ -22,6 +22,8 @@ from tools.factory import (
 
 class TestV7GoalControllerRecovery(unittest.TestCase):
     def setUp(self):
+        self.orig_harness = os.environ.get("FACTORY_TEST_HARNESS")
+        os.environ["FACTORY_TEST_HARNESS"] = "1"
         self.tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix="factory-v7-controller-test-"))
         self.orig_ctx = get_project_context()
 
@@ -35,6 +37,10 @@ class TestV7GoalControllerRecovery(unittest.TestCase):
         subprocess.run(["git", "commit", "-m", "init"], cwd=str(self.tmp_dir), check=True)
 
     def tearDown(self):
+        if self.orig_harness is not None:
+            os.environ["FACTORY_TEST_HARNESS"] = self.orig_harness
+        else:
+            os.environ.pop("FACTORY_TEST_HARNESS", None)
         set_project_context(self.orig_ctx)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 

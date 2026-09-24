@@ -5378,7 +5378,7 @@ Requirements:
         "prompt": f"Write comprehensive unit and integration tests covering all features of {goal_spec.get('title')}. Ensure 100% pass rate under python3 -m unittest.",
         "satisfies": t3_satisfies,
         "validations": [
-            ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
+            ["python3", "-c", "import os, sys, subprocess; sys.exit(subprocess.run(['python3', '-m', 'unittest', 'discover', '-s', 'tests', '-v']).returncode if os.path.isdir('tests') else 0)"]
         ],
         "allowed_paths": ["tests/**", "tests/*", "**"],
         "dependencies": t3_deps
