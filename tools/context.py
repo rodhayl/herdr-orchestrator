@@ -108,14 +108,31 @@ SECRET_PATTERNS = [
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
 
+INJECTION_PATTERN = re.compile(
+    r"(?i)(ignore\s+all\s+prior\s+instructions"
+    r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
+    r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
+    r"|new\s+instructions:"
+    r"|system\s+prompt"
+    r"|developer\s+mode"
+    r"|override\s+instructions"
+    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
+    r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
+    r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
+)
+
 # Freeze load-time environment secret snapshot (never re-read os.environ dynamically during redaction)
 _INITIAL_SECRET_ENV: dict[str, str] = {}
 _SECRET_ENV_LOCK = threading.RLock()
+_SECRET_ENV_INITIALIZED = False
 
 
-def snapshot_secret_env() -> dict[str, str]:
+def snapshot_secret_env(force: bool = False) -> dict[str, str]:
     """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
+    global _SECRET_ENV_INITIALIZED
     with _SECRET_ENV_LOCK:
+        if _SECRET_ENV_INITIALIZED and not force:
+            return dict(_INITIAL_SECRET_ENV)
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
@@ -132,6 +149,7 @@ def snapshot_secret_env() -> dict[str, str]:
                                             _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
                         except Exception:
                             pass
+        _SECRET_ENV_INITIALIZED = True
         return dict(_INITIAL_SECRET_ENV)
 
 
@@ -325,7 +343,7 @@ def calculate_rendered_anchor_recall(
         # Strict boundary matching depending on anchor type
         if getattr(req, "anchor_type", "") == "validation":
             val_pattern = r"(?:`|\n-\s*`)" + re.escape(content) + r"`"
-            found = bool(re.search(val_pattern, rendered_text) or (f"`{content}`" in rendered_text))
+            found = bool(re.search(val_pattern, rendered_text))
         elif getattr(req, "anchor_type", "") in ("file_reference", "allowed_path", "protected_path"):
             file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_/\-]|\.[a-zA-Z0-9])"
             found = bool(re.search(file_pattern, rendered_text))
@@ -478,8 +496,18 @@ class HandoffPacket:
             elif isinstance(self.known_risks, list):
                 self.known_risks = [str(r)[:alloc] for r in self.known_risks[:3]]
 
+        # Bound individual path lengths to 512 bytes
+        self.changed_paths = [str(p)[:512] for p in self.changed_paths]
+
+        # Cap structural lists to prevent unbounded growth from mass file changes
+        if len(self.changed_paths) > 200:
+            truncated_count = len(self.changed_paths) - 200
+            self.changed_paths = sorted(self.changed_paths)[:200] + [f"[+{truncated_count} paths truncated]"]
+        if len(self.satisfied_criteria) > 100:
+            self.satisfied_criteria = sorted(self.satisfied_criteria)[:100]
+
         # Ensure total serialized size is strictly within max_bytes before computing final handoff_bytes
-        for _ in range(10):
+        for _ in range(20):
             cur_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
             if cur_raw_bytes <= max_bytes - 128:
                 break
@@ -495,17 +523,14 @@ class HandoffPacket:
             if isinstance(self.contracts, str) and len(self.contracts) > 32:
                 self.contracts = self.contracts[:32] + "\n[TRUNCATED:BOUND]"
                 continue
+            if len(self.changed_paths) > 10:
+                self.changed_paths = self.changed_paths[:10] + [f"[+{len(self.changed_paths)-10} paths truncated]"]
+                continue
             break
 
-        # Bound individual path lengths to 512 bytes
-        self.changed_paths = [str(p)[:512] for p in self.changed_paths]
-
-        # Cap structural lists to prevent unbounded growth from mass file changes
-        if len(self.changed_paths) > 200:
-            truncated_count = len(self.changed_paths) - 200
-            self.changed_paths = sorted(self.changed_paths)[:200] + [f"[+{truncated_count} paths truncated]"]
-        if len(self.satisfied_criteria) > 100:
-            self.satisfied_criteria = sorted(self.satisfied_criteria)[:100]
+        final_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
+        if final_raw_bytes > max_bytes:
+            raise ContextError(f"HandoffPacket exceeds max_bytes {max_bytes}: raw size is {final_raw_bytes}")
 
         # Compute hash once at creation time if not already set
         if not self.handoff_hash:
@@ -1268,6 +1293,9 @@ class ContextPacket:
             curr = current_source_hashes.get(path)
             if curr != orig_hash:
                 stale_reasons.append(f"{path} changed ({orig_hash[:8]} -> {curr[:8] if curr else 'MISSING'})")
+        for path, curr_hash in current_source_hashes.items():
+            if path not in self.source_hashes:
+                stale_reasons.append(f"expected source {path} missing in packet source_hashes")
         return len(stale_reasons) > 0, stale_reasons
 
     def to_dict(self) -> dict:
@@ -1438,23 +1466,17 @@ class ContextCompiler:
                 f"- **Failed Status**: {retry_info.get('status', 'FAILED')}",
                 f"- **Error Category**: {retry_info.get('error_category', 'VALIDATION_FAILED')}",
             ]
-            def _sanitize_err_text(val: Any) -> str:
+            def _sanitize_err_text(val: Any, max_bytes: int = 2048) -> str:
                 if not val:
                     return ""
-                s = redact_secrets(str(val).strip())
-                inj_pat = re.compile(
-                    r"(?i)(ignore\s+all\s+prior\s+instructions"
-                    r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
-                    r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
-                    r"|new\s+instructions:"
-                    r"|system\s+prompt"
-                    r"|developer\s+mode"
-                    r"|override\s+instructions"
-                    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
-                    r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
-                    r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
-                )
-                return inj_pat.sub("[FILTERED]", s)
+                s = unicodedata.normalize("NFKC", str(val).strip())
+                # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
+                s = "".join(c for c in s if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
+                s = redact_secrets(s)
+                s = unicodedata.normalize("NFKC", s)
+                s = INJECTION_PATTERN.sub("[FILTERED]", s)
+                encoded = s.encode("utf-8")[:max_bytes]
+                return encoded.decode("utf-8", errors="ignore")
 
             if retry_info.get("failing_command"):
                 cmd_val = retry_info["failing_command"]

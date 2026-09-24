@@ -34,6 +34,7 @@ import threading
 import time
 import urllib.request
 import unicodedata
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Context Compiler & Efficiency System (Factory v8.0.0)
@@ -43,6 +44,7 @@ try:
         SCHEMA_VERSION,
         STABLE_PREFIX_VERSION,
         MAX_SEMANTIC_HANDOFF_BYTES,
+        INJECTION_PATTERN,
         Anchor,
         HandoffPacket,
         ContextPacket,
@@ -87,6 +89,7 @@ except ImportError:
         SCHEMA_VERSION,
         STABLE_PREFIX_VERSION,
         MAX_SEMANTIC_HANDOFF_BYTES,
+        INJECTION_PATTERN,
         Anchor,
         HandoffPacket,
         ContextPacket,
@@ -332,19 +335,6 @@ SECRET_PATTERNS = [
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
-
-_INJECTION_PATTERN = re.compile(
-    r"(?i)(ignore\s+all\s+prior\s+instructions"
-    r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
-    r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
-    r"|new\s+instructions:"
-    r"|system\s+prompt"
-    r"|developer\s+mode"
-    r"|override\s+instructions"
-    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
-    r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
-    r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
-)
 
 
 # Note: redact_secrets is imported directly from tools.context for consistent load-time secret snapshotting
@@ -645,9 +635,9 @@ def assert_real_certifiable(manifest: dict) -> tuple[bool, str]:
 
 
 def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
-    """Atomically writes data to a JSON file using a temp file, flush, fsync, and replace."""
+    """Atomically writes data to a JSON file using a unique temp file, flush, fsync, and replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{time.time()}")
+    tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=indent)
         f.flush()
@@ -3667,21 +3657,25 @@ class TaskExecutor:
             raw_title = unicodedata.normalize("NFKC", str(plan_task.get("name", self.task_id))[:256])
             raw_title = redact_secrets(raw_title)
             clean_title = redact_secrets(re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id)
+            synthesized_criteria = []
+            for cid in plan_task.get("satisfies", []):
+                if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-]{1,64}$", cid):
+                    crit = {
+                        "id": cid,
+                        "title": f"Requirement {cid}",
+                        "description": f"Synthesized fallback requirement for task {self.task_id} satisfying {cid}",
+                        "provenance": "DERIVED",
+                        "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
+                        "rationale": f"Synthesized fallback requirement for task {self.task_id}",
+                    }
+                    validate_criterion_provenance(crit)
+                    synthesized_criteria.append(crit)
+
             self.goal_spec = {
                 "goal_id": "goal-fallback",
                 "title": clean_title,
-                "acceptance_criteria": [
-                    {
-                        "id": f"REQ_{i+1}",
-                        "title": f"Requirement {i+1}",
-                        "description": f"Synthesized fallback requirement {i+1} for task {self.task_id}",
-                        "provenance": "DERIVED",
-                        "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
-                        "rationale": f"Synthesized fallback requirement {i+1} for task {self.task_id}",
-                    }
-                    for i, cid in enumerate(plan_task.get("satisfies", []))
-                    if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_]{1,32}$", cid)
-                ]
+                "raw_goal": f"Fallback goal for task {self.task_id}",
+                "acceptance_criteria": synthesized_criteria
             }
             audit_metrics = DerivedRequirementAuditor.audit_requirements(self.goal_spec)
             if audit_metrics.get("orphan_count", 0) > 0:
@@ -3746,7 +3740,8 @@ class TaskExecutor:
                 project_policy_summary=self.factory_config.get("limits", {}),
                 revision_index=0
             )
-            prompt_content = packet.render_full_prompt()
+            raw_prompt = packet.render_full_prompt()
+            prompt_content = redact_secrets(raw_prompt)
             recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
             self.last_anchor_recall = recall
             if recall < 1.0:
@@ -3788,9 +3783,10 @@ class TaskExecutor:
             extra_referenced_files=extra_refs
         )
 
-        prompt_content = packet.render_full_prompt()
+        raw_prompt = packet.render_full_prompt()
+        prompt_content = redact_secrets(raw_prompt)
 
-        # Required Anchor Gate: verify 100% anchor recall in rendered prompt
+        # Required Anchor Gate: verify 100% anchor recall in post-redaction prompt
         recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
         self.last_anchor_recall = recall
         if recall < 1.0:
@@ -3840,7 +3836,7 @@ class TaskExecutor:
         env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
         prompt_file = attempt_dir / "prompt.md"
-        prompt_content = ""
+        prompt_content: Optional[str] = None
 
         lock = getattr(self, "_packet_lock", None)
         if lock is None:
@@ -3875,9 +3871,13 @@ class TaskExecutor:
                     else:
                         prompt_content = redact_secrets(self.current_context_packet.render_full_prompt())
 
+                if not prompt_content:
+                    raise ContextError(f"Prompt content is empty or uninitialized for task '{self.task_id}' (attempt #{attempt_id})")
+
                 # Sanitize prompt content and verify redaction before writing
                 clean_prompt = redact_secrets(prompt_content)
-                assert clean_prompt is not None and len(clean_prompt) > 0
+                if not clean_prompt:
+                    raise ContextError(f"Prompt content became empty after redaction for task '{self.task_id}' (attempt #{attempt_id})")
                 assert redact_secrets(clean_prompt) == clean_prompt
                 prompt_content = clean_prompt
 
@@ -3929,7 +3929,8 @@ class TaskExecutor:
                 "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
 
-        assert prompt_content is not None and len(prompt_content) > 0
+        if not prompt_content:
+            raise ContextError(f"Prompt content was not initialized before execution for attempt #{attempt_id}")
 
         custom_schema = self.task.get("result_schema")
         if custom_schema:
@@ -4152,6 +4153,8 @@ class TaskExecutor:
     def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
                           worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int,
                           auth_source: str = "unauthenticated", prompt_content: Optional[str] = None):
+        if not prompt_content:
+            raise ContextError(f"prompt_content cannot be empty when recording telemetry for task {self.task_id}")
         churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
         try:
             diff_res = subprocess.run(
@@ -4291,6 +4294,7 @@ class TaskExecutor:
                 "native_compaction_used": native_compaction_used,
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
+            ctx_metrics = redact_secrets(ctx_metrics)
             attempt_record["context_metrics"] = ctx_metrics
             try:
                 record_context_telemetry(self.run_dir, ctx_metrics)
@@ -4542,8 +4546,10 @@ class FactoryOrchestrator:
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Filter adversarial prompt injection variants and role markers using module-level pattern
-            cleaned = _INJECTION_PATTERN.sub("[FILTERED]", cleaned)
+            # Re-normalize with NFKC after all stripping steps
+            cleaned = unicodedata.normalize("NFKC", cleaned)
+            # Filter adversarial prompt injection variants and role markers using canonical pattern
+            cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
         ctx_src = getattr(self.context_compiler, "source", None)
@@ -4587,12 +4593,13 @@ class FactoryOrchestrator:
             ho_file = (self.handoffs_dir / f"{dep_id}.json").resolve()
             if ho_file.parent != self.handoffs_dir.resolve():
                 raise ValueError(f"Path traversal detected for dep_id: {dep_id}")
+            ho = None
             if dep_id in self.active_handoffs:
-                task_handoffs.append(self.active_handoffs[dep_id])
+                ho = self.active_handoffs[dep_id]
             else:
                 if ho_file.exists():
                     try:
-                        task_handoffs.append(load_handoff_packet(ho_file))
+                        ho = load_handoff_packet(ho_file)
                     except Exception as exc:
                         clean_err = redact_secrets(f"Failed to load dependency handoff {dep_id}: {exc}")
                         self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
@@ -4606,6 +4613,20 @@ class FactoryOrchestrator:
                         clean_err = f"Dependency {dep_id} is in non-terminal or unready state ({dep_tinfo.get('canonical_state') or dep_tinfo.get('status')}); missing handoff {ho_file}"
                         self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
                         raise RuntimeError(clean_err)
+
+            if ho is not None:
+                # If git repository and real commit hex, verify commit is reachable in repository history
+                if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
+                    verify_res = subprocess.run(
+                        ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True
+                    )
+                    if verify_res.returncode != 0:
+                        clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
+                        self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                        raise RuntimeError(clean_err)
+                task_handoffs.append(ho)
         return task_handoffs
 
     def _build_task_graph(self):
@@ -5122,7 +5143,9 @@ class FactoryOrchestrator:
                                     ho_path = self.handoffs_dir / f"{tid}.json"
                                     # Canonical integrity verification on persisted handoff
                                     verified_ho = load_handoff_packet(ho_path)
-                                    if verified_ho.handoff_hash != ho.handoff_hash:
+                                    orig_canonical_hash = sha256_text(canonical_json_dump(ho.to_dict()))
+                                    loaded_canonical_hash = sha256_text(canonical_json_dump(verified_ho.to_dict()))
+                                    if orig_canonical_hash != loaded_canonical_hash or verified_ho.handoff_hash != ho.handoff_hash:
                                         raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
                                     self.save_manifest()
                             else:
@@ -5261,12 +5284,21 @@ class FactoryOrchestrator:
                                 curr_hashes[k] = sha256_text(canonical_json_dump(self.plan))
                             elif k == "task_def":
                                 pkt_tid = getattr(pkt, "task_id", "")
+                                if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
+                                    self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
+                                    continue
                                 tdef = self.tasks_def.get(pkt_tid, {})
                                 curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
                             elif k == "retry_info":
                                 pkt_tid = getattr(pkt, "task_id", "")
+                                if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
+                                    self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
+                                    continue
                                 att_id = getattr(pkt, "attempt_id", 1)
-                                att_dir = self.run_dir / "workers" / pkt_tid / f"att-{att_id}"
+                                att_dir = (self.run_dir / "workers" / pkt_tid / f"att-{att_id}").resolve()
+                                if not str(att_dir).startswith(str((self.run_dir / "workers").resolve())):
+                                    self.log_event("WARNING_ATTEMPT_DIR_TRAVERSAL", {"task_id": str(pkt_tid), "att_dir": str(att_dir)})
+                                    continue
                                 rinfo_file = att_dir / "retry_info.json"
                                 if rinfo_file.exists():
                                     try:
@@ -5306,6 +5338,7 @@ class FactoryOrchestrator:
                 redundancy_stats = calculate_context_redundancy(rendered_prompts)
                 self.manifest["context_summary"] = {
                     "schema_version": "8.0.0",
+                    "prompts_measured_post_redaction": True,
                     "total_factory_supplied_bytes": redundancy_stats["total_factory_supplied_bytes"],
                     "run_total_context_bytes": redundancy_stats["total_factory_supplied_bytes"],
                     "unique_content_bytes": redundancy_stats["unique_content_bytes"],
@@ -5317,6 +5350,7 @@ class FactoryOrchestrator:
             else:
                 self.manifest["context_summary"] = {
                     "schema_version": "8.0.0",
+                    "prompts_measured_post_redaction": True,
                     "total_factory_supplied_bytes": 0,
                     "run_total_context_bytes": 0,
                     "unique_content_bytes": 0,
