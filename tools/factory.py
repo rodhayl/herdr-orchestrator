@@ -4053,6 +4053,10 @@ class TaskExecutor:
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
             atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
+            try:
+                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+            except Exception:
+                pass
             return attempt_record
 
         self.state = "RESULT_RECEIVED"
@@ -4147,6 +4151,11 @@ class TaskExecutor:
 
         # Check failpoint before commit
         check_failpoint("FAIL_BEFORE_COMMIT", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
+
+        try:
+            self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+        except Exception:
+            pass
 
         return attempt_record
 
