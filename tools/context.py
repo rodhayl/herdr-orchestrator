@@ -354,6 +354,31 @@ def calculate_anchor_recall(
     return recall, missing
 
 
+def verify_required_anchors(anchors: List[Anchor], full_rendered_prompt: str, context_label: str = "Prompt") -> None:
+    """Strictly verifies required anchor recall and secondary exact substring gates for file and validation anchors."""
+    recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
+    if recall < 1.0:
+        raise ContextAnchorMissingError(
+            f"CONTEXT_ANCHOR_MISSING: {context_label} missing required anchors: {missing}"
+        )
+
+    # Secondary exact-substring gate for required file_reference anchors
+    req_file_anchors = [a for a in anchors if a.required and a.anchor_type == "file_reference"]
+    for fa in req_file_anchors:
+        if fa.content not in full_rendered_prompt:
+            raise ContextAnchorMissingError(
+                f"CONTEXT_ANCHOR_MISSING: {context_label} required file anchor '{fa.content}' dropped during compilation/pruning"
+            )
+
+    # Secondary exact-substring gate for required validation anchors
+    req_val_anchors = [a for a in anchors if a.required and a.anchor_type == "validation"]
+    for va in req_val_anchors:
+        if va.content not in full_rendered_prompt:
+            raise ContextAnchorMissingError(
+                f"CONTEXT_ANCHOR_MISSING: {context_label} required validation anchor '{va.content}' dropped during compilation/pruning"
+            )
+
+
 def calculate_rendered_anchor_recall(
     required_anchors: List[Anchor], rendered_text: str
 ) -> Tuple[float, List[str]]:
@@ -1401,6 +1426,21 @@ class ContextPacket:
     rendered_tail: str = ""
     token_count: Optional[int] = None
     token_count_source: Optional[str] = None
+    metadata_hash: Optional[str] = None
+
+    @staticmethod
+    def compute_metadata_hash(packet_id: str, packet_bytes: int, token_count: Optional[int], token_count_source: Optional[str], budget: dict) -> str:
+        meta = {
+            "packet_id": str(packet_id),
+            "packet_bytes": int(packet_bytes),
+            "token_count": token_count,
+            "token_count_source": token_count_source,
+            "budget": budget or {},
+        }
+        return sha256_text(canonical_json_dump(meta))
+
+    def calculate_metadata_hash(self) -> str:
+        return self.compute_metadata_hash(self.packet_id, self.packet_bytes, self.token_count, self.token_count_source, self.budget)
 
     def calculate_required_anchor_recall(self) -> Tuple[float, List[str]]:
         rendered = self.render_full_prompt()
@@ -1447,6 +1487,7 @@ class ContextPacket:
             "budget": self.budget,
             "packet_bytes": self.packet_bytes,
             "packet_hash": self.packet_hash,
+            "metadata_hash": self.calculate_metadata_hash(),
             "token_count": self.token_count,
             "token_count_source": self.token_count_source,
             "compiler_version": self.compiler_version,
@@ -1480,6 +1521,26 @@ class ContextPacket:
             raise MalformedContextPacketError(
                 f"ContextPacket structural corruption detected for {d.get('packet_id')}: stored hash {stored_hash[:8]} != computed hash {computed_hash[:8]}"
             )
+
+        stored_meta_hash = d.get("metadata_hash")
+        if stored_meta_hash:
+            computed_meta_hash = cls.compute_metadata_hash(
+                d.get("packet_id", ""),
+                d.get("packet_bytes", 0),
+                d.get("token_count"),
+                d.get("token_count_source"),
+                d.get("budget", {})
+            )
+            if computed_meta_hash != stored_meta_hash:
+                raise MalformedContextPacketError(
+                    f"ContextPacket metadata tampering detected for {d.get('packet_id')}: stored metadata hash {stored_meta_hash[:8]} != computed metadata hash {computed_meta_hash[:8]}"
+                )
+
+        if d.get("packet_bytes") is not None and d.get("packet_bytes") != len(expected_prompt.encode("utf-8")):
+            raise MalformedContextPacketError(
+                f"ContextPacket byte length mismatch for {d.get('packet_id')}: stored {d.get('packet_bytes')} != actual {len(expected_prompt.encode('utf-8'))}"
+            )
+
         anchors = [Anchor.from_dict(a) for a in d.get("required_anchors", [])]
         role = d.get("packet_role", "")
         cls_map = {
@@ -1511,6 +1572,7 @@ class ContextPacket:
             budget=d.get("budget", {}),
             packet_bytes=d.get("packet_bytes", 0),
             packet_hash=d.get("packet_hash", ""),
+            metadata_hash=d.get("metadata_hash"),
             compiler_version=d.get("compiler_version", COMPILER_VERSION),
             created_at=d.get("created_at", ""),
             rendered_tail=d.get("rendered_tail", ""),
@@ -1933,19 +1995,8 @@ class ContextCompiler:
         full_rendered_prompt = redact_secrets(stable_prefix + "\n" + current_tail)
         full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
 
-        # Gate: Calculate required anchor recall against full assembled prompt before budget check
-        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
-        if recall < 1.0:
-            raise ContextAnchorMissingError(
-                f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
-            )
-        # Verify specifically that every required=True file_reference anchor appears in the rendered prompt
-        req_file_anchors = [a for a in anchors if a.required and a.anchor_type == "file_reference"]
-        for fa in req_file_anchors:
-            if fa.content not in full_rendered_prompt:
-                raise ContextAnchorMissingError(
-                    f"CONTEXT_ANCHOR_MISSING: Task {task_id} required file anchor '{fa.content}' dropped during compilation/pruning"
-                )
+        # Gate: Strictly verify required anchor recall and secondary exact substring gates before budget check
+        verify_required_anchors(anchors, full_rendered_prompt, context_label=f"Task {task_id}")
 
         # Hard budget check
         if current_bytes > hard_budget:
@@ -2268,9 +2319,7 @@ class ContextCompiler:
         full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
         full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
 
-        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
-        if recall < 1.0:
-            raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Plan review packet missing required anchors: {missing}")
+        verify_required_anchors(anchors, full_rendered_prompt, context_label="Plan review packet")
 
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")

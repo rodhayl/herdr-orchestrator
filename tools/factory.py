@@ -63,6 +63,7 @@ try:
         calculate_context_redundancy,
         calculate_anchor_recall,
         calculate_rendered_anchor_recall,
+        verify_required_anchors,
         save_context_packet,
         load_context_packet,
         save_handoff_packet,
@@ -109,6 +110,7 @@ except ImportError:
         calculate_context_redundancy,
         calculate_anchor_recall,
         calculate_rendered_anchor_recall,
+        verify_required_anchors,
         save_context_packet,
         load_context_packet,
         save_handoff_packet,
@@ -743,6 +745,14 @@ def match_path_allowlist(rel_path: str, allowed_patterns: list) -> bool:
             if fnmatch.fnmatch(normalized, pat_norm):
                 return True
     return False
+
+
+def sanitize_env_info(env_info: Any) -> dict:
+    """Projects env_info to safe non-credential metadata keys."""
+    if not isinstance(env_info, dict):
+        return {}
+    allowed_keys = ("workspace_id", "pane_id", "worktree", "label", "profile_home", "status")
+    return {k: env_info[k] for k in allowed_keys if k in env_info and isinstance(env_info[k], (str, int, bool))}
 
 
 def collect_file_metadata(path_str: str) -> dict:
@@ -3785,12 +3795,8 @@ class TaskExecutor:
             packet.attempt_id = attempt_id
             raw_prompt = packet.render_full_prompt()
             prompt_content = redact_secrets(raw_prompt)
-            recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
-            self.last_anchor_recall = recall
-            if recall < 1.0:
-                raise ContextAnchorMissingError(
-                    f"CONTEXT_ANCHOR_MISSING: Prompt for reviewer (task '{self.task_id}') missing required anchors: {missing}"
-                )
+            verify_required_anchors(packet.required_anchors, prompt_content, context_label=f"Reviewer (task '{self.task_id}')")
+            self.last_anchor_recall = 1.0
             current_source_hashes = {
                 "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
                 "plan": sha256_text(canonical_json_dump(active_plan)),
@@ -3837,13 +3843,9 @@ class TaskExecutor:
         raw_prompt = packet.render_full_prompt()
         prompt_content = redact_secrets(raw_prompt)
 
-        # Required Anchor Gate: verify 100% anchor recall in post-redaction prompt
-        recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
-        self.last_anchor_recall = recall
-        if recall < 1.0:
-            raise ContextAnchorMissingError(
-                f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors: {missing}"
-            )
+        # Required Anchor Gate: verify 100% anchor recall and secondary exact gates in post-redaction prompt
+        verify_required_anchors(packet.required_anchors, prompt_content, context_label=f"Task '{self.task_id}' (attempt #{attempt_id})")
+        self.last_anchor_recall = 1.0
 
         # Staleness Verification Gate: ensure packet was not compiled from outdated source state
         current_source_hashes = {
@@ -3921,14 +3923,10 @@ class TaskExecutor:
                     # Capture local reference to packet immediately after compilation/validation
                     active_packet = self.current_context_packet
 
-                    # Enforce anchor recall gate unconditionally on final post-redaction clean_prompt
+                    # Enforce anchor recall and secondary exact gates unconditionally on final post-redaction clean_prompt
                     if active_packet and active_packet.required_anchors:
-                        final_rec, final_missing = calculate_rendered_anchor_recall(active_packet.required_anchors, clean_prompt)
-                        self.last_anchor_recall = final_rec
-                        if final_rec < 1.0:
-                            raise ContextAnchorMissingError(
-                                f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors after redaction: {final_missing}"
-                            )
+                        verify_required_anchors(active_packet.required_anchors, clean_prompt, context_label=f"Task '{self.task_id}' (attempt #{attempt_id}) after redaction")
+                        self.last_anchor_recall = 1.0
 
                     prompt_file.write_text(prompt_content, encoding="utf-8")
 
@@ -4127,6 +4125,7 @@ class TaskExecutor:
                     "raw_result_hash": raw_res.get("raw_result_hash", ""),
                     "branch": attempt_branch,
                     "worktree": str(worktree_path),
+                    "env_info": sanitize_env_info(env_info),
                     "start_time": start_time,
                     "end_time": end_time,
                     "exit_code": -1,
@@ -4217,7 +4216,7 @@ class TaskExecutor:
                 "raw_result_hash": raw_res.get("raw_result_hash", ""),
                 "branch": attempt_branch,
                 "worktree": str(worktree_path),
-                "env_info": {k: env_info[k] for k in ("workspace_id", "pane_id", "worktree", "label", "profile_home", "status") if isinstance(env_info, dict) and k in env_info and isinstance(env_info[k], (str, int, bool))},
+                "env_info": sanitize_env_info(env_info),
                 "start_time": start_time,
                 "end_time": end_time,
                 "exit_code": exit_code,
@@ -4409,7 +4408,6 @@ class TaskExecutor:
                 "required_anchor_count": len([a for a in pkt.required_anchors if a.required]),
                 "required_anchor_recall": pkt_recall,
                 "factory_supplied_bytes": factory_bytes,
-                "attempt_context_bytes": factory_bytes,
                 "repeated_bytes": red_stats["repeated_content_bytes"],
                 "unique_bytes": red_stats["unique_content_bytes"],
                 "redundancy_ratio": red_stats["redundancy_ratio"],
@@ -4966,7 +4964,8 @@ class FactoryOrchestrator:
         atomic_write_json(self.manifest_path, clean_manifest)
 
         # Sync board projector outside _manifest_lock critical section to prevent deadlocks
-        assert not self._manifest_lock._is_owned(), "_manifest_lock must not be held when calling board_projector.sync()"
+        if self._manifest_lock._is_owned():
+            raise RuntimeError("_manifest_lock must not be held when calling board_projector.sync()")
         try:
             self.board_projector.sync(self.run_id)
         except Exception:
@@ -5101,6 +5100,11 @@ class FactoryOrchestrator:
                 worktree_path = WORKTREES_DIR / self.run_id / tid / f"att-{att_id}"
                 if worktree_path.exists():
                     self.log_event("RECONCILE_CASE_C_COMMIT", {"task_id": tid, "worktree": str(worktree_path)})
+                    self.log_event("WARNING_RECONCILIATION_HISTORICAL_REPLAY", {
+                        "task_id": tid,
+                        "attempt_id": att_id,
+                        "detail": "Best-effort historical replay: committing pre-crash worktree product. Verifying context packet anchors against current goal_spec."
+                    })
                     attempt_dir = self.run_dir / "workers" / tid / f"att-{att_id}"
                     rinfo_file = attempt_dir / "retry_info.json"
                     reconcile_rinfo = tinfo.get("retry_info")
@@ -5110,6 +5114,15 @@ class FactoryOrchestrator:
                         except Exception:
                             pass
                     reconcile_rinfo = redact_secrets(reconcile_rinfo) if reconcile_rinfo else None
+
+                    saved_pkt = None
+                    pkt_file = attempt_dir / "context_packet.json"
+                    if pkt_file.exists():
+                        try:
+                            saved_pkt = load_context_packet(pkt_file)
+                        except Exception:
+                            pass
+
                     executor = TaskExecutor(
                         self.run_id,
                         self.tasks_def[tid],
@@ -5126,7 +5139,7 @@ class FactoryOrchestrator:
                     executor.current_attempt_id = att_id
                     executor.latest_result = tinfo.get("latest_result", {})
                     try:
-                        commit_hash = executor.commit_work(att_id, context_packet=getattr(executor, "current_context_packet", None))
+                        commit_hash = executor.commit_work(att_id, context_packet=saved_pkt)
                         branch = f"factory/{self.run_id}/{tid}/att-{att_id}"
                         merge_ok, conflicts = self.merge_task_branch(branch, tid)
                         if merge_ok:
@@ -5150,6 +5163,11 @@ class FactoryOrchestrator:
                 status_file = attempt_dir / "exit_code.txt"
                 if status_file.exists() and status_file.stat().st_size > 0:
                     self.log_event("RECONCILE_CASE_D_WORKER_COMPLETED", {"task_id": tid, "attempt_id": att_id})
+                    self.log_event("WARNING_RECONCILIATION_HISTORICAL_REPLAY", {
+                        "task_id": tid,
+                        "attempt_id": att_id,
+                        "detail": "Best-effort historical replay: evaluating pre-crash worker exit and committing work product."
+                    })
                     rinfo_file = attempt_dir / "retry_info.json"
                     reconcile_rinfo = tinfo.get("retry_info")
                     if rinfo_file.exists():
@@ -5401,7 +5419,13 @@ class FactoryOrchestrator:
                             "error": str(exc)
                         }
 
-                    self.routing_provenance[tid] = getattr(executor, "routing_provenance", None) or res.get("provenance", {"mode": "REAL"})
+                    # Authoritative provenance is set from orchestrator's route_meta; never blindly trust worker-reported provenance
+                    if tid not in self.routing_provenance or not self.routing_provenance[tid]:
+                        self.routing_provenance[tid] = route_meta
+                    # Cross-check: If worker actually executed in MOCK mode, force mode to MOCK in routing_provenance
+                    worker_mode = res.get("execution_mode")
+                    if worker_mode == "MOCK" or getattr(executor, "execution_mode", None) == "MOCK":
+                        self.routing_provenance[tid]["mode"] = "MOCK" 
 
                     tinfo["attempts"].append(res)
                     tinfo["latest_result"] = res
@@ -5478,8 +5502,8 @@ class FactoryOrchestrator:
                                 "previous_attempt_id": att_id,
                                 "status": res.get("status", "FAILED"),
                                 "error_category": res.get("state", "FAILED"),
-                                "failing_command": redact_secrets(clean_cmd)[:2048],
-                                "error_excerpt": redact_secrets(res.get("error", ""))[:2048]
+                                "failing_command": redact_secrets(clean_cmd).encode("utf-8")[:2048].decode("utf-8", errors="ignore"),
+                                "error_excerpt": redact_secrets(res.get("error", "")).encode("utf-8")[:2048].decode("utf-8", errors="ignore")
                             }
                             self.log_event("TASK_RETRYING", {"task_id": tid, "previous_attempt": att_id, "retry_info": tinfo["retry_info"]})
                         else:
