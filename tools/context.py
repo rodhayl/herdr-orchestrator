@@ -931,16 +931,18 @@ class ContextCompiler:
 
         # 6. Retry Information (if previous attempt failed)
         if retry_info:
+            prev_att = retry_info.get("previous_attempt_id", retry_info.get("attempt", 1))
             ret_lines = [
-                f"\n### Previous Attempt Failure Guidance (Attempt #{retry_info.get('previous_attempt_id', 1)}):",
+                f"\n### Previous Attempt Failure Guidance (Attempt #{prev_att}):",
                 f"- **Failed Status**: {retry_info.get('status', 'FAILED')}",
                 f"- **Error Category**: {retry_info.get('error_category', 'VALIDATION_FAILED')}",
             ]
             if retry_info.get("failing_command"):
                 cmd_str = " ".join(retry_info["failing_command"]) if isinstance(retry_info["failing_command"], list) else str(retry_info["failing_command"])
                 ret_lines.append(f"- **Failing Command**: `{cmd_str}`")
-            if retry_info.get("error_excerpt"):
-                ret_lines.append(f"- **Error Output**:\n```\n{retry_info['error_excerpt'].strip()}\n```")
+            err_text = retry_info.get("error_excerpt") or retry_info.get("error_summary") or retry_info.get("error")
+            if err_text:
+                ret_lines.append(f"- **Error Output**:\n```\n{str(err_text).strip()}\n```")
             sections.append("\n".join(ret_lines))
 
         # 7. Deterministic Validation Commands
