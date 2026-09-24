@@ -20,6 +20,7 @@ import fnmatch
 import glob
 import hashlib
 import html
+import html.parser
 import inspect
 import json
 import math
@@ -647,6 +648,12 @@ def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except Exception:
+        pass
 
 
 def check_failpoint(point_name: str, run_dir: pathlib.Path = None, details: dict = None):
@@ -3701,9 +3708,24 @@ class TaskExecutor:
         self.task_root_dir = run_dir / "workers" / self.task_id
         self.task_root_dir.mkdir(parents=True, exist_ok=True)
         self.state = "PENDING"
+        self._is_executing = False
         self.current_attempt_id = 0
         self.attempts = []
         self.latest_result = {}
+
+    def log_event(self, event_type: str, payload: dict):
+        clean_payload = redact_secrets(payload)
+        event = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "event": event_type,
+            "payload": clean_payload
+        }
+        try:
+            events_file = self.run_dir / "events.jsonl"
+            with open(events_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event) + "\n")
+        except Exception:
+            pass
 
     def prepare_attempt_worktree(self, attempt_id: int, base_commit: str) -> tuple[pathlib.Path, str]:
         """Creates an isolated git worktree for this specific attempt."""
@@ -3738,10 +3760,21 @@ class TaskExecutor:
         self.res_mgr.record_worktree(str(worktree_path), attempt_branch, run_id=self.run_id)
         return worktree_path, attempt_branch
 
-    def build_prompt(self, worktree_path: pathlib.Path, attempt_id: int = 1) -> str:
-        active_goal_spec = redact_secrets(copy.deepcopy(self.goal_spec)) if isinstance(self.goal_spec, dict) else {}
-        active_plan = redact_secrets(copy.deepcopy(self.plan)) if isinstance(self.plan, dict) else {}
-        active_task = redact_secrets(copy.deepcopy(self.task)) if isinstance(self.task, dict) else {}
+    def build_prompt(self, worktree_path: pathlib.Path, attempt_id: int = 1,
+                     snap_goal_spec: Optional[dict] = None, snap_plan: Optional[dict] = None,
+                     snap_task: Optional[dict] = None, snap_retry_info: Optional[dict] = None) -> str:
+        if snap_goal_spec is None:
+            snap_goal_spec = getattr(self, "goal_spec", {})
+        active_goal_spec = redact_secrets(copy.deepcopy(snap_goal_spec)) if isinstance(snap_goal_spec, dict) else {}
+        if snap_plan is None:
+            snap_plan = getattr(self, "plan", {})
+        active_plan = redact_secrets(copy.deepcopy(snap_plan)) if isinstance(snap_plan, dict) else {}
+        if snap_task is None:
+            snap_task = getattr(self, "task", {})
+        active_task = redact_secrets(copy.deepcopy(snap_task)) if isinstance(snap_task, dict) else {}
+        if snap_retry_info is None:
+            snap_retry_info = getattr(self, "retry_info", None)
+        active_retry_info = redact_secrets(copy.deepcopy(snap_retry_info)) if isinstance(snap_retry_info, dict) else None
         if self.review_only:
             packet = self.context_compiler.compile_plan_review_packet(
                 goal_spec=active_goal_spec,
@@ -3797,7 +3830,7 @@ class TaskExecutor:
             allowed_paths=self.allowed_paths,
             dependencies=self.task.get("dependencies", []),
             handoffs=self.handoffs,
-            retry_info=getattr(self, "retry_info", None),
+            retry_info=active_retry_info,
             extra_referenced_files=extra_refs
         )
 
@@ -3813,12 +3846,11 @@ class TaskExecutor:
             )
 
         # Staleness Verification Gate: ensure packet was not compiled from outdated source state
-        r_info = getattr(self, "retry_info", None)
         current_source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
             "plan": sha256_text(canonical_json_dump(active_plan)),
             "task_def": sha256_text(canonical_json_dump(active_task)),
-            "retry_info": sha256_text(canonical_json_dump(r_info if isinstance(r_info, dict) else {})),
+            "retry_info": sha256_text(canonical_json_dump(active_retry_info if isinstance(active_retry_info, dict) else {})),
             "stable_prefix": packet.source_hashes.get("stable_prefix"),
             "secret_env": get_secret_env_fingerprint(),
         }
@@ -3833,238 +3865,339 @@ class TaskExecutor:
 
     def execute_attempt(self, attempt_id: int, base_commit: str) -> dict:
         """Executes a single attempt through the adapter, validating paths and outputs."""
-        self.current_attempt_id = attempt_id
-        attempt_dir = self.task_root_dir / f"att-{attempt_id}"
-        attempt_dir.mkdir(parents=True, exist_ok=True)
-
-        start_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        self.state = "DISPATCHING"
-
-        # Snapshot inputs at method start to guarantee consistency across execution and staleness checks
-        raw_gspec = getattr(self, "goal_spec", {})
-        snap_goal_spec = copy.deepcopy(raw_gspec) if isinstance(raw_gspec, dict) else {}
-        raw_plan = getattr(self, "plan", {})
-        snap_plan = copy.deepcopy(raw_plan) if isinstance(raw_plan, dict) else {}
-        raw_task = getattr(self, "task", {})
-        snap_task = copy.deepcopy(raw_task) if isinstance(raw_task, dict) else {}
-        raw_rinfo = getattr(self, "retry_info", None)
-        snap_retry_info = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
-
-        worktree_path, attempt_branch = self.prepare_attempt_worktree(attempt_id, base_commit)
-        env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
-
-        prompt_file = attempt_dir / "prompt.md"
-        prompt_content: Optional[str] = None
-
-        lock = getattr(self, "_packet_lock", None)
-        if lock is None:
-            lock = contextlib.nullcontext()
-
+        if getattr(self, "_is_executing", False):
+            raise RuntimeError(f"TaskExecutor for task '{self.task_id}' is single-threaded per instance and currently executing attempt #{self.current_attempt_id}")
+        self._is_executing = True
         try:
-            with lock:
-                prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
-                if not prompt_content:
-                    raise ContextError(f"Prompt content is empty or uninitialized for task '{self.task_id}' (attempt #{attempt_id})")
+            self.current_attempt_id = attempt_id
+            attempt_dir = self.task_root_dir / f"att-{attempt_id}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
 
-                # Sanitize prompt content and verify redaction before writing
-                clean_prompt = redact_secrets(prompt_content)
-                if not clean_prompt:
-                    raise ContextError(f"Prompt content became empty after redaction for task '{self.task_id}' (attempt #{attempt_id})")
-                if redact_secrets(clean_prompt) != clean_prompt:
-                    raise ContextError(f"Prompt redaction is not idempotent for task '{self.task_id}' (attempt #{attempt_id})")
-                prompt_content = clean_prompt
+            start_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            self.state = "DISPATCHING"
 
-                # Capture local reference to packet immediately after compilation/validation
-                active_packet = self.current_context_packet
 
-                # Enforce anchor recall gate unconditionally on final post-redaction clean_prompt
-                if active_packet and active_packet.required_anchors:
-                    final_rec, final_missing = calculate_rendered_anchor_recall(active_packet.required_anchors, clean_prompt)
-                    self.last_anchor_recall = final_rec
-                    if final_rec < 1.0:
-                        raise ContextAnchorMissingError(
-                            f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors after redaction: {final_missing}"
-                        )
+            worktree_path, attempt_branch = self.prepare_attempt_worktree(attempt_id, base_commit)
+            env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
-                prompt_file.write_text(prompt_content, encoding="utf-8")
+            prompt_file = attempt_dir / "prompt.md"
+            prompt_content: Optional[str] = None
 
-                # Snapshot retry_info to attempt_dir after successful prompt compilation
-                atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
+            lock = getattr(self, "_packet_lock", None)
+            if lock is None:
+                lock = contextlib.nullcontext()
 
-                # Save immutable ContextPacket for this attempt
-                if active_packet:
-                    snap_cur_hashes = {
-                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                        "plan": sha256_text(canonical_json_dump(snap_plan)),
-                        "task_def": "" if self.review_only else sha256_text(canonical_json_dump(snap_task)),
-                        "retry_info": "" if self.review_only else sha256_text(canonical_json_dump(snap_retry_info)),
-                        "stable_prefix": active_packet.source_hashes.get("stable_prefix"),
-                        "secret_env": get_secret_env_fingerprint(),
-                    }
-                    is_stale, stale_reasons = active_packet.verify_staleness(snap_cur_hashes)
-                    if is_stale:
-                        raise ContextError(f"CONTEXT_PACKET_STALE: ContextPacket drifted before persistence: {stale_reasons}")
-                    save_context_packet(active_packet, attempt_dir / "context_packet.json")
-                    packets_dir = self.run_dir / "context" / "packets"
-                    packets_dir.mkdir(parents=True, exist_ok=True)
-                    save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
-        except (ContextAnchorMissingError, ContextError) as err:
-            self.state = "FAILED"
-            fail_rec = {
-                "attempt_id": attempt_id,
-                "task_id": self.task_id,
-                "status": "FAILED",
-                "state": "FAILED",
-                "error_category": "CONTEXT_COMPILATION_FAILED",
-                "error": str(err),
-                "exit_code": 1,
-                "start_time": start_time,
-                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
-            self.attempts.append(fail_rec)
-            self.latest_result = fail_rec
             try:
-                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
-            except Exception:
-                pass
-            return fail_rec
-        except Exception as err:
-            self.state = "FAILED"
-            fail_rec = {
-                "attempt_id": attempt_id,
-                "task_id": self.task_id,
-                "status": "FAILED",
-                "state": "FAILED",
-                "error_category": "UNEXPECTED_COMPILATION_ERROR",
-                "error": redact_secrets(str(err).splitlines()[-1] if str(err).splitlines() else str(err)),
-                "exit_code": 1,
-                "start_time": start_time,
-                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
-            self.attempts.append(fail_rec)
-            self.latest_result = fail_rec
-            try:
-                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
-            except Exception:
-                pass
-            return fail_rec
+                with lock:
+                    # Snapshot inputs inside lock to guarantee consistency across execution and staleness checks
+                    raw_gspec = getattr(self, "goal_spec", {})
+                    snap_goal_spec = copy.deepcopy(raw_gspec) if isinstance(raw_gspec, dict) else {}
+                    raw_plan = getattr(self, "plan", {})
+                    snap_plan = copy.deepcopy(raw_plan) if isinstance(raw_plan, dict) else {}
+                    raw_task = getattr(self, "task", {})
+                    snap_task = copy.deepcopy(raw_task) if isinstance(raw_task, dict) else {}
+                    raw_rinfo = getattr(self, "retry_info", None)
+                    snap_retry_info = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
 
-        if not prompt_content:
-            self.state = "FAILED"
-            fail_rec = {
-                "attempt_id": attempt_id,
-                "task_id": self.task_id,
-                "status": "FAILED",
-                "state": "FAILED",
-                "error_category": "CONTEXT_COMPILATION_FAILED",
-                "error": f"Prompt content was not initialized before execution for attempt #{attempt_id}",
-                "exit_code": 1,
-                "start_time": start_time,
-                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
-            self.attempts.append(fail_rec)
-            self.latest_result = fail_rec
-            try:
-                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
-            except Exception:
-                pass
-            return fail_rec
+                    prompt_content = self.build_prompt(
+                        worktree_path,
+                        attempt_id=attempt_id,
+                        snap_goal_spec=snap_goal_spec,
+                        snap_plan=snap_plan,
+                        snap_task=snap_task,
+                        snap_retry_info=snap_retry_info,
+                    )
+                    if not prompt_content:
+                        raise ContextError(f"Prompt content is empty or uninitialized for task '{self.task_id}' (attempt #{attempt_id})")
 
-        custom_schema = self.task.get("result_schema")
-        if custom_schema:
-            schema_src = (PROJECT_ROOT / custom_schema) if (PROJECT_ROOT / custom_schema).exists() else (FACTORY_ROOT / custom_schema)
-        else:
-            default_schema_name = "review-result.schema.json" if self.review_only else "worker-result.schema.json"
-            schema_src = (PROJECT_ROOT / "schemas" / default_schema_name) if (PROJECT_ROOT / "schemas" / default_schema_name).exists() else (FACTORY_ROOT / "schemas" / default_schema_name)
-        schema_file = attempt_dir / "schema.json"
-        shutil.copyfile(schema_src, schema_file)
+                    # Sanitize prompt content and verify redaction before writing
+                    clean_prompt = redact_secrets(prompt_content)
+                    if not clean_prompt:
+                        raise ContextError(f"Prompt content became empty after redaction for task '{self.task_id}' (attempt #{attempt_id})")
+                    if redact_secrets(clean_prompt) != clean_prompt:
+                        raise ContextError(f"Prompt redaction is not idempotent for task '{self.task_id}' (attempt #{attempt_id})")
+                    prompt_content = clean_prompt
+
+                    # Capture local reference to packet immediately after compilation/validation
+                    active_packet = self.current_context_packet
+
+                    # Enforce anchor recall gate unconditionally on final post-redaction clean_prompt
+                    if active_packet and active_packet.required_anchors:
+                        final_rec, final_missing = calculate_rendered_anchor_recall(active_packet.required_anchors, clean_prompt)
+                        self.last_anchor_recall = final_rec
+                        if final_rec < 1.0:
+                            raise ContextAnchorMissingError(
+                                f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors after redaction: {final_missing}"
+                            )
+
+                    prompt_file.write_text(prompt_content, encoding="utf-8")
+
+                    # Snapshot retry_info to attempt_dir after successful prompt compilation
+                    atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
+
+                    # Save immutable ContextPacket for this attempt
+                    if active_packet:
+                        snap_cur_hashes = {
+                            "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                            "plan": sha256_text(canonical_json_dump(snap_plan)),
+                            "task_def": sha256_text(canonical_json_dump(snap_plan.get("tasks", []))) if self.review_only else sha256_text(canonical_json_dump(snap_task)),
+                            "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY") if self.review_only else sha256_text(canonical_json_dump(snap_retry_info if isinstance(snap_retry_info, dict) else {})),
+                            "stable_prefix": active_packet.source_hashes.get("stable_prefix"),
+                            "secret_env": get_secret_env_fingerprint(),
+                        }
+                        is_stale, stale_reasons = active_packet.verify_staleness(snap_cur_hashes)
+                        if is_stale:
+                            raise ContextError(f"CONTEXT_PACKET_STALE: ContextPacket drifted before persistence: {stale_reasons}")
+                        save_context_packet(active_packet, attempt_dir / "context_packet.json")
+                        packets_dir = self.run_dir / "context" / "packets"
+                        packets_dir.mkdir(parents=True, exist_ok=True)
+                        save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
+            except (ContextAnchorMissingError, ContextError) as err:
+                self.state = "FAILED"
+                fail_rec = {
+                    "attempt_id": attempt_id,
+                    "task_id": self.task_id,
+                    "status": "FAILED",
+                    "state": "FAILED",
+                    "error_category": "CONTEXT_COMPILATION_FAILED",
+                    "error": str(err),
+                    "exit_code": 1,
+                    "start_time": start_time,
+                    "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+                self.attempts.append(fail_rec)
+                self.latest_result = fail_rec
+                try:
+                    self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+                except Exception:
+                    pass
+                return fail_rec
+            except Exception as err:
+                self.state = "FAILED"
+                fail_rec = {
+                    "attempt_id": attempt_id,
+                    "task_id": self.task_id,
+                    "status": "FAILED",
+                    "state": "FAILED",
+                    "error_category": "UNEXPECTED_COMPILATION_ERROR",
+                    "error": redact_secrets(str(err).splitlines()[-1] if str(err).splitlines() else str(err)),
+                    "exit_code": 1,
+                    "start_time": start_time,
+                    "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+                self.attempts.append(fail_rec)
+                self.latest_result = fail_rec
+                try:
+                    self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+                except Exception:
+                    pass
+                return fail_rec
+
+            if not prompt_content:
+                self.state = "FAILED"
+                fail_rec = {
+                    "attempt_id": attempt_id,
+                    "task_id": self.task_id,
+                    "status": "FAILED",
+                    "state": "FAILED",
+                    "error_category": "CONTEXT_COMPILATION_FAILED",
+                    "error": f"Prompt content was not initialized before execution for attempt #{attempt_id}",
+                    "exit_code": 1,
+                    "start_time": start_time,
+                    "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+                self.attempts.append(fail_rec)
+                self.latest_result = fail_rec
+                try:
+                    self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+                except Exception:
+                    pass
+                return fail_rec
+
+            custom_schema = self.task.get("result_schema")
+            if custom_schema:
+                schema_src = (PROJECT_ROOT / custom_schema) if (PROJECT_ROOT / custom_schema).exists() else (FACTORY_ROOT / custom_schema)
+            else:
+                default_schema_name = "review-result.schema.json" if self.review_only else "worker-result.schema.json"
+                schema_src = (PROJECT_ROOT / "schemas" / default_schema_name) if (PROJECT_ROOT / "schemas" / default_schema_name).exists() else (FACTORY_ROOT / "schemas" / default_schema_name)
+            schema_file = attempt_dir / "schema.json"
+            shutil.copyfile(schema_src, schema_file)
 
 
-        self.state = "RUNNING"
-        sig = inspect.signature(self.adapter.execute)
-        exec_kwargs = {
-            "run_id": self.run_id,
-            "task_id": self.task_id,
-            "attempt_id": attempt_id,
-            "worktree_path": worktree_path,
-            "prompt_file": prompt_file,
-            "schema_file": schema_file,
-            "timeout": self.timeout,
-            "task_attempt_dir": attempt_dir,
-            "env_info": env_info,
-            "model": self.model
-        }
-        if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-            exec_kwargs["effort"] = self.effort
-
-        raw_res = self.adapter.execute(**exec_kwargs)
-
-        end_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-        # Failpoint test check: right after worker process execution
-        check_failpoint("FAIL_AFTER_RUNNING", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
-
-        # Stale result rejection guard
-        if attempt_id != self.current_attempt_id:
-            return {
-                "attempt_id": attempt_id,
-                "task_id": self.task_id,
-                "state": "CANCELLED",
-                "status": "STALE_REJECTED",
-                "error": "Result arrived after attempt superseded"
-            }
-
-        # Determine execution_mode and binary verification
-        is_test_harness = os.environ.get("FACTORY_TEST_HARNESS") == "1"
-        cmd_path = getattr(self.adapter, "command", None) or self.worker_config.get("command", "")
-        bin_identity = verify_binary_identity(cmd_path) if cmd_path else {"is_fixture": False, "realpath": ""}
-
-        if is_test_harness or bin_identity.get("is_fixture"):
-            execution_mode = "MOCK"
-        elif raw_res.get("execution_mode") == "MOCK":
-            execution_mode = "MOCK"
-        else:
-            execution_mode = raw_res.get("execution_mode", "REAL")
-
-        # Invariant: If is_test_harness or bin_identity is_fixture, it MUST be MOCK
-        if is_test_harness or bin_identity.get("is_fixture"):
-            execution_mode = "MOCK"
-
-        git_diff_hash = ""
-        try:
-            diff_proc = subprocess.run(["git", "diff", base_commit], cwd=str(worktree_path), capture_output=True, text=True)
-            if diff_proc.returncode == 0 and diff_proc.stdout:
-                git_diff_hash = hashlib.sha256(diff_proc.stdout.encode("utf-8")).hexdigest()
-        except Exception:
-            pass
-
-        auth_source = raw_res.get("provenance", {}).get("auth_source") or probe_harness_auth(self.harness).get("auth_source", "unauthenticated")
-
-        real_evidence = None
-        if execution_mode == "REAL":
-            real_evidence = {
+            self.state = "RUNNING"
+            sig = inspect.signature(self.adapter.execute)
+            exec_kwargs = {
                 "run_id": self.run_id,
                 "task_id": self.task_id,
                 "attempt_id": attempt_id,
-                "harness": self.harness,
-                "profile_id": self.profile_id,
-                "adapter": self.worker_config.get("adapter", "agy"),
-                "model": self.model,
-                "effort": self.effort,
-                "auth_source": auth_source,
-                "executable_realpath": bin_identity.get("realpath", ""),
-                "binary_identity": bin_identity,
-                "raw_result_hash": raw_res.get("raw_result_hash", ""),
-                "git_diff_hash": git_diff_hash,
-                "invocation_argv": raw_res.get("invocation_argv", []),
-                "commit": None
+                "worktree_path": worktree_path,
+                "prompt_file": prompt_file,
+                "schema_file": schema_file,
+                "timeout": self.timeout,
+                "task_attempt_dir": attempt_dir,
+                "env_info": env_info,
+                "model": self.model
             }
+            if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                exec_kwargs["effort"] = self.effort
 
-        if raw_res.get("timed_out"):
-            self.state = "TIMED_OUT"
+            raw_res = self.adapter.execute(**exec_kwargs)
+
+            end_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            # Failpoint test check: right after worker process execution
+            check_failpoint("FAIL_AFTER_RUNNING", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
+
+            # Stale result rejection guard
+            if attempt_id != self.current_attempt_id:
+                return {
+                    "attempt_id": attempt_id,
+                    "task_id": self.task_id,
+                    "state": "CANCELLED",
+                    "status": "STALE_REJECTED",
+                    "error": "Result arrived after attempt superseded"
+                }
+
+            # Determine execution_mode and binary verification
+            is_test_harness = os.environ.get("FACTORY_TEST_HARNESS") == "1"
+            cmd_path = getattr(self.adapter, "command", None) or self.worker_config.get("command", "")
+            bin_identity = verify_binary_identity(cmd_path) if cmd_path else {"is_fixture": False, "realpath": ""}
+
+            if is_test_harness or bin_identity.get("is_fixture"):
+                execution_mode = "MOCK"
+            elif raw_res.get("execution_mode") == "MOCK":
+                execution_mode = "MOCK"
+            else:
+                execution_mode = raw_res.get("execution_mode", "REAL")
+
+            # Invariant: If is_test_harness or bin_identity is_fixture, it MUST be MOCK
+            if is_test_harness or bin_identity.get("is_fixture"):
+                execution_mode = "MOCK"
+
+            git_diff_hash = ""
+            try:
+                diff_proc = subprocess.run(["git", "diff", base_commit], cwd=str(worktree_path), capture_output=True, text=True)
+                if diff_proc.returncode == 0 and diff_proc.stdout:
+                    git_diff_hash = hashlib.sha256(diff_proc.stdout.encode("utf-8")).hexdigest()
+            except Exception:
+                pass
+
+            auth_source = raw_res.get("provenance", {}).get("auth_source") or probe_harness_auth(self.harness).get("auth_source", "unauthenticated")
+
+            real_evidence = None
+            if execution_mode == "REAL":
+                real_evidence = {
+                    "run_id": self.run_id,
+                    "task_id": self.task_id,
+                    "attempt_id": attempt_id,
+                    "harness": self.harness,
+                    "profile_id": self.profile_id,
+                    "adapter": self.worker_config.get("adapter", "agy"),
+                    "model": self.model,
+                    "effort": self.effort,
+                    "auth_source": auth_source,
+                    "executable_realpath": bin_identity.get("realpath", ""),
+                    "binary_identity": bin_identity,
+                    "raw_result_hash": raw_res.get("raw_result_hash", ""),
+                    "git_diff_hash": git_diff_hash,
+                    "invocation_argv": raw_res.get("invocation_argv", []),
+                    "commit": None
+                }
+
+            if raw_res.get("timed_out"):
+                self.state = "TIMED_OUT"
+                attempt_record = {
+                    "attempt_id": attempt_id,
+                    "task_id": self.task_id,
+                    "worker_id": self.worker_id,
+                    "profile_id": self.profile_id,
+                    "harness": self.harness,
+                    "model": self.model,
+                    "effort": self.effort,
+                    "adapter": self.worker_config.get("adapter", "agy"),
+                    "routing_provenance": self.routing_provenance,
+                    "execution_mode": execution_mode,
+                    "is_real_execution": (execution_mode == "REAL"),
+                    "real_evidence": real_evidence,
+                    "raw_result_hash": raw_res.get("raw_result_hash", ""),
+                    "branch": attempt_branch,
+                    "worktree": str(worktree_path),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "exit_code": -1,
+                    "timed_out": True,
+                    "state": "TIMED_OUT",
+                    "status": "TIMEOUT",
+                    "error": raw_res.get("error", "Worker timed out")
+                }
+                attempt_record = redact_secrets(attempt_record)
+                self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
+                self.attempts.append(attempt_record)
+                self.latest_result = attempt_record
+                atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
+                try:
+                    self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+                except Exception:
+                    pass
+                return attempt_record
+
+            self.state = "RESULT_RECEIVED"
+            exit_code = raw_res.get("exit_code", -1)
+            agy_data = raw_res.get("data", {})
+
+            # Path validation
+            self.state = "PATH_VALIDATING"
+            untracked_res = subprocess.run(
+                ["git", "status", "--porcelain", "-uall"],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True
+            )
+            changed_paths = []
+            for line in untracked_res.stdout.splitlines():
+                if line.strip():
+                    changed_paths.append(line[3:].strip().strip('"'))
+
+            path_violations = []
+            if not self.review_only:
+                for p in changed_paths:
+                    if not match_path_allowlist(p, self.allowed_paths):
+                        path_violations.append(p)
+
+            # Symlink security check
+            symlink_violations = check_worktree_symlinks(worktree_path, PROJECT_ROOT)
+            path_violations.extend(symlink_violations)
+
+            missing_expected = []
+            if not self.review_only and self.expected_files:
+                for exp_file in self.expected_files:
+                    if not (worktree_path / exp_file).exists():
+                        missing_expected.append(exp_file)
+
+            structured_output = agy_data.get("structured_output", {})
+            if not structured_output and "response" in agy_data:
+                try:
+                    m = re.search(r"(\{[\s\S]*\})", agy_data["response"])
+                    if m:
+                        structured_output = json.loads(m.group(1))
+                except Exception:
+                    pass
+            if not structured_output and agy_data.get("status") in ("SUCCESS", "COMPLETED"):
+                structured_output = agy_data
+
+            is_success = (
+                exit_code == 0
+                and agy_data.get("status") in ("SUCCESS", "COMPLETED")
+                and not path_violations
+                and not missing_expected
+                and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected) or self.task_type in ("support", "fixture"))
+            )
+
+            self.state = "PATH_VALIDATED" if is_success else "FAILED"
+
             attempt_record = {
                 "attempt_id": attempt_id,
                 "task_id": self.task_id,
@@ -4075,130 +4208,44 @@ class TaskExecutor:
                 "effort": self.effort,
                 "adapter": self.worker_config.get("adapter", "agy"),
                 "routing_provenance": self.routing_provenance,
+                "provenance": raw_res.get("provenance", {}),
                 "execution_mode": execution_mode,
                 "is_real_execution": (execution_mode == "REAL"),
                 "real_evidence": real_evidence,
                 "raw_result_hash": raw_res.get("raw_result_hash", ""),
                 "branch": attempt_branch,
                 "worktree": str(worktree_path),
+                "env_info": env_info,
                 "start_time": start_time,
                 "end_time": end_time,
-                "exit_code": -1,
-                "timed_out": True,
-                "state": "TIMED_OUT",
-                "status": "TIMEOUT",
-                "error": raw_res.get("error", "Worker timed out")
+                "exit_code": exit_code,
+                "agy_status": agy_data.get("status", "UNKNOWN"),
+                "changed_paths": changed_paths,
+                "path_violations": path_violations,
+                "missing_expected": missing_expected,
+                "structured_output": structured_output,
+                "state": self.state,
+                "status": "SUCCESS" if is_success else "FAILED"
             }
             attempt_record = redact_secrets(attempt_record)
-            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
+
+            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
+            atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
-            atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
+
+            # Check failpoint before commit
+            check_failpoint("FAIL_BEFORE_COMMIT", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
+
             try:
                 self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
             except Exception:
                 pass
+
             return attempt_record
 
-        self.state = "RESULT_RECEIVED"
-        exit_code = raw_res.get("exit_code", -1)
-        agy_data = raw_res.get("data", {})
-
-        # Path validation
-        self.state = "PATH_VALIDATING"
-        untracked_res = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
-            cwd=str(worktree_path),
-            capture_output=True,
-            text=True
-        )
-        changed_paths = []
-        for line in untracked_res.stdout.splitlines():
-            if line.strip():
-                changed_paths.append(line[3:].strip().strip('"'))
-
-        path_violations = []
-        if not self.review_only:
-            for p in changed_paths:
-                if not match_path_allowlist(p, self.allowed_paths):
-                    path_violations.append(p)
-
-        # Symlink security check
-        symlink_violations = check_worktree_symlinks(worktree_path, PROJECT_ROOT)
-        path_violations.extend(symlink_violations)
-
-        missing_expected = []
-        if not self.review_only and self.expected_files:
-            for exp_file in self.expected_files:
-                if not (worktree_path / exp_file).exists():
-                    missing_expected.append(exp_file)
-
-        structured_output = agy_data.get("structured_output", {})
-        if not structured_output and "response" in agy_data:
-            try:
-                m = re.search(r"(\{[\s\S]*\})", agy_data["response"])
-                if m:
-                    structured_output = json.loads(m.group(1))
-            except Exception:
-                pass
-        if not structured_output and agy_data.get("status") in ("SUCCESS", "COMPLETED"):
-            structured_output = agy_data
-
-        is_success = (
-            exit_code == 0
-            and agy_data.get("status") in ("SUCCESS", "COMPLETED")
-            and not path_violations
-            and not missing_expected
-            and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected) or self.task_type in ("support", "fixture"))
-        )
-
-        self.state = "PATH_VALIDATED" if is_success else "FAILED"
-
-        attempt_record = {
-            "attempt_id": attempt_id,
-            "task_id": self.task_id,
-            "worker_id": self.worker_id,
-            "profile_id": self.profile_id,
-            "harness": self.harness,
-            "model": self.model,
-            "effort": self.effort,
-            "adapter": self.worker_config.get("adapter", "agy"),
-            "routing_provenance": self.routing_provenance,
-            "provenance": raw_res.get("provenance", {}),
-            "execution_mode": execution_mode,
-            "is_real_execution": (execution_mode == "REAL"),
-            "real_evidence": real_evidence,
-            "raw_result_hash": raw_res.get("raw_result_hash", ""),
-            "branch": attempt_branch,
-            "worktree": str(worktree_path),
-            "env_info": env_info,
-            "start_time": start_time,
-            "end_time": end_time,
-            "exit_code": exit_code,
-            "agy_status": agy_data.get("status", "UNKNOWN"),
-            "changed_paths": changed_paths,
-            "path_violations": path_violations,
-            "missing_expected": missing_expected,
-            "structured_output": structured_output,
-            "state": self.state,
-            "status": "SUCCESS" if is_success else "FAILED"
-        }
-        attempt_record = redact_secrets(attempt_record)
-
-        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
-        atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
-        self.attempts.append(attempt_record)
-        self.latest_result = attempt_record
-
-        # Check failpoint before commit
-        check_failpoint("FAIL_BEFORE_COMMIT", self.run_dir, {"task_id": self.task_id, "attempt_id": attempt_id})
-
-        try:
-            self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
-        except Exception:
-            pass
-
-        return attempt_record
+        finally:
+            self._is_executing = False
 
     def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
                           worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int,
@@ -4318,6 +4365,8 @@ class TaskExecutor:
                 if (valid_in_tokens is not None and valid_cached_tokens is not None)
                 else None
             )
+            if valid_in_tokens is None:
+                self.log_event("WARNING_TOKEN_METRICS_UNAVAILABLE", {"task_id": self.task_id, "attempt_id": attempt_record.get("attempt_id", 1)})
 
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
@@ -4362,6 +4411,7 @@ class TaskExecutor:
                 "repeated_bytes": red_stats["repeated_content_bytes"],
                 "unique_bytes": red_stats["unique_content_bytes"],
                 "redundancy_ratio": red_stats["redundancy_ratio"],
+                "token_count_estimation_method": "provider_reported" if valid_in_tokens is not None else "unavailable",
                 "provider_input_tokens": valid_in_tokens,
                 "provider_cached_input_tokens": valid_cached_tokens,
                 "provider_total_tokens_including_cache": total_toks_inc_cache,
@@ -4404,7 +4454,7 @@ class TaskExecutor:
         except Exception:
             pass
 
-    def commit_work(self, attempt_id: int) -> str:
+    def commit_work(self, attempt_id: int, context_packet: Optional[Any] = None) -> str:
         """Commits verified changes in the attempt worktree."""
         self.state = "COMMITTING"
         worktree_path = WORKTREES_DIR / self.run_id / self.task_id / f"att-{attempt_id}"
@@ -4416,7 +4466,9 @@ class TaskExecutor:
         if lock is None:
             lock = contextlib.nullcontext()
         with lock:
-            if not self.current_context_packet:
+            if context_packet is not None:
+                self.current_context_packet = context_packet
+            elif not self.current_context_packet or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
                 if pkt_file.exists():
                     self.current_context_packet = load_context_packet(pkt_file)
                 else:
@@ -4540,6 +4592,9 @@ class FactoryOrchestrator:
             with open(self.manifest_path, "r", encoding="utf-8") as f:
                 self.manifest = json.load(f)
             self.manifest.setdefault("handoffs", {})
+            for tid, tinfo in self.manifest.get("tasks", {}).items():
+                if isinstance(tinfo, dict) and tinfo.get("routing_provenance"):
+                    self.routing_provenance[tid] = tinfo["routing_provenance"]
         else:
             self.run_id = f"run-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}"
             self.run_dir = RUNS_DIR / self.run_id
@@ -4569,6 +4624,7 @@ class FactoryOrchestrator:
                     "task_type": tdef.get("task_type"),
                     "adapter": adapter,
                     "dependencies": tdef.get("dependencies", []),
+                    "routing_provenance": tdef.get("routing_provenance", {}),
                     "canonical_state": "PENDING",
                     "display_state": "BACKLOG",
                     "current_attempt_id": 0,
@@ -4657,6 +4713,7 @@ class FactoryOrchestrator:
 
             # Phase 2: Unicode normalization, control char stripping, secret redaction, homoglyphs, whitespace normalization, and injection filter
             cleaned = unicodedata.normalize("NFKC", cleaned)
+            # Strip format and control characters. Note: U+202E (Right-to-Left Override) and all bidi format characters are in category 'Cf' and are stripped here to prevent Trojan Source attacks.
             cleaned = "".join(c for c in cleaned if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
             cleaned = redact_secrets(cleaned)
             cleaned = normalize_homoglyphs(cleaned)
@@ -4703,26 +4760,28 @@ class FactoryOrchestrator:
         val_result = {"passed": is_passed, "exit_code": actual_exit_code}
         if filtered_criteria:
             val_result["filtered_criteria"] = filtered_criteria
-        # Determine actual synthesis source / provenance mode (authoritative: orchestrator routing_provenance)
+        # Determine actual synthesis source / provenance mode (authoritative: orchestrator routing_provenance ONLY)
         orch_mode = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode")
+        if isinstance(orch_mode, str) and orch_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
+            synthesis_source = orch_mode.upper()
+        else:
+            synthesis_source = "MOCK"
+            self.log_event("CRITICAL_MISSING_ORCHESTRATOR_ROUTING_PROVENANCE", {
+                "task_id": task_id,
+                "defaulted_to": "MOCK",
+                "orch_mode": str(orch_mode),
+            })
         raw_mode = None
         if isinstance(attempt_result.get("provenance"), dict):
             raw_mode = attempt_result["provenance"].get("mode")
         elif isinstance(attempt_result.get("routing_provenance"), dict):
             raw_mode = attempt_result["routing_provenance"].get("mode")
-
-        if isinstance(orch_mode, str) and orch_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
-            synthesis_source = orch_mode.upper()
-            if raw_mode and raw_mode.upper() != synthesis_source:
-                self.log_event("WARNING_WORKER_PROVENANCE_DISCREPANCY", {
-                    "task_id": task_id,
-                    "orchestrator_mode": synthesis_source,
-                    "worker_mode": raw_mode
-                })
-        elif isinstance(raw_mode, str) and raw_mode.upper() in VALID_PROVENANCES and raw_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
-            synthesis_source = raw_mode.upper()
-        else:
-            raise ContextError(f"CRITICAL: Indeterminate execution provenance for task {task_id}; cannot construct handoff packet with unknown mode.")
+        if raw_mode and str(raw_mode).upper() != synthesis_source:
+            self.log_event("WARNING_WORKER_PROVENANCE_DISCREPANCY", {
+                "task_id": task_id,
+                "orchestrator_mode": synthesis_source,
+                "worker_mode": str(raw_mode)
+            })
 
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
@@ -4775,7 +4834,8 @@ class FactoryOrchestrator:
                             raise RuntimeError(clean_err)
 
                 if ho is not None:
-                    candidates.append((dep_id, copy.deepcopy(ho)))
+                    ho_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns) if ho_file.exists() else None
+                    candidates.append((dep_id, copy.deepcopy(ho), ho_stat))
 
         # Perform git history reachability checks outside manifest lock to prevent blocking or priority inversion
         target_head = "HEAD"
@@ -4787,7 +4847,7 @@ class FactoryOrchestrator:
             except Exception:
                 pass
 
-        for dep_id, ho in candidates:
+        for dep_id, ho, _ in candidates:
             validated_commit = ho.commit
             if (PROJECT_ROOT / ".git").exists() and validated_commit and len(validated_commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", validated_commit):
                 verify_res = subprocess.run(
@@ -4822,13 +4882,18 @@ class FactoryOrchestrator:
                 if ho.commit != validated_commit:
                     raise RuntimeError(f"Handoff {dep_id} commit altered during validation")
 
-            # Post-check: ensure on-disk handoff file has not been replaced or tampered with
-            ho_file = self.handoffs_dir / f"{dep_id}.json"
-            if ho_file.exists():
-                disk_ho = load_handoff_packet(ho_file)
-                if disk_ho.handoff_hash != ho.handoff_hash or disk_ho.commit != ho.commit:
-                    raise RuntimeError(f"Handoff packet {dep_id} on disk drifted during validation")
-            task_handoffs.append(ho)
+        # Post-check under manifest lock: ensure on-disk handoff file has not been replaced, modified, or tampered with
+        with self._manifest_lock:
+            for dep_id, ho, orig_stat in candidates:
+                ho_file = self.handoffs_dir / f"{dep_id}.json"
+                if ho_file.exists():
+                    curr_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns)
+                    if orig_stat is not None and curr_stat != orig_stat:
+                        raise RuntimeError(f"Handoff packet {dep_id} on disk modified during validation")
+                    disk_ho = load_handoff_packet(ho_file)
+                    if disk_ho.handoff_hash != ho.handoff_hash or disk_ho.commit != ho.commit:
+                        raise RuntimeError(f"Handoff packet {dep_id} on disk drifted during validation")
+                task_handoffs.append(ho)
         return task_handoffs
 
     def _build_task_graph(self):
@@ -4901,6 +4966,7 @@ class FactoryOrchestrator:
         atomic_write_json(self.manifest_path, clean_manifest)
 
         # Sync board projector outside _manifest_lock critical section to prevent deadlocks
+        assert not self._manifest_lock._is_owned(), "_manifest_lock must not be held when calling board_projector.sync()"
         try:
             self.board_projector.sync(self.run_id)
         except Exception:
@@ -4985,6 +5051,8 @@ class FactoryOrchestrator:
             if tinfo.get("worker_id"):
                 self.tasks_def[tid]["worker_id"] = tinfo["worker_id"]
                 self.tasks_def[tid]["routing_provenance"] = tinfo.get("routing_provenance", {})
+            if tinfo.get("routing_provenance"):
+                self.routing_provenance[tid] = tinfo["routing_provenance"]
             state = tinfo.get("canonical_state", "PENDING")
             att_id = tinfo.get("current_attempt_id", 0)
 
@@ -5043,7 +5111,7 @@ class FactoryOrchestrator:
                     executor.current_attempt_id = att_id
                     executor.latest_result = tinfo.get("latest_result", {})
                     try:
-                        commit_hash = executor.commit_work(att_id)
+                        commit_hash = executor.commit_work(att_id, context_packet=getattr(executor, "current_context_packet", None))
                         branch = f"factory/{self.run_id}/{tid}/att-{att_id}"
                         merge_ok, conflicts = self.merge_task_branch(branch, tid)
                         if merge_ok:
@@ -5097,7 +5165,7 @@ class FactoryOrchestrator:
                             tinfo["status"] = "SUCCESS"
                         else:
                             try:
-                                executor.commit_work(att_id)
+                                executor.commit_work(att_id, context_packet=getattr(executor, "current_context_packet", None))
                                 merge_ok, conflicts = self.merge_task_branch(res["branch"], tid)
                                 if merge_ok:
                                     tinfo["canonical_state"] = "INTEGRATED"
@@ -5243,6 +5311,7 @@ class FactoryOrchestrator:
                         tinfo["effort"] = route_meta.get("effort")
                         tinfo["adapter"] = route_meta.get("selected_adapter")
                         tinfo["routing_provenance"] = route_meta
+                        self.routing_provenance[tid] = route_meta
 
                         tdef["worker_id"] = wid
                         tdef["profile_id"] = route_meta.get("selected_profile_id")
@@ -5336,7 +5405,7 @@ class FactoryOrchestrator:
                             self.log_event("REVIEW_TASK_COMPLETED", {"task_id": tid, "audit": self.manifest["final_audit"]})
                         else:
                             # Commit verified changes
-                            commit_hash = executor.commit_work(att_id)
+                            commit_hash = executor.commit_work(att_id, context_packet=getattr(executor, "current_context_packet", None))
                             res["commit_hash"] = commit_hash
                             tinfo["canonical_state"] = "COMMITTED"
                             self.save_manifest()
@@ -5502,50 +5571,53 @@ class FactoryOrchestrator:
                         p_data = json.loads(pf.read_text(encoding="utf-8"))
                         pkt = ContextPacket.from_dict(p_data)
                         curr_hashes = {}
+                        pkt_role = getattr(pkt, "packet_role", "task")
                         for k in pkt.source_hashes.keys():
                             if k == "goal-spec":
                                 curr_hashes[k] = sha256_text(canonical_json_dump(self.goal_spec))
                             elif k == "plan":
                                 curr_hashes[k] = sha256_text(canonical_json_dump(self.plan))
                             elif k == "task_def":
-                                pkt_tid = getattr(pkt, "task_id", "")
-                                if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
-                                    self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
-                                    continue
-                                tdef = self.tasks_def.get(pkt_tid, {})
-                                curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
-                            elif k == "retry_info":
-                                pkt_tid = getattr(pkt, "task_id", "")
-                                if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
-                                    self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
-                                    continue
-                                att_id = getattr(pkt, "attempt_id", 1)
-                                att_dir = (self.run_dir / "workers" / pkt_tid / f"att-{att_id}").resolve()
-                                if not str(att_dir).startswith(str((self.run_dir / "workers").resolve())):
-                                    self.log_event("WARNING_ATTEMPT_DIR_TRAVERSAL", {"task_id": str(pkt_tid), "att_dir": str(att_dir)})
-                                    continue
-                                rinfo_file = att_dir / "retry_info.json"
-                                if rinfo_file.exists():
-                                    try:
-                                        r_info = json.loads(rinfo_file.read_text(encoding="utf-8"))
-                                    except Exception:
-                                        r_info = {}
-                                elif att_id > 1:
-                                    pkt_tinfo = self.manifest.get("tasks", {}).get(pkt_tid, {})
-                                    r_info = pkt_tinfo.get("retry_info", {})
+                                if pkt_role == "reviewer":
+                                    curr_hashes[k] = sha256_text(canonical_json_dump(self.plan.get("tasks", [])))
                                 else:
-                                    r_info = {}
-                                curr_hashes[k] = sha256_text(canonical_json_dump(r_info or {}))
+                                    pkt_tid = getattr(pkt, "task_id", "")
+                                    if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
+                                        self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
+                                        continue
+                                    tdef = self.tasks_def.get(pkt_tid, {})
+                                    curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
+                            elif k == "retry_info":
+                                if pkt_role == "reviewer":
+                                    curr_hashes[k] = sha256_text("REVIEWER_ROLE_NO_RETRY")
+                                else:
+                                    pkt_tid = getattr(pkt, "task_id", "")
+                                    if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
+                                        self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
+                                        continue
+                                    att_id = getattr(pkt, "attempt_id", 1)
+                                    att_dir = (self.run_dir / "workers" / pkt_tid / f"att-{att_id}").resolve()
+                                    if not str(att_dir).startswith(str((self.run_dir / "workers").resolve())):
+                                        self.log_event("WARNING_ATTEMPT_DIR_TRAVERSAL", {"task_id": str(pkt_tid), "att_dir": str(att_dir)})
+                                        continue
+                                    rinfo_file = att_dir / "retry_info.json"
+                                    if rinfo_file.exists():
+                                        try:
+                                            r_info = json.loads(rinfo_file.read_text(encoding="utf-8"))
+                                        except Exception:
+                                            r_info = {}
+                                    elif att_id > 1:
+                                        pkt_tinfo = self.manifest.get("tasks", {}).get(pkt_tid, {})
+                                        r_info = pkt_tinfo.get("retry_info", {})
+                                    else:
+                                        r_info = {}
+                                    curr_hashes[k] = sha256_text(canonical_json_dump(r_info or {}))
                             elif k == "stable_prefix":
                                 role = getattr(pkt, "packet_role", "task")
                                 _, sp_hash, _ = StablePrefixManager.get_stable_prefix(role)
                                 curr_hashes[k] = sp_hash
-                            elif k == "raw_goal":
-                                curr_hashes[k] = sha256_text((getattr(self, "goal_text", "") or (self.goal_spec.get("raw_goal", "") if isinstance(self.goal_spec, dict) else "")).strip())
                             elif k == "secret_env":
                                 curr_hashes[k] = get_secret_env_fingerprint()
-                            elif k == "base_commit":
-                                curr_hashes[k] = sha256_text(self.manifest.get("base_commit", ""))
                             else:
                                 curr_hashes[k] = ctx_src.get_file_hash(k)
                         is_stale, stale_reasons = pkt.verify_staleness(curr_hashes)

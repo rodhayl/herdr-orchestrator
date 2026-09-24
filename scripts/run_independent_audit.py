@@ -47,15 +47,15 @@ def main():
     # Extract key sections from tools/context.py to provide complete self-contained context
     ctx_lines = (REPO_ROOT / "tools" / "context.py").read_text(encoding="utf-8").splitlines()
     ctx_sections = [
-        "### Injection Filter Pattern, Secret Redaction & Frozen Snapshot:\n" + "\n".join(ctx_lines[109:240]),
-        "\n### Anchor Data Model & Boundary-Safe Recall Calculation:\n" + "\n".join(ctx_lines[276:395]),
-        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[401:772]),
-        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[777:1006]),
-        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1362:1506]),
-        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1644:1975]),
-        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2129:2293]),
-        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2429:2510]),
-        "\n### Atomic Persistence, Quarantine & Context Telemetry:\n" + "\n".join(ctx_lines[2515:2640]),
+        "### Injection Filter Pattern, Secret Redaction & Frozen Snapshot:\n" + "\n".join(ctx_lines[105:278]),
+        "\n### Anchor Data Model & Boundary-Safe Recall Calculation:\n" + "\n".join(ctx_lines[278:404]),
+        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[404:790]),
+        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[790:1025]),
+        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1375:1530]),
+        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1655:2146]),
+        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2146:2320]),
+        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2445:2536]),
+        "\n### Atomic Persistence, Quarantine & Context Telemetry:\n" + "\n".join(ctx_lines[2536:2670]),
     ]
     context_core_code = "\n".join(ctx_sections)
 

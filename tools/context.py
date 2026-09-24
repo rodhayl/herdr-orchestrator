@@ -157,7 +157,7 @@ def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
             is_sensitive = (sk_str in SECRET_SUBKEY_NAMES or ENV_SECRET_KEY_PATTERN.search(str(sub_k)) is not None)
             if isinstance(sub_v, str):
                 s = sub_v.strip()
-                if is_sensitive and len(s) >= 6:
+                if is_sensitive and len(s) >= 4:
                     extracted[combined] = s
             elif isinstance(sub_v, (dict, list)):
                 extracted.update(_extract_json_secrets(combined, sub_v))
@@ -170,7 +170,7 @@ def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
 
 
 def snapshot_secret_env() -> dict[str, str]:
-    """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot.
+    """Snapshots sensitive environment variables with length >= 4 into the frozen snapshot.
 
     Idempotent and safe to invoke multiple times; always operates under _SECRET_ENV_LOCK.
     """
@@ -178,7 +178,7 @@ def snapshot_secret_env() -> dict[str, str]:
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
-                if stripped and len(stripped) >= 6:
+                if stripped and len(stripped) >= 4:
                     clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
                     _INITIAL_SECRET_ENV[_k] = clean_v
                     # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract all inner string values
@@ -195,7 +195,7 @@ def register_secret_env(key: str, val: str) -> None:
     """Registers a sensitive environment variable into the frozen snapshot for testing or runtime auth."""
     if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
         stripped = val.strip()
-        if len(stripped) >= 6:
+        if len(stripped) >= 4:
             clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
             with _SECRET_ENV_LOCK:
                 _INITIAL_SECRET_ENV[key] = clean_v
@@ -223,6 +223,8 @@ def redact_secrets(val: Any) -> Any:
     if isinstance(val, str):
         res = val
         with _SECRET_ENV_LOCK:
+            for pat in SECRET_PATTERNS:
+                res = pat.sub("[REDACTED_SECRET]", res)
             sorted_secrets = sorted(_INITIAL_SECRET_ENV.items(), key=lambda x: len(x[1]), reverse=True)
             for env_k, env_v in sorted_secrets:
                 if env_v:
@@ -235,7 +237,7 @@ def redact_secrets(val: Any) -> Any:
     elif isinstance(val, tuple):
         return tuple(redact_secrets(item) for item in val)
     elif isinstance(val, dict):
-        return {k: redact_secrets(v) for k, v in val.items()}
+        return {redact_secrets(k) if isinstance(k, str) else k: redact_secrets(v) for k, v in val.items()}
     return val
 
 
@@ -378,7 +380,7 @@ def calculate_rendered_anchor_recall(
         found = False
         # Strict boundary matching depending on anchor type
         if getattr(req, "anchor_type", "") == "validation":
-            found = bool(re.search(r"`" + re.escape(content) + r"`", rendered_text)) or bool(re.search(r"(?m)^[\s*\-]*`?" + re.escape(content) + r"`?", rendered_text)) or (content in rendered_text)
+            found = bool(re.search(r"`" + re.escape(content) + r"`", rendered_text)) or bool(re.search(r"(?m)^[\s*\-]*`?" + re.escape(content) + r"`?", rendered_text))
         elif getattr(req, "anchor_type", "") in ("file_reference", "allowed_path", "protected_path"):
             file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_/\-]|\.[a-zA-Z0-9])"
             found = bool(re.search(file_pattern, rendered_text))
@@ -418,6 +420,7 @@ class HandoffPacket:
     compacted: bool = False
     original_handoff_hash: str = ""
     synthesis_source: str = "REAL"
+    contracts_truncated_to_string: bool = False
 
     def __post_init__(self):
         if not self.created_at:
@@ -448,6 +451,7 @@ class HandoffPacket:
             if len(c_str.encode("utf-8")) > max_bytes:
                 encoded = c_str.encode("utf-8")[:max_bytes - 32]
                 self.contracts = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+                self.contracts_truncated_to_string = True
 
         # Bound decisions
         if isinstance(self.decisions, str) and len(self.decisions.encode("utf-8")) > max_bytes:
@@ -504,6 +508,8 @@ class HandoffPacket:
                     setattr(self, f_name, cur.encode("utf-8")[:alloc_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]")
                 elif isinstance(cur, dict):
                     setattr(self, f_name, canonical_json_dump(cur).encode("utf-8")[:alloc_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]")
+                    if f_name == "contracts":
+                        self.contracts_truncated_to_string = True
 
         for _ in range(200):
             ft_parts = {
@@ -533,6 +539,8 @@ class HandoffPacket:
                 new_b = max(0, cur_b - trim_amount)
                 new_str = c_str.encode("utf-8")[:new_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
                 setattr(self, largest_field, new_str)
+                if largest_field == "contracts":
+                    self.contracts_truncated_to_string = True
             elif isinstance(cur_val, list):
                 if cur_val:
                     cur_val.pop()
@@ -562,6 +570,7 @@ class HandoffPacket:
                 self.contracts = self.contracts.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.contracts, dict):
                 self.contracts = canonical_json_dump(self.contracts).encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
+                self.contracts_truncated_to_string = True
             if isinstance(self.decisions, str):
                 self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
@@ -581,7 +590,9 @@ class HandoffPacket:
             if sum(len(v.encode("utf-8")) for v in post_ft_parts.values()) > ft_budget:
                 cut = max(16, ft_budget // 8)
                 self.consumer_notes = self.consumer_notes.encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
-                self.contracts = self.contracts.encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
+                if isinstance(self.contracts, dict):
+                    self.contracts_truncated_to_string = True
+                self.contracts = (self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts)).encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
                 self.decisions = ["[TRUNCATED:BOUND]"]
                 self.known_risks = ["[TRUNCATED:BOUND]"]
 
@@ -673,6 +684,8 @@ class HandoffPacket:
         if self.compacted:
             d["compacted"] = True
             d["original_handoff_hash"] = self.original_handoff_hash
+        if self.contracts_truncated_to_string:
+            d["contracts_truncated_to_string"] = True
         return d
 
     def to_dict(self) -> dict:
@@ -707,6 +720,8 @@ class HandoffPacket:
         if d.get("compacted"):
             raw_dict["compacted"] = True
             raw_dict["original_handoff_hash"] = d.get("original_handoff_hash", "")
+        if d.get("contracts_truncated_to_string"):
+            raw_dict["contracts_truncated_to_string"] = True
         computed = sha256_text(canonical_json_dump(raw_dict))
         stored_hash = d["handoff_hash"]
         if computed != stored_hash:
@@ -731,6 +746,7 @@ class HandoffPacket:
             compacted=bool(d.get("compacted", False)),
             original_handoff_hash=d.get("original_handoff_hash", ""),
             synthesis_source=d.get("synthesis_source", "REAL"),
+            contracts_truncated_to_string=bool(d.get("contracts_truncated_to_string", False)),
         )
         # Verify semantic bounds on loaded packet to prevent unconstrained reload injection
         actual_bytes = len(canonical_json_dump(hp.to_dict()).encode("utf-8"))
@@ -1883,18 +1899,23 @@ class ContextCompiler:
             surviving_paths = set()
             for ho in handoffs:
                 surviving_paths.update([p for p in ho.changed_paths[:200] if not str(p).startswith("[+")])
-            anchors = [a for a in anchors if not (a.anchor_type == "file_reference" and a.source == "predecessor_handoff")]
+            for a in anchors:
+                if a.anchor_type == "file_reference" and a.source == "predecessor_handoff":
+                    if a.content not in surviving_paths:
+                        a.required = False
+            existing_ho_paths = {a.content for a in anchors if a.anchor_type == "file_reference" and a.source == "predecessor_handoff"}
             for ho_path in sorted(surviving_paths):
-                anchors.append(
-                    Anchor(
-                        anchor_id=f"handoff_path:{sha256_text(ho_path)[:8]}",
-                        anchor_type="file_reference",
-                        source="predecessor_handoff",
-                        source_hash=sha256_text(ho_path),
-                        content=ho_path,
-                        required=True,
+                if ho_path not in existing_ho_paths:
+                    anchors.append(
+                        Anchor(
+                            anchor_id=f"handoff_path:{sha256_text(ho_path)[:8]}",
+                            anchor_type="file_reference",
+                            source="predecessor_handoff",
+                            source_hash=sha256_text(ho_path),
+                            content=ho_path,
+                            required=True,
+                        )
                     )
-                )
 
             # Step 3: Remove inlined files if any
             included_files = []
@@ -2534,6 +2555,12 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
         f.flush()
         os.fsync(f.fileno())
     os.replace(temp_path, target_path)
+    try:
+        dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except Exception:
+        pass
     return target_path
 
 
@@ -2585,6 +2612,12 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
         f.flush()
         os.fsync(f.fileno())
     os.replace(temp_path, target_path)
+    try:
+        dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except Exception:
+        pass
     return target_path
 
 
