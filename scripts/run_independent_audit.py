@@ -44,9 +44,34 @@ def main():
         cwd=str(REPO_ROOT)
     ).decode("utf-8", errors="replace")
 
+    # Extract key sections from tools/context.py to provide complete self-contained context
+    ctx_lines = (REPO_ROOT / "tools" / "context.py").read_text(encoding="utf-8").splitlines()
+    ctx_sections = [
+        "### Secret Redaction & Frozen Snapshot:",
+        "\n".join(ctx_lines[70:155]),
+        "\n### Anchor Data Model & Boundary-Safe Recall Calculation:",
+        "\n".join(ctx_lines[175:220]),
+        "\n".join(ctx_lines[790:855]),
+        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
+        "\n".join(ctx_lines[310:510]),
+        "\n### ContextSource & Sensitive File Pattern Matcher:",
+        "\n".join(ctx_lines[540:600]),
+        "\n".join(ctx_lines[700:740]),
+        "\n### ContextPacket & Cryptographic Staleness Verification:",
+        "\n".join(ctx_lines[1080:1170]),
+        "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
+        "\n".join(ctx_lines[1345:1565]),
+        "\n".join(ctx_lines[1635:1715]),
+        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
+        "\n".join(ctx_lines[1970:2115]),
+        "\n### Atomic Persistence (Temp File + os.replace):",
+        "\n".join(ctx_lines[2118:2160]),
+    ]
+    context_core_code = "\n".join(ctx_sections)
+
     audit_prompt = f"""You are the Independent Code Auditor for AGY-Herdr Software Factory v8.0.0.
 Perform a strict audit of the v8 context efficiency engine implementation across `tools/context.py` and the orchestrator modifications in `tools/factory.py`.
-The complete git diff is saved at `certification/v8/audit_diff.patch` and the complete new context engine module is located at `tools/context.py`.
+All relevant implementation code and git diffs are provided directly in this prompt below. Do not invoke external tools or browse the filesystem; evaluate the provided code directly.
 
 Audit specifically for:
 1. subtle prompt-leak regressions (e.g. leaking secrets, environment tokens, or unnecessary internal variables into worker prompts)
@@ -63,8 +88,8 @@ Audit specifically for:
 === ORCHESTRATOR DIFF (tools/factory.py v7 -> v8) ===
 {factory_diff}
 
-=== CONTEXT ENGINE (tools/context.py) ===
-Read and inspect `tools/context.py` directly in the repository for the implementation of ContextCompiler, HandoffPacket, ContextPacket, redact_secrets, Anchor recall calculation, and DerivedRequirementAuditor.
+=== CONTEXT ENGINE CORE (tools/context.py) ===
+{context_core_code}
 
 Output ONLY a JSON object adhering to this schema:
 {{
@@ -89,7 +114,7 @@ Output ONLY a JSON object adhering to this schema:
     ]
 
     print("Submitting audit request to claude-sonnet-4-6...")
-    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=360)
     if proc.returncode != 0:
         print(f"Error executing agy: {proc.stderr}")
         return 1
