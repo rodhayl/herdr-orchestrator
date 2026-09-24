@@ -212,6 +212,26 @@ class TestV8ContextCompiler(unittest.TestCase):
             self.assertEqual(loaded.packet_bytes, packet.packet_bytes)
             self.assertEqual(len(loaded.required_anchors), len(packet.required_anchors))
 
+    def test_canonical_packet_bytes_and_honest_token_source(self):
+        """Verifies packet_bytes includes full prompt (prefix + tail) and token_count_source is explicit."""
+        packet = self.compiler.compile_task_packet(
+            goal_id="goal-test-v8",
+            run_id="run-test-v8",
+            task_id="task_core_impl",
+            attempt_id=1,
+            task_def=self.sample_task_def,
+            plan=self.sample_plan,
+            goal_spec=self.sample_goal_spec,
+            worktree_path="/tmp/test_worktree",
+            allowed_paths=["treehash/**"],
+            dependencies=[],
+            handoffs=[],
+        )
+        full_prompt = packet.render_full_prompt()
+        self.assertEqual(packet.packet_bytes, len(full_prompt.encode("utf-8")))
+        self.assertIsNone(packet.token_count)
+        self.assertEqual(packet.token_count_source, "UNAVAILABLE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ import unittest
 from tools.context import (
     Anchor,
     ContextError,
+    ContextAnchorMissingError,
     MalformedContextPacketError,
     load_context_packet,
     load_handoff_packet,
@@ -364,6 +365,131 @@ class TestV8MalformedAndEdgeCases(unittest.TestCase):
         # Should not raise ContextError on valid symbolic ref syntax
         c = source.get_git_commit("HEAD~1")
         self.assertTrue(re.match(r"^[a-f0-9]{40}$", c))
+
+    def test_handoff_packet_tamper_detection(self):
+        """Verifies that tampering with a serialized handoff file raises MalformedContextPacketError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ho_path = pathlib.Path(tmpdir) / "ho-tamper.json"
+            hp = HandoffPacket(
+                handoff_id="ho-tamper-1",
+                producer_task_id="task_tamper",
+                producer_attempt=1,
+                changed_paths=["src/clean.py"],
+                satisfied_criteria=["R1"],
+                consumer_notes="Original note",
+            )
+            data = hp.to_dict()
+            # Tamper with the data without recomputing hash
+            data["consumer_notes"] = "Tampered malicious note"
+            ho_path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaises(MalformedContextPacketError) as ctx:
+                load_handoff_packet(ho_path)
+            self.assertIn("integrity verification failed", str(ctx.exception))
+
+            with self.assertRaises(MalformedContextPacketError) as ctx:
+                HandoffPacket.from_dict(data)
+            self.assertIn("integrity verification failed", str(ctx.exception))
+
+    def test_plan_review_validation_anchors_survive_compaction(self):
+        """Verifies that deterministic validation commands are registered as anchors and survive compaction."""
+        goal_spec = {
+            "goal_id": "goal-review-val-test",
+            "title": "Review Val Test",
+            "acceptance_criteria": [
+                {"id": "R1", "provenance": "USER_EXPLICIT", "description": "Support validation recall"},
+            ],
+        }
+        plan = {
+            "tasks": [
+                {
+                    "task_id": "task_1",
+                    "satisfies": ["R1"],
+                    "dependencies": [],
+                    "allowed_paths": ["src/val.py"],
+                    "validations": [["python3", "-m", "unittest", "discover"]],
+                }
+            ]
+        }
+        policy_summary = {"max_tasks": 10}
+        packet = self.compiler.compile_plan_review_packet(
+            goal_spec=goal_spec,
+            plan=plan,
+            project_policy_summary=policy_summary,
+            revision_index=1,
+        )
+        val_anchors = [a for a in packet.required_anchors if a.anchor_type == "validation"]
+        self.assertEqual(len(val_anchors), 1)
+        self.assertIn("python3 -m unittest discover", val_anchors[0].content)
+
+        # Confirm anchor recall is 100%
+        recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, packet.rendered_tail)
+        self.assertEqual(recall, 1.0)
+        self.assertEqual(missing, [])
+
+    def test_task_executor_handles_compilation_error_gracefully(self):
+        """Verifies TaskExecutor catches ContextAnchorMissingError and returns FAILED attempt with CONTEXT_COMPILATION_FAILED."""
+        from tools.factory import TaskExecutor
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = pathlib.Path(tmpdir)
+            executor = MagicMock(spec=TaskExecutor)
+            executor.run_id = "run-test-compile-fail"
+            executor.task_id = "task_fail"
+            executor.task_root_dir = run_dir / "workers" / "task_fail"
+            executor.goal_spec = {"goal_id": "g1"}
+            executor.plan = {"tasks": []}
+            executor.task = {"task_id": "task_fail"}
+            executor.current_context_packet = None
+            executor.prepare_attempt_worktree = MagicMock(return_value=(run_dir, "branch"))
+            executor.adapter = MagicMock()
+            executor.adapter.prepare_environment = MagicMock(return_value={})
+            executor.build_prompt = MagicMock(side_effect=ContextAnchorMissingError("CONTEXT_ANCHOR_MISSING: [test_anchor]"))
+
+            res = TaskExecutor.execute_attempt(executor, 1, "HEAD")
+            self.assertEqual(res["status"], "FAILED")
+            self.assertEqual(res["state"], "FAILED")
+            self.assertEqual(res["error_category"], "CONTEXT_COMPILATION_FAILED")
+            self.assertIn("CONTEXT_ANCHOR_MISSING", res["error"])
+
+    def test_task_executor_recompiles_stale_packet_on_goal_spec_change(self):
+        """Verifies TaskExecutor recompiles fresh packet when cached packet is stale from modified goal_spec."""
+        from tools.factory import TaskExecutor
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = pathlib.Path(tmpdir)
+            executor = MagicMock(spec=TaskExecutor)
+            executor.run_id = "run-test-stale-recompile"
+            executor.task_id = "task_recompile"
+            executor.task_root_dir = run_dir / "workers" / "task_recompile"
+            executor.run_dir = run_dir
+            executor.goal_spec = {"goal_id": "g1", "title": "Updated Goal Spec Title"}
+            executor.plan = {"tasks": []}
+            executor.task = {"task_id": "task_recompile"}
+            # Cached packet compiled with previous/outdated goal-spec hash
+            mock_packet = MagicMock()
+            mock_packet.packet_id = "test-pkt-stale"
+            mock_packet.to_dict = MagicMock(return_value={"packet_id": "test-pkt-stale", "schema_version": "8.0.0"})
+            mock_packet.verify_staleness = MagicMock(return_value=(True, ["goal-spec changed"]))
+            executor.current_context_packet = mock_packet
+            executor.prepare_attempt_worktree = MagicMock(return_value=(run_dir, "branch"))
+            executor.adapter = MagicMock()
+            executor.adapter.prepare_environment = MagicMock(return_value={})
+            executor.build_prompt = MagicMock(return_value="# Recompiled Fresh Prompt")
+            executor.adapter.execute = MagicMock(return_value={"status": "SUCCESS", "execution_mode": "MOCK"})
+            executor.worker_config = {}
+            executor.harness = "agy"
+            executor.model = "gemini-3.8-flash"
+            executor.effort = "high"
+            executor.profile_id = "agy-spec-high"
+            executor.review_only = False
+            executor.timeout = 30
+
+            res = TaskExecutor.execute_attempt(executor, 1, "HEAD")
+            # build_prompt must have been called to recompile stale packet
+            executor.build_prompt.assert_called_once()
 
 
 if __name__ == "__main__":

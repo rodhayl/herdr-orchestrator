@@ -103,7 +103,7 @@ SECRET_PATTERNS = [
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
 ]
 
-ENV_SECRET_KEY_PATTERN = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE)", re.IGNORECASE)
+ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
 
 
 def redact_secrets(val: Any) -> Any:
@@ -112,7 +112,7 @@ def redact_secrets(val: Any) -> Any:
         res = val
         for env_k, env_v in os.environ.items():
             if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
-                if env_v and len(env_v.strip()) >= 6:
+                if env_v and env_v.strip():
                     res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
@@ -169,12 +169,10 @@ class Anchor:
         if not self.content or not self.content.strip():
             raise MalformedContextPacketError(f"Anchor '{self.anchor_id}' content cannot be empty")
         # source_hash represents caller-authoritative cryptographic provenance of the anchor origin.
-        # It must be a valid 64-character SHA-256 hex string, or auto-derived from content if empty.
-        if not self.source_hash:
-            self.source_hash = sha256_text(self.content)
-        elif not (isinstance(self.source_hash, str) and len(self.source_hash) == 64 and all(c in "0123456789abcdefABCDEF" for c in self.source_hash)):
+        # It must be a valid 64-character SHA-256 hex string provided by caller (no silent auto-derivation).
+        if not self.source_hash or not isinstance(self.source_hash, str) or len(self.source_hash) != 64 or not all(c in "0123456789abcdefABCDEF" for c in self.source_hash):
             raise MalformedContextPacketError(
-                f"Anchor source_hash must be a valid 64-character hex SHA-256 string (got {self.source_hash})"
+                f"Anchor source_hash must be a valid 64-character hex SHA-256 string (got {repr(self.source_hash)})"
             )
 
     def to_dict(self) -> dict:
@@ -251,9 +249,8 @@ def calculate_rendered_anchor_recall(
         if not content:
             missing.append(req.anchor_id)
             continue
-        # Strict boundary matching: content must not be preceded or followed by alphanumeric or path characters
-        # Prevents false collisions for words ('pass' in 'compass') and paths ('/src' in '/src/core')
-        pattern = r"(?<![a-zA-Z0-9_/-])" + re.escape(content) + r"(?![a-zA-Z0-9_/-])"
+        # Strict boundary matching: content must not be preceded or followed by word characters or path prefixes
+        pattern = r"(?<![a-zA-Z0-9_])" + re.escape(content) + r"(?![a-zA-Z0-9_]|/[a-zA-Z0-9_])"
         if re.search(pattern, rendered_text):
             included_count += 1
         else:
@@ -368,6 +365,13 @@ class HandoffPacket:
                 else:
                     break
 
+        # Cap structural lists to prevent unbounded growth from mass file changes
+        if len(self.changed_paths) > 200:
+            truncated_count = len(self.changed_paths) - 200
+            self.changed_paths = sorted(self.changed_paths)[:200] + [f"[+{truncated_count} paths truncated]"]
+        if len(self.satisfied_criteria) > 100:
+            self.satisfied_criteria = sorted(self.satisfied_criteria)[:100]
+
         # Compute hash once at creation time if not already set
         if not self.handoff_hash:
             raw_repr = canonical_json_dump(self.to_dict_raw())
@@ -384,6 +388,8 @@ class HandoffPacket:
                 break
             b = b_new
         self.handoff_bytes = b
+        if self.handoff_bytes > max_bytes * 2:
+            raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {max_bytes * 2}")
 
     def to_dict_raw(self) -> dict:
         return {
@@ -410,7 +416,7 @@ class HandoffPacket:
 
     @classmethod
     def from_dict(cls, d: dict) -> HandoffPacket:
-        return cls(
+        hp = cls(
             handoff_id=d["handoff_id"],
             producer_task_id=d["producer_task_id"],
             producer_attempt=d["producer_attempt"],
@@ -426,6 +432,13 @@ class HandoffPacket:
             handoff_hash=d.get("handoff_hash", ""),
             created_at=d.get("created_at", ""),
         )
+        if hp.handoff_hash:
+            computed = sha256_text(canonical_json_dump(hp.to_dict_raw()))
+            if computed != hp.handoff_hash:
+                raise MalformedContextPacketError(
+                    f"Handoff integrity verification failed for {hp.handoff_id}: stored hash {hp.handoff_hash[:8]} != computed hash {computed[:8]}"
+                )
+        return hp
 
     def render_markdown(self) -> str:
         """Renders concise markdown representation for worker context."""
@@ -445,7 +458,7 @@ class HandoffPacket:
         if self.known_risks:
             r_text = self.known_risks if isinstance(self.known_risks, str) else "\n".join(f"- {x}" for x in self.known_risks)
             lines.append(f"- **Known Risks**: {r_text}")
-        return "\n".join(lines)
+        return redact_secrets("\n".join(lines))
 
 
 # ==============================================================================
@@ -614,13 +627,17 @@ class FilesystemGitContextSource(ContextSource):
 
     def get_git_diff(self, base_commit: str, target_commit: Optional[str] = None, max_bytes: int = 8192) -> Tuple[str, bool]:
         target = target_commit or "HEAD"
-        if not self.VALID_REF_PATTERN.match(base_commit) or base_commit.startswith("-") or ".." in base_commit:
+        # Resolve both refs to canonical 40-character SHA commits
+        base_sha = self.get_git_commit(base_commit)
+        target_sha = self.get_git_commit(target)
+        if base_sha == "UNKNOWN" or not re.match(r"^[a-f0-9]{40}$", base_sha):
             raise ContextError(f"Invalid git base_commit ref: '{base_commit}'")
-        if not self.VALID_REF_PATTERN.match(target) or target.startswith("-") or ".." in target:
+        if target_sha == "UNKNOWN" or not re.match(r"^[a-f0-9]{40}$", target_sha):
             raise ContextError(f"Invalid git target_commit ref: '{target}'")
-        if base_commit == target:
+        if base_sha == target_sha:
             return "", False
-        cmd = ["git", "diff", base_commit, target, "--"]
+
+        cmd = ["git", "diff", base_sha, target_sha, "--"]
         try:
             proc = subprocess.run(
                 cmd,
@@ -630,12 +647,26 @@ class FilesystemGitContextSource(ContextSource):
                 timeout=10,
             )
             if proc.returncode == 0:
-                raw_diff = proc.stdout
-                encoded = raw_diff.encode("utf-8")
+                raw_diff = redact_secrets(proc.stdout)
+                # Screen diff hunks for sensitive file paths
+                filtered_lines = []
+                skipping_sensitive = False
+                for line in raw_diff.splitlines(keepends=True):
+                    if line.startswith("diff --git "):
+                        parts = line.split()
+                        file_b = parts[-1].lstrip("b/") if len(parts) >= 4 else ""
+                        skipping_sensitive = self._is_sensitive_path(file_b)
+                        if skipping_sensitive:
+                            filtered_lines.append(f"diff --git {file_b} [SENSITIVE FILE CONTENT REDACTED]\n")
+                            continue
+                    if not skipping_sensitive:
+                        filtered_lines.append(line)
+                clean_diff = "".join(filtered_lines)
+                encoded = clean_diff.encode("utf-8")
                 if len(encoded) > max_bytes:
                     truncated_text = encoded[:max_bytes - 64].decode("utf-8", errors="ignore")
                     return truncated_text + "\n\n... [DIFF TRUNCATED TO BUDGET] ...\n", True
-                return raw_diff, False
+                return clean_diff, False
         except Exception:
             pass
         return "", False
@@ -1204,7 +1235,7 @@ class ContextCompiler:
         if handoffs:
             ho_lines = ["\n### Predecessor Task Handoffs:"]
             for h in handoffs:
-                ho_lines.append(h.render_markdown())
+                ho_lines.append(redact_secrets(h.render_markdown()))
             sections.append("\n".join(ho_lines))
 
         # 6. Retry Information (if previous attempt failed)
@@ -1217,10 +1248,10 @@ class ContextCompiler:
             ]
             if retry_info.get("failing_command"):
                 cmd_str = " ".join(retry_info["failing_command"]) if isinstance(retry_info["failing_command"], list) else str(retry_info["failing_command"])
-                ret_lines.append(f"- **Failing Command**: `{cmd_str}`")
+                ret_lines.append(f"- **Failing Command**: `{redact_secrets(cmd_str)}`")
             err_text = retry_info.get("error_excerpt") or retry_info.get("error_summary") or retry_info.get("error")
             if err_text:
-                ret_lines.append(f"- **Error Output**:\n```\n{str(err_text).strip()}\n```")
+                ret_lines.append(f"- **Error Output**:\n```\n{redact_secrets(str(err_text).strip())}\n```")
             sections.append("\n".join(ret_lines))
 
         # 7. Deterministic Validation Commands
@@ -1232,9 +1263,10 @@ class ContextCompiler:
 
         # 8. Specific Task Instructions
         if task_prompt:
-            sections.append(f"\n### Task Instructions\n{task_prompt.strip()}")
+            clean_prompt = redact_secrets(task_prompt.strip())
+            sections.append(f"\n### Task Instructions\n{clean_prompt}")
 
-        return "\n\n".join(sections) + "\n"
+        return redact_secrets("\n\n".join(sections) + "\n")
 
     def compile_task_packet(
         self,
@@ -1382,10 +1414,8 @@ class ContextCompiler:
         if current_bytes > soft_budget:
             pruned = True
             # Step 1: Remove duplicate/excess file references using strict path matching
-            # Preserving all handoff_required_paths and allowed_paths
+            # Preserving all handoff_required_paths without truncating them
             def _is_path_allowed(fpath: str) -> bool:
-                if fpath in {"GOAL.md", "README.md"} or fpath in handoff_required_paths:
-                    return True
                 try:
                     p_file = pathlib.PurePosixPath(fpath)
                     for pat in allowed_paths:
@@ -1396,8 +1426,10 @@ class ContextCompiler:
                     pass
                 return False
 
-            if len(referenced_files) > 10:
-                referenced_files = [f for f in referenced_files if _is_path_allowed(f)][:15]
+            extra_files = [f for f in referenced_files if f not in handoff_required_paths and f not in {"GOAL.md", "README.md"}]
+            filtered_extra = [f for f in extra_files if _is_path_allowed(f)][:10]
+            core_files = sorted(set(list(handoff_required_paths) + [f for f in {"GOAL.md", "README.md"} if (self.source.project_root / f).exists()]))
+            referenced_files = sorted(set(core_files + filtered_extra))
 
             # Step 2: Bound handoff notes
             compact_handoffs = []
@@ -1418,6 +1450,9 @@ class ContextCompiler:
             )
             current_bytes = len(current_tail.encode("utf-8"))
 
+        current_tail = redact_secrets(current_tail)
+        current_bytes = len(current_tail.encode("utf-8"))
+
         # Hard budget check
         if current_bytes > hard_budget:
             raise ContextBudgetExceededError(
@@ -1433,6 +1468,9 @@ class ContextCompiler:
 
         packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(current_tail)[:8]}"
         packet_hash = sha256_text(current_tail)
+
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_packet_bytes = len((stable_prefix + "\n" + current_tail).encode("utf-8"))
 
         return TaskContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1460,11 +1498,13 @@ class ContextCompiler:
                 "final_bytes": current_bytes,
                 "was_pruned": pruned,
             },
-            packet_bytes=current_bytes,
+            packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
             compiler_version=COMPILER_VERSION,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=current_tail,
+            token_count=None,
+            token_count_source="UNAVAILABLE",
         )
 
     def compile_planner_packet(
@@ -1537,6 +1577,7 @@ class ContextCompiler:
                 sections.append(f"- `{f}`")
 
         tail = "\n".join(sections) + "\n"
+        tail = redact_secrets(tail)
         tail_bytes = len(tail.encode("utf-8"))
 
         if tail_bytes > hard_budget:
@@ -1548,6 +1589,9 @@ class ContextCompiler:
 
         packet_id = f"ctx-plan-{goal_id}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
+
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return PlannerContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1572,11 +1616,13 @@ class ContextCompiler:
                 "final_bytes": tail_bytes,
                 "was_pruned": False,
             },
-            packet_bytes=tail_bytes,
+            packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
             compiler_version=COMPILER_VERSION,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
+            token_count=None,
+            token_count_source="UNAVAILABLE",
         )
 
     def compile_plan_review_packet(
@@ -1598,7 +1644,7 @@ class ContextCompiler:
             "plan": sha256_text(canonical_json_dump(plan)),
         }
 
-        # Build anchors for all criteria
+        # Build anchors for all criteria and deterministic validations
         anchors = []
         for r in goal_spec.get("acceptance_criteria", []):
             anchors.append(
@@ -1611,6 +1657,22 @@ class ContextCompiler:
                     required=True,
                 )
             )
+
+        for t in plan.get("tasks", []):
+            tid = t.get("task_id", "")
+            for v in t.get("validations", []):
+                cmd_str = " ".join(v) if isinstance(v, list) else str(v)
+                if cmd_str.strip():
+                    anchors.append(
+                        Anchor(
+                            anchor_id=f"val:{tid}:{sha256_text(cmd_str)[:8]}",
+                            anchor_type="validation",
+                            source=f"task:{tid}",
+                            source_hash=sha256_text(cmd_str),
+                            content=cmd_str,
+                            required=True,
+                        )
+                    )
 
         # Compact representation: instead of 16KB uncompacted dump, render clean structured review context
         sections = [
@@ -1661,10 +1723,14 @@ class ContextCompiler:
                 tid = t.get("task_id", "")
                 sats = ", ".join(t.get("satisfies", []))
                 deps = ", ".join(t.get("dependencies", [])) or "None"
-                compact_sections.append(f"- Task `{tid}`: satisfies `{sats}`, depends on `{deps}`")
+                val_strs = [f"`{' '.join(v) if isinstance(v, list) else str(v)}`" for v in t.get("validations", [])]
+                val_part = f", validations: {', '.join(val_strs)}" if val_strs else ""
+                compact_sections.append(f"- Task `{tid}`: satisfies `{sats}`, depends on `{deps}`{val_part}")
 
             tail = "\n".join(compact_sections) + "\n"
-            tail_bytes = len(tail.encode("utf-8"))
+
+        tail = redact_secrets(tail)
+        tail_bytes = len(tail.encode("utf-8"))
 
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
@@ -1675,6 +1741,9 @@ class ContextCompiler:
 
         packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
+
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return PlanReviewContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1699,11 +1768,13 @@ class ContextCompiler:
                 "final_bytes": tail_bytes,
                 "was_pruned": pruned,
             },
-            packet_bytes=tail_bytes,
+            packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
             compiler_version=COMPILER_VERSION,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
+            token_count=None,
+            token_count_source="UNAVAILABLE",
         )
 
     def compile_audit_packet(
@@ -1783,6 +1854,9 @@ class ContextCompiler:
             tail_bytes = len(tail.encode("utf-8"))
             pruned_bytes = max(0, original_bytes - tail_bytes)
 
+        tail = redact_secrets(tail)
+        tail_bytes = len(tail.encode("utf-8"))
+
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Audit context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
@@ -1792,6 +1866,9 @@ class ContextCompiler:
 
         packet_id = f"ctx-aud-{goal_spec.get('goal_id')}-r{round_num}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
+
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return AuditContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1816,11 +1893,13 @@ class ContextCompiler:
                 "final_bytes": tail_bytes,
                 "was_pruned": pruned,
             },
-            packet_bytes=tail_bytes,
+            packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
             compiler_version=COMPILER_VERSION,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
+            token_count=None,
+            token_count_source="UNAVAILABLE",
         )
 
 
@@ -1965,15 +2044,23 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
 
 
 def load_handoff_packet(handoff_file: pathlib.Path) -> HandoffPacket:
-    """Loads a HandoffPacket from disk."""
+    """Loads a HandoffPacket from disk with cryptographic hash verification."""
     try:
         data = json.loads(handoff_file.read_text(encoding="utf-8"))
     except Exception as e:
         raise MalformedContextPacketError(f"Failed to parse HandoffPacket JSON from {handoff_file}: {e}")
     try:
-        return HandoffPacket.from_dict(data)
+        hp = HandoffPacket.from_dict(data)
     except Exception as e:
         raise MalformedContextPacketError(f"Invalid HandoffPacket structure in {handoff_file}: {e}")
+
+    # Cryptographic integrity check: verify stored hash against raw dict computation
+    computed_hash = sha256_text(canonical_json_dump(hp.to_dict_raw()))
+    if hp.handoff_hash and computed_hash != hp.handoff_hash:
+        raise MalformedContextPacketError(
+            f"Handoff integrity verification failed for {hp.handoff_id} in {handoff_file}: stored hash {hp.handoff_hash[:8]} != computed hash {computed_hash[:8]}"
+        )
+    return hp
 
 
 # ==============================================================================

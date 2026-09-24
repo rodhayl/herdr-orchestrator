@@ -32,8 +32,45 @@ import time
 import urllib.request
 
 # Context Compiler & Efficiency System (Factory v8.0.0)
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 try:
+    from tools.context import (
+        COMPILER_VERSION,
+        SCHEMA_VERSION,
+        STABLE_PREFIX_VERSION,
+        MAX_SEMANTIC_HANDOFF_BYTES,
+        Anchor,
+        HandoffPacket,
+        ContextPacket,
+        ContextPolicy,
+        ContextSource,
+        FilesystemGitContextSource,
+        StablePrefixManager,
+        sha256_text,
+        canonical_json_dump,
+        ContextCompiler,
+        DerivedRequirementAuditor,
+        calculate_context_redundancy,
+        calculate_anchor_recall,
+        calculate_rendered_anchor_recall,
+        save_context_packet,
+        load_context_packet,
+        save_handoff_packet,
+        load_handoff_packet,
+        record_context_telemetry,
+        cmd_context_inspect,
+        cmd_context_stats,
+        cmd_context_packet,
+        ContextError,
+        ContextAnchorMissingError,
+        ContextBudgetExceededError,
+        StaleContextPacketError,
+        OrphanDerivedRequirementError,
+        MalformedContextPacketError,
+    )
+    import tools.context as context
+    sys.modules.setdefault("context", context)
+except ImportError:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     import context
     from context import (
         COMPILER_VERSION,
@@ -69,9 +106,6 @@ try:
         OrphanDerivedRequirementError,
         MalformedContextPacketError,
     )
-except ImportError:
-    from tools import context
-    from tools.context import *
 
 # Base paths
 FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -279,7 +313,7 @@ SECRET_PATTERNS = [
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
 ]
 
-ENV_SECRET_KEY_PATTERN = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE)", re.IGNORECASE)
+ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
 
 
 def redact_secrets(val):
@@ -288,7 +322,7 @@ def redact_secrets(val):
         res = val
         for env_k, env_v in os.environ.items():
             if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
-                if env_v and len(env_v.strip()) >= 6:
+                if env_v and env_v.strip():
                     res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
@@ -3716,27 +3750,48 @@ class TaskExecutor:
         env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
         prompt_file = attempt_dir / "prompt.md"
-        prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
-        prompt_file.write_text(prompt_content, encoding="utf-8")
-
-        # Save immutable ContextPacket for this attempt
-        if self.current_context_packet:
-            save_context_packet(self.current_context_packet, attempt_dir / "context_packet.json")
-            packets_dir = self.run_dir / "context" / "packets"
-            packets_dir.mkdir(parents=True, exist_ok=True)
-            save_context_packet(self.current_context_packet, packets_dir / f"{self.current_context_packet.packet_id}.json")
-
-            # Verify source staleness before dispatch
+        try:
             curr_hashes = {
                 "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                 "plan": sha256_text(canonical_json_dump(self.plan)),
                 "task_def": sha256_text(canonical_json_dump(self.task)),
             }
-            is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
-            if is_stale:
-                raise StaleContextPacketError(
-                    f"STALE_CONTEXT_PACKET: Task {self.task_id} packet is stale before dispatch: {reasons}"
-                )
+            if not self.current_context_packet:
+                prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
+            else:
+                is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
+                if is_stale:
+                    prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
+                else:
+                    prompt_content = self.current_context_packet.render_full_prompt()
+
+            prompt_file.write_text(prompt_content, encoding="utf-8")
+
+            # Save immutable ContextPacket for this attempt
+            if self.current_context_packet:
+                save_context_packet(self.current_context_packet, attempt_dir / "context_packet.json")
+                packets_dir = self.run_dir / "context" / "packets"
+                packets_dir.mkdir(parents=True, exist_ok=True)
+                save_context_packet(self.current_context_packet, packets_dir / f"{self.current_context_packet.packet_id}.json")
+
+                # Verify source staleness before dispatch
+                is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
+                if is_stale:
+                    raise StaleContextPacketError(
+                        f"STALE_CONTEXT_PACKET: Task {self.task_id} packet is stale before dispatch: {reasons}"
+                    )
+        except (ContextAnchorMissingError, ContextError) as err:
+            return {
+                "attempt_id": attempt_id,
+                "task_id": self.task_id,
+                "status": "FAILED",
+                "state": "FAILED",
+                "error_category": "CONTEXT_COMPILATION_FAILED",
+                "error": str(err),
+                "exit_code": 1,
+                "start_time": start_time,
+                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
 
         custom_schema = self.task.get("result_schema")
         if custom_schema:
@@ -4156,6 +4211,7 @@ class FactoryOrchestrator:
 
         self.res_mgr = ResourceManager(self.herdr)
         self.merge_lock = threading.Lock()
+        self._manifest_lock = threading.RLock()
         self.board_projector = HerdrBoardProjector(PROJECT_ROOT)
 
         # Build task lookup and dependency graph
@@ -4321,36 +4377,37 @@ class FactoryOrchestrator:
             f.write(json.dumps(event) + "\n")
 
     def save_manifest(self):
-        # Update display states and wave projection
-        for tid, tinfo in self.manifest["tasks"].items():
-            state = tinfo.get("canonical_state", "PENDING")
-            tinfo["display_state"] = CANONICAL_TO_DISPLAY_STATE.get(state, "RUNNING")
-            tinfo["state"] = state  # Backward compatibility
+        with self._manifest_lock:
+            # Update display states and wave projection
+            for tid, tinfo in self.manifest["tasks"].items():
+                state = tinfo.get("canonical_state", "PENDING")
+                tinfo["display_state"] = CANONICAL_TO_DISPLAY_STATE.get(state, "RUNNING")
+                tinfo["state"] = state  # Backward compatibility
 
-        # Generate wave projection for backward compatibility
-        wave_map = {}
-        for tid, tdef in self.tasks_def.items():
-            w_idx = tdef.get("wave_index", 0)
-            if w_idx not in wave_map:
-                wave_map[w_idx] = {
-                    "wave_index": w_idx,
-                    "name": f"Wave {w_idx}",
-                    "tasks": []
-                }
-            t_record = self.manifest["tasks"].get(tid, {})
-            # Merge latest_result into task record for legacy consumers
-            merged_task = dict(t_record)
-            if t_record.get("latest_result"):
-                merged_task.update(t_record["latest_result"])
-            wave_map[w_idx]["tasks"].append(merged_task)
+            # Generate wave projection for backward compatibility
+            wave_map = {}
+            for tid, tdef in self.tasks_def.items():
+                w_idx = tdef.get("wave_index", 0)
+                if w_idx not in wave_map:
+                    wave_map[w_idx] = {
+                        "wave_index": w_idx,
+                        "name": f"Wave {w_idx}",
+                        "tasks": []
+                    }
+                t_record = self.manifest["tasks"].get(tid, {})
+                # Merge latest_result into task record for legacy consumers
+                merged_task = dict(t_record)
+                if t_record.get("latest_result"):
+                    merged_task.update(t_record["latest_result"])
+                wave_map[w_idx]["tasks"].append(merged_task)
 
-        self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
-        clean_manifest = redact_secrets(self.manifest)
-        atomic_write_json(self.manifest_path, clean_manifest)
-        try:
-            self.board_projector.sync(self.run_id)
-        except Exception:
-            pass
+            self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
+            clean_manifest = redact_secrets(self.manifest)
+            atomic_write_json(self.manifest_path, clean_manifest)
+            try:
+                self.board_projector.sync(self.run_id)
+            except Exception:
+                pass
 
     def run_validation_commands(self, commands_list: list) -> dict:
         """Executes declared verification commands."""
@@ -4767,10 +4824,11 @@ class FactoryOrchestrator:
                                 self.log_event("TASK_INTEGRATED", {"task_id": tid, "commit": commit_hash, "base_commit": current_base_commit})
 
                                 # Generate and persist HandoffPacket (Factory v8.0.0)
-                                ho = self.create_task_handoff(tid, att_id, commit_hash, res)
-                                self.active_handoffs[tid] = ho
-                                self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
-                                self.save_manifest()
+                                with self._manifest_lock:
+                                    ho = self.create_task_handoff(tid, att_id, commit_hash, res)
+                                    self.active_handoffs[tid] = ho
+                                    self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
+                                    self.save_manifest()
                             else:
                                 tinfo["canonical_state"] = "CONFLICTED"
                                 tinfo["status"] = "FAILED"
@@ -5413,6 +5471,10 @@ Output ONLY the JSON object.
                     if "acceptance_criteria" in parsed and "user_explicit_criteria" in parsed:
                         parsed["goal_id"] = goal_id
                         parsed["created_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        audit_metrics = DerivedRequirementAuditor.audit_requirements(parsed)
+                        if audit_metrics.get("orphan_count", 0) > 0:
+                            raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements")
+                        parsed["derived_requirement_metrics"] = audit_metrics
                         return parsed
         except Exception:
             pass
@@ -5523,6 +5585,8 @@ Output ONLY the JSON object.
 
     # Strict derived requirement audit gate
     audit_metrics = DerivedRequirementAuditor.audit_requirements(goal_spec)
+    if audit_metrics.get("orphan_count", 0) > 0:
+        raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements")
     goal_spec["derived_requirement_metrics"] = audit_metrics
     return goal_spec
 

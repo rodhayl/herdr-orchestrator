@@ -203,6 +203,22 @@ class TestV8DerivedRequirements(unittest.TestCase):
         self.assertAlmostEqual(metrics["derived_requirement_ratio"], 2 / 14, places=3)
         self.assertEqual(metrics["orphan_count"], 0)
 
+    def test_compile_goal_spec_rejects_orphan_derived_requirement(self):
+        """Verifies compile_goal_spec audits derived requirements and rejects orphans."""
+        from tools.factory import compile_goal_spec, ProjectPolicy
+        policy = ProjectPolicy.load()
+        spec = compile_goal_spec("Implement hash utility\n1. Deterministic hashing\n2. CLI interface", REPO_ROOT, policy)
+        self.assertIn("derived_requirement_metrics", spec)
+        self.assertEqual(spec["derived_requirement_metrics"]["orphan_count"], 0)
+
+        # Confirm audit_requirements directly rejects an injected orphan
+        malicious_spec = dict(spec)
+        malicious_spec["acceptance_criteria"] = list(spec["acceptance_criteria"]) + [
+            {"id": "D_ORPHAN", "provenance": "DERIVED", "description": "Unanchored requirement", "derived_from": [], "rationale": "None"}
+        ]
+        with self.assertRaises(OrphanDerivedRequirementError):
+            DerivedRequirementAuditor.audit_requirements(malicious_spec)
+
 
 if __name__ == "__main__":
     unittest.main()

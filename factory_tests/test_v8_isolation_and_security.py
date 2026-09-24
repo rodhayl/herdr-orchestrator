@@ -163,6 +163,55 @@ class TestV8IsolationAndSecurity(unittest.TestCase):
         self.assertEqual(recall, 1.0)
         self.assertEqual(missing, [])
 
+    def test_task_prompt_herdr_token_redacted_in_rendered_tail(self):
+        """Verifies that a secret in task_prompt (e.g. HERDR_TOKEN) is redacted in rendered_tail."""
+        os.environ["HERDR_TOKEN"] = "mock_herdr_secret_token_12345"
+        try:
+            task_def = {
+                "task_id": "task_secret_test",
+                "title": "Secret Prompt Test",
+                "prompt": "Connect using HERDR_TOKEN mock_herdr_secret_token_12345 to socket.",
+                "requirements": ["R1"],
+                "allowed_paths": ["src/app.py"],
+            }
+            goal_spec = {
+                "goal_id": "goal-secret-test",
+                "acceptance_criteria": [
+                    {"id": "R1", "provenance": "USER_EXPLICIT", "description": "Support authentication"},
+                ],
+            }
+            packet = self.compiler.compile_task_packet(
+                goal_id="goal-secret-test",
+                run_id="run-secret-test",
+                task_id="task_secret_test",
+                attempt_id=1,
+                task_def=task_def,
+                plan={"tasks": [task_def]},
+                goal_spec=goal_spec,
+                worktree_path=str(REPO_ROOT),
+                allowed_paths=["src/app.py"],
+                dependencies=[],
+                handoffs=[],
+            )
+            self.assertNotIn("mock_herdr_secret_token_12345", packet.rendered_tail)
+            self.assertIn("[REDACTED_HERDR_TOKEN]", packet.rendered_tail)
+            full_prompt = packet.render_full_prompt()
+            self.assertNotIn("mock_herdr_secret_token_12345", full_prompt)
+            self.assertIn("[REDACTED_HERDR_TOKEN]", full_prompt)
+        finally:
+            del os.environ["HERDR_TOKEN"]
+
+    def test_short_secret_environment_variable_redaction(self):
+        """Verifies that environment secret values with length <= 5 are redacted."""
+        os.environ["SHORT_VAULT_TOKEN"] = "abcde"
+        try:
+            text = "Using vault token abcde for access"
+            redacted = redact_secrets(text)
+            self.assertNotIn("abcde", redacted)
+            self.assertIn("[REDACTED_SHORT_VAULT_TOKEN]", redacted)
+        finally:
+            del os.environ["SHORT_VAULT_TOKEN"]
+
 
 if __name__ == "__main__":
     unittest.main()
