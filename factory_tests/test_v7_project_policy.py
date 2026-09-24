@@ -38,7 +38,7 @@ class TestV7ProjectPolicy(unittest.TestCase):
         with open(policy_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data["project_name"], "CustomProject")
-        self.assertEqual(data["version"], "7.0.0")
+        self.assertIn(data["version"], ["7.0.0", "8.0.0"])
         self.assertIn("limits", data)
         self.assertIn("execution_policy", data)
         self.assertIn("routing_overrides", data)

@@ -47,6 +47,8 @@ try:
         ContextSource,
         FilesystemGitContextSource,
         StablePrefixManager,
+        sha256_text,
+        canonical_json_dump,
         ContextCompiler,
         DerivedRequirementAuditor,
         calculate_context_redundancy,
