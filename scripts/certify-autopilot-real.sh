@@ -128,7 +128,7 @@ if [[ -z "$GOAL_ID" ]]; then
     exit 1
 fi
 
-REPORT_JSON=$(python3 "$FACTORY_DIR/tools/factory.py" --project-root "$TARGET_PROJECT" goal report "$GOAL_ID")
+REPORT_JSON=$(python3 "$FACTORY_DIR/tools/factory.py" --project-root "$TARGET_PROJECT" goal report --goal-id "$GOAL_ID")
 FINAL_PHASE=$(echo "$REPORT_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('phase'))")
 RUN_ID=$(echo "$REPORT_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('run_id'))")
 
@@ -159,22 +159,23 @@ HASH_TEXT=$(python3 -m treehash compute "$TEST_DIR" --format text)
 echo "      TreeHash Root: $HASH_TEXT"
 
 echo "  [+] Computing JSON manifest..."
-python3 -m treehash compute "$TEST_DIR" --format json > "$TEST_DIR/manifest.json"
+MANIFEST_FILE=$(mktemp /tmp/treehash-manifest-XXXXXX.json)
+python3 -m treehash compute "$TEST_DIR" --format json > "$MANIFEST_FILE"
 
 echo "  [+] Verifying manifest match..."
-python3 -m treehash verify "$TEST_DIR" "$TEST_DIR/manifest.json"
+python3 -m treehash verify "$TEST_DIR" "$MANIFEST_FILE"
 echo "      Verification match PASSED (exit code 0)"
 
 echo "  [+] Verifying tamper detection (mismatch)..."
 echo "tampered" >> "$TEST_DIR/a.txt"
-if python3 -m treehash verify "$TEST_DIR" "$TEST_DIR/manifest.json" >/dev/null 2>&1; then
+if python3 -m treehash verify "$TEST_DIR" "$MANIFEST_FILE" >/dev/null 2>&1; then
     echo "  [FAIL] Tampered tree unexpectedly passed verification!" >&2
-    rm -rf "$TEST_DIR"
+    rm -rf "$TEST_DIR" "$MANIFEST_FILE"
     exit 1
 else
     echo "      Tamper detection PASSED (exit code 1 on mismatch)"
 fi
-rm -rf "$TEST_DIR"
+rm -rf "$TEST_DIR" "$MANIFEST_FILE"
 
 echo -e "\n[7. Exporting Autopilot Certification Bundle]"
 mkdir -p "$FACTORY_DIR/certification/v7"
