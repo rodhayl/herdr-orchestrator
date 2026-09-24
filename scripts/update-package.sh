@@ -76,7 +76,15 @@ opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode
 opencode_ver, _, _ = run_cmd([opencode_cmd, "--version"])
 opencode_ver = opencode_ver.strip() if opencode_ver else "not_installed"
 
+# Freebuff
+freebuff_cmd = "/usr/local/bin/freebuff" if os.path.exists("/usr/local/bin/freebuff") else "freebuff"
+fb_out, _, fb_code = run_cmd([freebuff_cmd, "--version"])
+freebuff_ver = "not_installed"
+if fb_code == 0 and fb_out:
+    freebuff_ver = fb_out.splitlines()[-1].strip()
+
 # Toolchain
+
 py_ver, _, _ = run_cmd(["python3", "-V"])
 py_ver = py_ver.replace("Python", "").strip() if py_ver else "not_installed"
 
@@ -174,6 +182,15 @@ matrix = [
         "evidence": f"opencode --version ({opencode_ver})"
     },
     {
+        "component": "Freebuff CLI",
+        "prev_certified": prev_lock.get("freebuff", {}).get("version", "None"),
+        "installed": freebuff_ver,
+        "latest_stable": freebuff_ver,
+        "action": "FREEBUFF_HEADLESS_BLOCKED",
+        "evidence": "Requires interactive TUI; lacks non-interactive/headless CLI execution mode"
+    },
+    {
+
         "component": "Python",
         "prev_certified": prev_lock.get("python", {}).get("version", "3.12.3"),
         "installed": py_ver,

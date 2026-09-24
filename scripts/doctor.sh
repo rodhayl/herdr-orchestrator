@@ -195,6 +195,10 @@ for h in ["agy", "droid", "codex", "claude", "opencode"]:
         print(f"  [WARN] {h.upper()} Provider Authentication: AUTH_BLOCKED ({probe['evidence']})")
         auth_warnings.append(f"{h.upper()} AUTH_BLOCKED")
 
+fb_probe = probe_harness_auth("freebuff")
+print(f"  [INFO] FREEBUFF Feasibility Gate: {fb_probe['auth_source']} ({fb_probe['evidence']})")
+
+
 # 5. Final Verdict
 print("\n" + "=" * 80)
 if structural_ok:
