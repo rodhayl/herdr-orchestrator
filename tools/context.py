@@ -22,6 +22,7 @@ import os
 import pathlib
 import re
 import subprocess
+import threading
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -74,6 +75,46 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+KNOWN_SECRET_ENV_VARS = [
+    "OPENAI_API_KEY",
+    "FACTORY_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_TOKEN",
+    "OPENROUTER_API_KEY",
+    "OPENCODE_API_KEY",
+    "HERDR_TOKEN",
+]
+
+SECRET_PATTERNS = [
+    re.compile(r"sk-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"fk-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"ghp_[a-zA-Z0-9]{20,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
+]
+
+
+def redact_secrets(val: Any) -> Any:
+    """Recursively redacts secret API keys, tokens, and known secret env vars."""
+    if isinstance(val, str):
+        res = val
+        for var in KNOWN_SECRET_ENV_VARS:
+            v = os.environ.get(var)
+            if v and len(v.strip()) >= 6:
+                res = res.replace(v.strip(), f"[REDACTED_{var}]")
+        for pat in SECRET_PATTERNS:
+            res = pat.sub("[REDACTED_SECRET]", res)
+        return res
+    elif isinstance(val, list):
+        return [redact_secrets(item) for item in val]
+    elif isinstance(val, tuple):
+        return tuple(redact_secrets(item) for item in val)
+    elif isinstance(val, dict):
+        return {k: redact_secrets(v) for k, v in val.items()}
+    return val
+
+
 def canonical_json_dump(obj: Any) -> str:
     """Produces canonical deterministic JSON string with sorted keys."""
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=True)
@@ -114,6 +155,8 @@ class Anchor:
             raise MalformedContextPacketError("Anchor anchor_id cannot be empty")
         if not self.source:
             raise MalformedContextPacketError("Anchor source cannot be empty")
+        if not self.content or not self.content.strip():
+            raise MalformedContextPacketError(f"Anchor '{self.anchor_id}' content cannot be empty")
         # source_hash represents caller-authoritative cryptographic provenance of the anchor origin.
         # It must be a valid 64-character SHA-256 hex string, or auto-derived from content if empty.
         if not self.source_hash:
@@ -194,14 +237,12 @@ def calculate_rendered_anchor_recall(
     included_count = 0
     for req in total_req:
         content = req.content.strip()
-        if content:
-            # Word-boundary matching to prevent false substring collisions (e.g. 'pass' in 'compass')
-            pattern = r"(?<!\w)" + re.escape(content) + r"(?!\w)"
-            if re.search(pattern, rendered_text) or (not content.isalnum() and content in rendered_text):
-                included_count += 1
-            else:
-                missing.append(req.anchor_id)
-        elif req.anchor_id in rendered_text:
+        if not content:
+            missing.append(req.anchor_id)
+            continue
+        # Word-boundary matching to prevent false substring collisions (e.g. 'pass' in 'compass')
+        pattern = r"(?<!\w)" + re.escape(content) + r"(?!\w)"
+        if re.search(pattern, rendered_text) or (not content.isalnum() and content in rendered_text):
             included_count += 1
         else:
             missing.append(req.anchor_id)
@@ -283,9 +324,26 @@ class HandoffPacket:
                 cur_b += item_len
             self.known_risks = bounded_risks
 
-        # Recalculate bytes and hash on full canonical structure
-        raw_repr = canonical_json_dump(self.to_dict_raw())
-        self.handoff_hash = sha256_text(raw_repr)
+        # Enforce total aggregate bound on free-text fields
+        free_text_fields = [
+            self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+            self.contracts if isinstance(self.contracts, str) else "",
+            self.decisions if isinstance(self.decisions, str) else " ".join(self.decisions),
+            self.known_risks if isinstance(self.known_risks, str) else " ".join(self.known_risks),
+        ]
+        total_ft_bytes = sum(len(f.encode("utf-8")) for f in free_text_fields)
+        if total_ft_bytes > max_bytes:
+            excess = total_ft_bytes - max_bytes
+            cur_cn_b = len(self.consumer_notes.encode("utf-8"))
+            if cur_cn_b > excess + 32:
+                keep_b = cur_cn_b - excess - 32
+                self.consumer_notes = self.consumer_notes.encode("utf-8")[:keep_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+
+        # Compute hash once at creation time if not already set
+        if not self.handoff_hash:
+            raw_repr = canonical_json_dump(self.to_dict_raw())
+            self.handoff_hash = sha256_text(raw_repr)
+
         full_d = self.to_dict_raw()
         full_d["handoff_hash"] = self.handoff_hash
         full_d["handoff_bytes"] = 0
@@ -392,15 +450,19 @@ class FilesystemGitContextSource(ContextSource):
     """Default deterministic context source reading directly from the project Git repository."""
 
     SENSITIVE_PATTERNS = [
-        re.compile(r"(^|/)\.env(\..*)?$"),
-        re.compile(r"(^|/)\.envrc$"),
+        re.compile(r"(^|/)\.env(\..*)?$", re.IGNORECASE),
+        re.compile(r"(^|/)\.envrc$", re.IGNORECASE),
         re.compile(r".*\.(pem|key|secret)$", re.IGNORECASE),
-        re.compile(r"(^|/)\.aws(/|$)"),
-        re.compile(r"(^|/)\.ssh(/|$)"),
+        re.compile(r"(^|/)\.aws(/|$)", re.IGNORECASE),
+        re.compile(r"(^|/)\.ssh(/|$)", re.IGNORECASE),
         re.compile(r".*id_rsa.*", re.IGNORECASE),
+        re.compile(r".*secrets?.*\.(ya?ml|json)$", re.IGNORECASE),
+        re.compile(r".*credentials?.*\.(ya?ml|json)$", re.IGNORECASE),
+        re.compile(r".*serviceAccount.*\.json$", re.IGNORECASE),
+        re.compile(r"(^|/)\.netrc$", re.IGNORECASE),
     ]
 
-    VALID_REF_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_./~^@-]*$")
+    VALID_REF_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
 
     def __init__(self, project_root: pathlib.Path):
         self.project_root = project_root.resolve()
@@ -452,6 +514,10 @@ class FilesystemGitContextSource(ContextSource):
         truncated = len(data) > max_bytes
         excerpt_data = data[:max_bytes]
         text = excerpt_data.decode("utf-8", errors="replace")
+
+        # Post-read content scan for sensitive token patterns
+        text = redact_secrets(text)
+
         return text, truncated, full_hash
 
     def get_bounded_file_inventory(self, max_files: int = 150, max_depth: int = 4) -> List[str]:
@@ -461,8 +527,11 @@ class FilesystemGitContextSource(ContextSource):
 
         try:
             for root, dirs, files in os.walk(self.project_root):
-                # Filter ignore dirs in-place
-                dirs[:] = [d for d in sorted(dirs) if d not in ignore_dirs and not d.startswith(".")]
+                # Filter ignore dirs and symlinked directories in-place
+                dirs[:] = [
+                    d for d in sorted(dirs)
+                    if d not in ignore_dirs and not d.startswith(".") and not (pathlib.Path(root) / d).is_symlink()
+                ]
 
                 rel_root = pathlib.Path(root).relative_to(self.project_root)
                 depth = len(rel_root.parts)
@@ -471,6 +540,9 @@ class FilesystemGitContextSource(ContextSource):
                     continue
 
                 for f in sorted(files):
+                    full_f = pathlib.Path(root) / f
+                    if full_f.is_symlink():
+                        continue
                     if f.startswith(".") and f not in {".gitignore", ".treehashignore"}:
                         continue
                     if f.endswith((".pyc", ".pyo", ".so", ".bin", ".tar", ".gz", ".zip")):
@@ -488,6 +560,8 @@ class FilesystemGitContextSource(ContextSource):
         return sorted(found)
 
     def get_git_commit(self, ref: str = "HEAD") -> str:
+        if not self.VALID_REF_PATTERN.match(ref):
+            return "UNKNOWN"
         try:
             proc = subprocess.run(
                 ["git", "rev-parse", ref],
@@ -497,7 +571,9 @@ class FilesystemGitContextSource(ContextSource):
                 timeout=5,
             )
             if proc.returncode == 0:
-                return proc.stdout.strip()
+                val = proc.stdout.strip()
+                if re.match(r"^[a-f0-9]{40}$", val):
+                    return val
         except Exception:
             pass
         return "UNKNOWN"
@@ -508,7 +584,9 @@ class FilesystemGitContextSource(ContextSource):
             raise ContextError(f"Invalid git base_commit ref: '{base_commit}'")
         if not self.VALID_REF_PATTERN.match(target) or target.startswith("-"):
             raise ContextError(f"Invalid git target_commit ref: '{target}'")
-        cmd = ["git", "diff", f"{base_commit}..{target}", "--"] if base_commit != target else ["git", "diff", "HEAD~1", "--"]
+        if base_commit == target:
+            return "", False
+        cmd = ["git", "diff", base_commit, target, "--"]
         try:
             proc = subprocess.run(
                 cmd,
@@ -632,9 +710,21 @@ class ContextPolicy:
         if not isinstance(overrides, dict):
             return
 
+        # Explicitly block tampering with global policy fields
+        disallowed_globals = {"default_session_mode", "same_attempt_resume", "same_task_retry_mode", "schema_version"}
+        for k in overrides:
+            if k in disallowed_globals:
+                raise ContextError(f"Project overrides cannot alter global field '{k}'")
+
         role_overrides = overrides.get("roles", {})
         for role, odata in role_overrides.items():
-            if role in self.roles and isinstance(odata, dict):
+            if not isinstance(odata, dict):
+                continue
+            # Block any role fields other than budget narrowing
+            for rk in odata:
+                if rk not in ("soft_budget_bytes", "hard_budget_bytes"):
+                    raise ContextError(f"Project override for role '{role}' cannot modify field '{rk}'")
+            if role in self.roles:
                 cur = self.roles[role]
                 new_soft = cur["soft_budget_bytes"]
                 new_hard = cur["hard_budget_bytes"]
@@ -649,7 +739,6 @@ class ContextPolicy:
                     )
                 cur["soft_budget_bytes"] = new_soft
                 cur["hard_budget_bytes"] = new_hard
-                # Cannot change allow_zero_required_anchors to True
 
         self.validate()
 
@@ -1481,8 +1570,24 @@ class ContextCompiler:
         pruned = False
         if tail_bytes > soft_budget:
             pruned = True
-            # Compact json
-            tail = f"## Plan Review Assignment (Revision #{revision_index})\n\n### Goal Spec Summary\n{json.dumps({'goal_id': goal_spec.get('goal_id'), 'title': goal_spec.get('title'), 'criteria': goal_spec.get('acceptance_criteria')}, indent=2)}\n\n### Plan Tasks\n{json.dumps(plan.get('tasks'), indent=2)}\n"
+            compact_sections = [
+                f"## Plan Review Assignment (Revision #{revision_index})",
+                f"### Goal: {goal_spec.get('title', 'Autopilot Goal')}",
+                f"**Goal ID**: `{goal_spec.get('goal_id')}`",
+                "\n### Acceptance Criteria to Verify:",
+            ]
+            for r in goal_spec.get("acceptance_criteria", []):
+                prov = r.get("provenance", "USER_EXPLICIT")
+                compact_sections.append(f"- **{r['id']}** ({prov}): {r.get('description', '')}")
+
+            compact_sections.append("\n### Proposed Orchestration Plan Tasks:")
+            for t in plan.get("tasks", []):
+                tid = t.get("task_id", "")
+                sats = ", ".join(t.get("satisfies", []))
+                deps = ", ".join(t.get("dependencies", [])) or "None"
+                compact_sections.append(f"- Task `{tid}`: satisfies `{sats}`, depends on `{deps}`")
+
+            tail = "\n".join(compact_sections) + "\n"
             tail_bytes = len(tail.encode("utf-8"))
 
         if tail_bytes > hard_budget:
@@ -1591,13 +1696,16 @@ class ContextCompiler:
         tail = "\n".join(sections) + "\n"
         tail_bytes = len(tail.encode("utf-8"))
 
+        original_bytes = tail_bytes
         pruned = False
+        pruned_bytes = 0
         if tail_bytes > soft_budget:
             pruned = True
             diff_text, _ = self.source.get_git_diff(base_commit, max_bytes=2048)
             sections[-2] = f"```diff\n{diff_text.strip()}\n```"
             tail = "\n".join(sections) + "\n"
             tail_bytes = len(tail.encode("utf-8"))
+            pruned_bytes = max(0, original_bytes - tail_bytes)
 
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Audit context exceeded hard budget: {tail_bytes} > {hard_budget}")
@@ -1627,8 +1735,8 @@ class ContextCompiler:
             budget={
                 "soft_budget_bytes": soft_budget,
                 "hard_budget_bytes": hard_budget,
-                "original_bytes": tail_bytes,
-                "pruned_bytes": 0,
+                "original_bytes": original_bytes,
+                "pruned_bytes": pruned_bytes,
                 "final_bytes": tail_bytes,
                 "was_pruned": pruned,
             },
@@ -1739,7 +1847,7 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
         target_path = storage_dir / f"{packet.packet_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
 
     data_str = canonical_json_dump(packet.to_dict())
     temp_path.write_text(data_str, encoding="utf-8")
@@ -1772,7 +1880,7 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
         target_path = storage_dir / f"{handoff.handoff_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
 
     data_str = canonical_json_dump(handoff.to_dict())
     temp_path.write_text(data_str, encoding="utf-8")
@@ -1998,10 +2106,10 @@ def cmd_context_packet(packet_id: str, run_id: Optional[str] = None, project_roo
     packet = load_context_packet(target_file)
     p_dict = packet.to_dict()
 
-    # Redact sensitive values if any
-    for k in list(p_dict.get("source_hashes", {}).keys()):
-        if any(sec in k.lower() for sec in ["key", "secret", "token", "password"]):
-            p_dict["source_hashes"][k] = "[REDACTED]"
+    # Redact sensitive values from all dictionary fields and rendered_tail
+    p_dict = redact_secrets(p_dict)
+    if "rendered_tail" in p_dict and isinstance(p_dict["rendered_tail"], str):
+        p_dict["rendered_tail"] = redact_secrets(p_dict["rendered_tail"])
 
     print(canonical_json_dump(p_dict))
     return 0

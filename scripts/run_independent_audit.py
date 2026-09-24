@@ -96,7 +96,16 @@ Output ONLY a JSON object adhering to this schema:
         return 1
 
     try:
-        report = json.loads(m.group(0))
+        raw_obj = json.loads(m.group(0))
+        if "response" in raw_obj and isinstance(raw_obj["response"], str):
+            resp_str = raw_obj["response"]
+            m_inner = re.search(r"\{.*\}", resp_str, re.DOTALL)
+            if m_inner:
+                report = json.loads(m_inner.group(0))
+            else:
+                report = raw_obj
+        else:
+            report = raw_obj
     except Exception as e:
         print(f"JSON decode error: {e}\nRaw output: {out}")
         return 1

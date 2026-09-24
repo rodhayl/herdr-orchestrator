@@ -3566,17 +3566,20 @@ class TaskExecutor:
                     except Exception:
                         pass
         if not self.goal_spec:
+            raw_title = str(plan_task.get("name", self.task_id))[:256]
+            clean_title = re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id
             self.goal_spec = {
-                "goal_id": plan_task.get("goal_id", "goal-fallback"),
-                "title": plan_task.get("name", self.task_id),
+                "goal_id": "goal-fallback",
+                "title": clean_title,
                 "acceptance_criteria": [
                     {
-                        "id": cid,
-                        "title": cid,
-                        "description": f"Requirement {cid}",
+                        "id": str(cid)[:32],
+                        "title": str(cid)[:32],
+                        "description": f"Requirement {str(cid)[:32]}",
                         "provenance": "USER_EXPLICIT"
                     }
                     for cid in plan_task.get("satisfies", [])
+                    if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-.:]{1,32}$", cid)
                 ]
             }
 
@@ -3668,6 +3671,7 @@ class TaskExecutor:
 
         # Required Anchor Gate: verify 100% anchor recall in rendered prompt
         recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
+        self.last_anchor_recall = recall
         if recall < 1.0:
             raise ContextAnchorMissingError(
                 f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors: {missing}"
@@ -4036,7 +4040,7 @@ class TaskExecutor:
                 "handoff_bytes": sum(h.get("handoff_bytes", 0) for h in pkt.handoffs),
                 "requirement_count": len(pkt.requirements),
                 "required_anchor_count": len([a for a in pkt.required_anchors if a.required]),
-                "required_anchor_recall": 1.0,
+                "required_anchor_recall": getattr(self, "last_anchor_recall", 1.0),
                 "factory_supplied_bytes": sp_bytes + pkt.packet_bytes,
                 "repeated_bytes": 0,
                 "unique_bytes": sp_bytes + pkt.packet_bytes,
@@ -4222,19 +4226,35 @@ class FactoryOrchestrator:
         tdef = self.tasks_def.get(task_id, {})
         changed_paths = attempt_result.get("changed_paths", [])
         satisfied = tdef.get("satisfies", [])
-        summary = attempt_result.get("structured_output", {}).get("summary", f"Completed {task_id}")
-        notes = attempt_result.get("structured_output", {}).get("notes", "")
+        raw_summary = attempt_result.get("structured_output", {}).get("summary", f"Completed {task_id}")
+        raw_notes = attempt_result.get("structured_output", {}).get("notes", "")
+
+        # Sanitize worker-supplied fields to prevent prompt injection or markdown smuggling
+        def _sanitize_worker_text(val: str, max_chars: int = 512) -> str:
+            if not isinstance(val, str):
+                return ""
+            cleaned = re.sub(r"^#+\s*", "", val, flags=re.MULTILINE)
+            cleaned = cleaned.replace("```", "'''").replace("`", "'")
+            cleaned = re.sub(r"(?i)(ignore\s+all\s+prior\s+instructions|system\s+prompt|developer\s+mode)", "[FILTERED]", cleaned)
+            return cleaned.strip()[:max_chars]
+
+        safe_changed_paths = [
+            p for p in changed_paths
+            if isinstance(p, str) and not p.startswith("/") and ".." not in p and re.match(r"^[a-zA-Z0-9_\-./]+$", p)
+        ]
+        clean_summary = _sanitize_worker_text(raw_summary, 256) or f"Completed {task_id}"
+        clean_notes = _sanitize_worker_text(raw_notes, 512)
 
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
             producer_task_id=task_id,
             producer_attempt=attempt_id,
-            changed_paths=changed_paths,
+            changed_paths=safe_changed_paths,
             satisfied_criteria=satisfied,
             commit=commit_hash,
-            contracts=f"Interfaces exported by {task_id} in {', '.join(changed_paths) if changed_paths else 'target repository'}",
-            decisions=f"Implemented {summary}",
-            consumer_notes=notes or f"Changes integrated in commit {commit_hash[:8]}",
+            contracts=f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}",
+            decisions=f"Implemented {clean_summary}",
+            consumer_notes=clean_notes or f"Changes integrated in commit {commit_hash[:8]}",
             known_risks="",
             validation_result={"passed": True, "exit_code": attempt_result.get("exit_code", 0)}
         )
@@ -4817,12 +4837,32 @@ class FactoryOrchestrator:
         # Compute run-level Context Redundancy Summary (Factory v8.0.0)
         try:
             rendered_prompts = []
+            observed_recalls = []
             for tid, tinfo in self.manifest["tasks"].items():
                 for att in tinfo.get("attempts", []):
                     att_id = att.get("attempt_id", 1)
                     p_file = self.run_dir / "workers" / tid / f"att-{att_id}" / "prompt.md"
                     if p_file.exists():
                         rendered_prompts.append(p_file.read_text(encoding="utf-8"))
+                    cm = att.get("context_metrics", {})
+                    if "required_anchor_recall" in cm and cm["required_anchor_recall"] is not None:
+                        observed_recalls.append(float(cm["required_anchor_recall"]))
+
+            # Also check saved context packets on disk
+            pkt_dir = self.run_dir / "context" / "packets"
+            if pkt_dir.exists():
+                for pf in pkt_dir.glob("*.json"):
+                    try:
+                        p_data = json.loads(pf.read_text(encoding="utf-8"))
+                        reqs = [Anchor.from_dict(a) for a in p_data.get("required_anchors", [])]
+                        tail = p_data.get("rendered_tail", "")
+                        if reqs and tail:
+                            rec, _ = calculate_rendered_anchor_recall(reqs, tail)
+                            observed_recalls.append(rec)
+                    except Exception:
+                        pass
+
+            min_recall = min(observed_recalls) if observed_recalls else 1.0
 
             if rendered_prompts:
                 redundancy_stats = calculate_context_redundancy(rendered_prompts)
@@ -4833,7 +4873,7 @@ class FactoryOrchestrator:
                     "repeated_content_bytes": redundancy_stats["repeated_content_bytes"],
                     "redundancy_ratio": redundancy_stats["redundancy_ratio"],
                     "prompt_count": len(rendered_prompts),
-                    "required_anchor_recall": 1.0
+                    "required_anchor_recall": round(min_recall, 4)
                 }
         except Exception:
             pass
