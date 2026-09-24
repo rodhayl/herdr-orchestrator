@@ -22,6 +22,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import threading
 import uuid
@@ -102,6 +103,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
     re.compile(r"[a-zA-Z][a-zA-Z0-9+\-.]*://[^:@/\s]+:[^:@/\s]+@", re.IGNORECASE),
+    re.compile(r"-----BEGIN [A-Z ]+ KEY-----[\s\S]+?-----END [A-Z ]+ KEY-----"),
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
@@ -114,15 +116,39 @@ def snapshot_secret_env() -> dict[str, str]:
     """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
     for _k, _v in os.environ.items():
         if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
-            if _v and len(_v.strip()) >= 8:
-                _INITIAL_SECRET_ENV[_k] = _v.strip()
+            stripped = _v.strip()
+            if stripped and len(stripped) >= 8:
+                _INITIAL_SECRET_ENV[_k] = stripped
+                # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract inner sensitive keys
+                if stripped.startswith("{") and stripped.endswith("}"):
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict):
+                            for sub_k, sub_v in parsed.items():
+                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                        _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
+                    except Exception:
+                        pass
     return _INITIAL_SECRET_ENV
 
 
 def register_secret_env(key: str, val: str) -> None:
     """Registers a sensitive environment variable into the frozen snapshot for testing or runtime auth."""
-    if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val and len(val.strip()) >= 8:
-        _INITIAL_SECRET_ENV[key] = val.strip()
+    if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
+        stripped = val.strip()
+        if len(stripped) >= 8:
+            _INITIAL_SECRET_ENV[key] = stripped
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        for sub_k, sub_v in parsed.items():
+                            if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                    _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
+                except Exception:
+                    pass
 
 
 # Initial module-load snapshot
@@ -414,15 +440,15 @@ class HandoffPacket:
         if final_ft_bytes > ft_budget:
             per_field = ft_budget // 4
             if isinstance(self.consumer_notes, str):
-                self.consumer_notes = self.consumer_notes[:per_field]
+                self.consumer_notes = self.consumer_notes.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
             if isinstance(self.contracts, str):
-                self.contracts = self.contracts[:per_field]
+                self.contracts = self.contracts.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
             if isinstance(self.decisions, str):
-                self.decisions = self.decisions[:per_field]
+                self.decisions = self.decisions.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
             elif isinstance(self.decisions, list):
                 self.decisions = self.decisions[:5]
             if isinstance(self.known_risks, str):
-                self.known_risks = self.known_risks[:per_field]
+                self.known_risks = self.known_risks.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
             elif isinstance(self.known_risks, list):
                 self.known_risks = self.known_risks[:5]
 
@@ -771,10 +797,15 @@ class FilesystemGitContextSource(ContextSource):
                         parts = line.split()
                         file_a = parts[2].removeprefix("a/") if len(parts) >= 3 else ""
                         file_b = parts[-1].removeprefix("b/") if len(parts) >= 4 else ""
-                        skipping_sensitive = (file_a and self._is_sensitive_path(file_a)) or (file_b and self._is_sensitive_path(file_b))
+                        skipping_sensitive = bool((file_a and self._is_sensitive_path(file_a)) or (file_b and self._is_sensitive_path(file_b)))
                         if skipping_sensitive:
                             redacted_count += 1
                             continue
+                    elif line.startswith("--- ") or line.startswith("+++ "):
+                        fn = line[4:].strip().split("\t")[0]
+                        fn = fn.removeprefix("a/").removeprefix("b/")
+                        if fn and self._is_sensitive_path(fn):
+                            skipping_sensitive = True
                     if not skipping_sensitive:
                         filtered_lines.append(line)
                 if redacted_count > 0:
@@ -1131,6 +1162,7 @@ def calculate_context_redundancy(texts: List[str], chunk_size: int = 64) -> Dict
     ratio = (repeated_bytes / total_bytes) if total_bytes > 0 else 0.0
     return {
         "total_factory_supplied_bytes": total_bytes,
+        "run_total_context_bytes": total_bytes,
         "unique_content_bytes": unique_bytes,
         "repeated_content_bytes": repeated_bytes,
         "redundancy_ratio": round(ratio, 4),
@@ -1359,7 +1391,11 @@ class ContextCompiler:
                 f"- **Error Category**: {retry_info.get('error_category', 'VALIDATION_FAILED')}",
             ]
             if retry_info.get("failing_command"):
-                cmd_str = " ".join(retry_info["failing_command"]) if isinstance(retry_info["failing_command"], list) else str(retry_info["failing_command"])
+                cmd_val = retry_info["failing_command"]
+                if isinstance(cmd_val, list):
+                    cmd_str = shlex.join(str(x) for x in cmd_val)
+                else:
+                    cmd_str = str(cmd_val)
                 ret_lines.append(f"- **Failing Command**: `{redact_secrets(cmd_str)}`")
             err_text = retry_info.get("error_excerpt") or retry_info.get("error_summary") or retry_info.get("error")
             if err_text:
@@ -1375,7 +1411,8 @@ class ContextCompiler:
 
         # 8. Specific Task Instructions
         if task_prompt:
-            clean_prompt = redact_secrets(task_prompt.strip())
+            task_prompt_bounded = task_prompt.encode("utf-8")[:2048].decode("utf-8", errors="ignore")
+            clean_prompt = redact_secrets(task_prompt_bounded.strip())
             sections.append(f"\n### Task Instructions\n{clean_prompt}")
 
         return redact_secrets("\n\n".join(sections) + "\n")
@@ -1537,7 +1574,7 @@ class ContextCompiler:
         included_files: List[dict] = []
 
         # Prepare initial dynamic tail (bound prompt to 2048 bytes to prevent internal context bloat)
-        task_prompt = task_def.get("prompt", "")[:2048]
+        task_prompt = task_def.get("prompt", "").encode("utf-8")[:2048].decode("utf-8", errors="ignore")
         tail = self._render_task_dynamic_tail(
             task_id, attempt_id, worktree_path, allowed_paths,
             task_requirements, referenced_files, included_files,
@@ -1556,6 +1593,8 @@ class ContextCompiler:
             # Step 1: Remove duplicate/excess file references using strict path matching
             # Preserving all handoff_required_paths without truncating them
             def _is_path_allowed(fpath: str) -> bool:
+                if fpath in handoff_required_paths:
+                    return True
                 try:
                     p_file = pathlib.PurePosixPath(fpath)
                     for pat in allowed_paths:

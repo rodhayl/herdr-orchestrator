@@ -23,6 +23,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -322,6 +323,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
     re.compile(r"[a-zA-Z][a-zA-Z0-9+\-.]*://[^:@/\s]+:[^:@/\s]+@", re.IGNORECASE),
+    re.compile(r"-----BEGIN [A-Z ]+ KEY-----[\s\S]+?-----END [A-Z ]+ KEY-----"),
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
@@ -3608,19 +3610,19 @@ class TaskExecutor:
                     except Exception:
                         pass
         if not self.goal_spec:
-            raw_title = str(plan_task.get("name", self.task_id))[:256]
-            clean_title = re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id
+            raw_title = redact_secrets(str(plan_task.get("name", self.task_id))[:256])
+            clean_title = redact_secrets(re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id)
             self.goal_spec = {
                 "goal_id": "goal-fallback",
                 "title": clean_title,
                 "acceptance_criteria": [
                     {
-                        "id": str(cid)[:32],
-                        "title": str(cid)[:32],
-                        "description": f"Requirement {str(cid)[:32]}",
+                        "id": redact_secrets(str(cid)[:32]),
+                        "title": redact_secrets(str(cid)[:32]),
+                        "description": redact_secrets(f"Requirement {str(cid)[:32]}"),
                         "provenance": "DERIVED",
                         "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
-                        "rationale": f"Synthesized fallback requirement for task {self.task_id}",
+                        "rationale": redact_secrets(f"Synthesized fallback requirement for task {self.task_id}"),
                     }
                     for cid in plan_task.get("satisfies", [])
                     if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-.:]{1,32}$", cid)
@@ -3684,10 +3686,24 @@ class TaskExecutor:
                 project_policy_summary=self.factory_config.get("limits", {}),
                 revision_index=0
             )
-            stable_prefix, _, _ = StablePrefixManager.get_stable_prefix("reviewer")
+            stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer")
             prompt_content = stable_prefix + "\n" + packet.rendered_tail
-            recall, _ = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
+            recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
             self.last_anchor_recall = recall
+            if recall < 1.0:
+                raise ContextAnchorMissingError(
+                    f"CONTEXT_ANCHOR_MISSING: Prompt for reviewer (task '{self.task_id}') missing required anchors: {missing}"
+                )
+            current_source_hashes = {
+                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+                "plan": sha256_text(canonical_json_dump(self.plan)),
+                "stable_prefix": prefix_hash,
+            }
+            is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
+            if is_stale:
+                raise ContextError(
+                    f"CONTEXT_PACKET_STALE: ContextPacket for reviewer is stale before dispatch: {stale_reasons}"
+                )
             self.current_context_packet = packet
             return prompt_content
 
@@ -3764,6 +3780,10 @@ class TaskExecutor:
         env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
         prompt_file = attempt_dir / "prompt.md"
+        prompt_content = None
+        # Snapshot retry_info to attempt_dir for attempt-specific staleness checks
+        atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
+
         try:
             _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if getattr(self, "review_only", False) else "task")
             curr_hashes = {
@@ -3782,20 +3802,16 @@ class TaskExecutor:
                 else:
                     prompt_content = self.current_context_packet.render_full_prompt()
 
+            # Capture local reference to packet immediately after compilation/validation
+            active_packet = self.current_context_packet
             prompt_file.write_text(prompt_content, encoding="utf-8")
 
             # Save immutable ContextPacket for this attempt
-            if self.current_context_packet:
-                # Verify source staleness before saving/dispatch
-                is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
-                if is_stale:
-                    raise StaleContextPacketError(
-                        f"STALE_CONTEXT_PACKET: Task {self.task_id} packet is stale before dispatch: {reasons}"
-                    )
-                save_context_packet(self.current_context_packet, attempt_dir / "context_packet.json")
+            if active_packet:
+                save_context_packet(active_packet, attempt_dir / "context_packet.json")
                 packets_dir = self.run_dir / "context" / "packets"
                 packets_dir.mkdir(parents=True, exist_ok=True)
-                save_context_packet(self.current_context_packet, packets_dir / f"{self.current_context_packet.packet_id}.json")
+                save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
         except (ContextAnchorMissingError, ContextError) as err:
             return {
                 "attempt_id": attempt_id,
@@ -4017,7 +4033,7 @@ class TaskExecutor:
         }
         attempt_record = redact_secrets(attempt_record)
 
-        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source)
+        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source, prompt_content=prompt_content)
         atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
         self.attempts.append(attempt_record)
         self.latest_result = attempt_record
@@ -4028,7 +4044,8 @@ class TaskExecutor:
         return attempt_record
 
     def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
-                          worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int, auth_source: str = "unauthenticated"):
+                          worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int,
+                          auth_source: str = "unauthenticated", prompt_content: Optional[str] = None):
         churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
         try:
             diff_res = subprocess.run(
@@ -4116,8 +4133,15 @@ class TaskExecutor:
 
             dynamic_bytes = len(pkt.rendered_tail.encode("utf-8"))
             factory_bytes = sp_bytes + dynamic_bytes
-            rendered_prompt = prompt_content if "prompt_content" in locals() else pkt.render_full_prompt()
+            rendered_prompt = prompt_content if prompt_content is not None else pkt.render_full_prompt()
             red_stats = calculate_context_redundancy([rendered_prompt])
+
+            role = "reviewer" if self.review_only else "task"
+            role_policy = self.context_compiler.policy.get_role_policy(role) if self.context_compiler else {}
+            session_mode = role_policy.get("session_mode", "fresh")
+            prov = raw_res.get("provenance", {}) if isinstance(raw_res.get("provenance"), dict) else {}
+            session_reused = bool(prov.get("session_reused", False))
+            native_compaction_used = bool(prov.get("native_compaction_used", False))
 
             ctx_metrics = {
                 "schema_version": "8.0.0",
@@ -4125,7 +4149,7 @@ class TaskExecutor:
                 "goal_id": self.goal_spec.get("goal_id") if self.goal_spec else None,
                 "task_id": self.task_id,
                 "attempt_id": attempt_record.get("attempt_id", 1),
-                "role": "reviewer" if self.review_only else "task",
+                "role": role,
                 "context_packet_id": pkt.packet_id,
                 "context_packet_hash": pkt.packet_hash,
                 "stable_prefix_version": STABLE_PREFIX_VERSION,
@@ -4141,6 +4165,7 @@ class TaskExecutor:
                 "required_anchor_count": len([a for a in pkt.required_anchors if a.required]),
                 "required_anchor_recall": getattr(self, "last_anchor_recall", 1.0),
                 "factory_supplied_bytes": factory_bytes,
+                "attempt_context_bytes": factory_bytes,
                 "repeated_bytes": red_stats["repeated_content_bytes"],
                 "unique_bytes": red_stats["unique_content_bytes"],
                 "redundancy_ratio": red_stats["redundancy_ratio"],
@@ -4148,9 +4173,9 @@ class TaskExecutor:
                 "provider_cached_input_tokens": int(provider_cached_tokens) if provider_cached_tokens is not None else None,
                 "provider_output_tokens": int(provider_output_tokens) if provider_output_tokens is not None else None,
                 "provider_reasoning_tokens": int(provider_reasoning_tokens) if provider_reasoning_tokens is not None else None,
-                "session_mode": "fresh",
-                "session_reused": False,
-                "native_compaction_used": False,
+                "session_mode": session_mode,
+                "session_reused": session_reused,
+                "native_compaction_used": native_compaction_used,
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
             attempt_record["context_metrics"] = ctx_metrics
@@ -4193,12 +4218,11 @@ class TaskExecutor:
         pkt_file = attempt_dir / "context_packet.json"
         if not self.current_context_packet:
             if pkt_file.exists():
-                try:
-                    self.current_context_packet = load_context_packet(pkt_file)
-                except Exception:
-                    self.build_prompt(worktree_path, attempt_id=attempt_id)
+                self.current_context_packet = load_context_packet(pkt_file)
             else:
-                self.build_prompt(worktree_path, attempt_id=attempt_id)
+                raise ContextError(
+                    f"MISSING_CONTEXT_PACKET: Attempt #{attempt_id} has no context_packet.json on disk to verify at commit time"
+                )
 
         subprocess.run(["git", "add", "-A"], cwd=str(worktree_path), check=True)
         diff_check = subprocess.run(["git", "status", "--porcelain"], cwd=str(worktree_path), capture_output=True, text=True)
@@ -4246,6 +4270,7 @@ class FactoryOrchestrator:
         self.res_mgr = ResourceManager(self.herdr)
         self.merge_lock = threading.Lock()
         self._manifest_lock = threading.RLock()
+        self._events_lock = threading.Lock()
         self.board_projector = HerdrBoardProjector(PROJECT_ROOT)
 
         # Build task lookup and dependency graph
@@ -4347,9 +4372,24 @@ class FactoryOrchestrator:
             if not isinstance(val, str):
                 return ""
             val = redact_secrets(val)
-            cleaned = re.sub(r"^#+\s*", "", val, flags=re.MULTILINE)
+            # Strip ANSI escape sequences
+            cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", val)
+            # Strip markdown headers, code fences, and backticks
+            cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
-            cleaned = re.sub(r"(?i)(ignore\s+all\s+prior\s+instructions|system\s+prompt|developer\s+mode)", "[FILTERED]", cleaned)
+            # Strip HTML tags
+            cleaned = re.sub(r"<[^>]+>", "", cleaned)
+            # Filter adversarial prompt injection variants
+            injection_pattern = re.compile(
+                r"(?i)(ignore\s+all\s+prior\s+instructions"
+                r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
+                r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
+                r"|new\s+instructions:"
+                r"|system\s+prompt"
+                r"|developer\s+mode"
+                r"|override\s+instructions)"
+            )
+            cleaned = injection_pattern.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
         safe_changed_paths = [
@@ -4379,7 +4419,7 @@ class FactoryOrchestrator:
         return handoff
 
     def _collect_task_handoffs(self, tdef: dict) -> list[HandoffPacket]:
-        """Collects verified predecessor HandoffPackets for a task definition."""
+        """Collects verified predecessor HandoffPackets for a task definition, failing fast on missing or invalid handoffs."""
         task_deps = tdef.get("dependencies", [])
         task_handoffs = []
         for dep_id in task_deps:
@@ -4392,10 +4432,12 @@ class FactoryOrchestrator:
                         task_handoffs.append(load_handoff_packet(ho_file))
                     except Exception as exc:
                         self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": str(exc)})
+                        raise RuntimeError(f"Failed to load dependency handoff {dep_id}: {exc}")
                 else:
                     dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
                     if dep_tinfo.get("status") == "SUCCESS":
                         self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
+                        raise RuntimeError(f"Required dependency handoff {dep_id} missing on disk at {ho_file}")
         return task_handoffs
 
     def _build_task_graph(self):
@@ -4428,8 +4470,9 @@ class FactoryOrchestrator:
             "event": event_type,
             "payload": clean_payload
         }
-        with open(self.events_log, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event) + "\n")
+        with self._events_lock:
+            with open(self.events_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event) + "\n")
 
     def save_manifest(self):
         with self._manifest_lock:
@@ -4790,29 +4833,7 @@ class FactoryOrchestrator:
                         tinfo["current_attempt_id"] = att_id
 
                         # Collect predecessor handoffs (Factory v8.0.0)
-                        task_deps = tdef.get("dependencies", [])
-                        task_handoffs = []
-                        load_error = None
-                        for dep_id in task_deps:
-                            if dep_id in self.active_handoffs:
-                                task_handoffs.append(self.active_handoffs[dep_id])
-                            else:
-                                ho_file = self.handoffs_dir / f"{dep_id}.json"
-                                if ho_file.exists():
-                                    try:
-                                        task_handoffs.append(load_handoff_packet(ho_file))
-                                    except Exception as exc:
-                                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": str(exc)})
-                                        load_error = f"Failed to load dependency handoff {dep_id}: {exc}"
-                                        break
-                                else:
-                                    dep_tinfo = self.manifest["tasks"].get(dep_id, {})
-                                    if dep_tinfo.get("status") == "SUCCESS":
-                                        load_error = f"Required dependency handoff {dep_id} missing on disk at {ho_file}"
-                                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
-                                        break
-                        if load_error:
-                            raise RuntimeError(f"Cannot dispatch task {tid}: {load_error}")
+                        task_handoffs = self._collect_task_handoffs(tdef)
 
                         executor = TaskExecutor(
                             self.run_id,
@@ -4929,11 +4950,18 @@ class FactoryOrchestrator:
                         if tinfo.get("attempts_count", 1) <= retries_allowed:
                             tinfo["canonical_state"] = "READY"
                             tinfo["status"] = "PENDING"
+                            raw_cmd = res.get("failing_command")
+                            if isinstance(raw_cmd, list):
+                                clean_cmd = shlex.join(str(x) for x in raw_cmd)
+                            elif raw_cmd is not None:
+                                clean_cmd = str(raw_cmd)
+                            else:
+                                clean_cmd = ""
                             tinfo["retry_info"] = {
                                 "previous_attempt_id": att_id,
                                 "status": res.get("status", "FAILED"),
                                 "error_category": res.get("state", "FAILED"),
-                                "failing_command": redact_secrets(res.get("failing_command")),
+                                "failing_command": redact_secrets(clean_cmd)[:2048],
                                 "error_excerpt": redact_secrets(res.get("error", ""))[:2048]
                             }
                             self.log_event("TASK_RETRYING", {"task_id": tid, "previous_attempt": att_id, "retry_info": tinfo["retry_info"]})
@@ -5046,8 +5074,19 @@ class FactoryOrchestrator:
                                 curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
                             elif k == "retry_info":
                                 tid = getattr(pkt, "task_id", "")
-                                tinfo = self.manifest.get("tasks", {}).get(tid, {})
-                                r_info = tinfo.get("retry_info", {})
+                                att_id = getattr(pkt, "attempt_id", 1)
+                                att_dir = self.run_dir / "workers" / tid / f"att-{att_id}"
+                                rinfo_file = att_dir / "retry_info.json"
+                                if rinfo_file.exists():
+                                    try:
+                                        r_info = json.loads(rinfo_file.read_text(encoding="utf-8"))
+                                    except Exception:
+                                        r_info = {}
+                                elif att_id > 1:
+                                    tinfo = self.manifest.get("tasks", {}).get(tid, {})
+                                    r_info = tinfo.get("retry_info", {})
+                                else:
+                                    r_info = {}
                                 curr_hashes[k] = sha256_text(canonical_json_dump(r_info or {}))
                             elif k == "stable_prefix":
                                 role = getattr(pkt, "packet_role", "task")
@@ -5073,6 +5112,7 @@ class FactoryOrchestrator:
                 self.manifest["context_summary"] = {
                     "schema_version": "8.0.0",
                     "total_factory_supplied_bytes": redundancy_stats["total_factory_supplied_bytes"],
+                    "run_total_context_bytes": redundancy_stats["total_factory_supplied_bytes"],
                     "unique_content_bytes": redundancy_stats["unique_content_bytes"],
                     "repeated_content_bytes": redundancy_stats["repeated_content_bytes"],
                     "redundancy_ratio": redundancy_stats["redundancy_ratio"],
@@ -5586,6 +5626,8 @@ Output ONLY the JSON object.
                             raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements")
                         parsed["derived_requirement_metrics"] = audit_metrics
                         return parsed
+        except (OrphanDerivedRequirementError, MalformedContextPacketError):
+            raise
         except Exception:
             pass
 
