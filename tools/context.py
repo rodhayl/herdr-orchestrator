@@ -310,9 +310,17 @@ def calculate_rendered_anchor_recall(
         if not content:
             missing.append(req.anchor_id)
             continue
-        # Strict boundary matching: content must not be preceded or followed by word characters or path prefixes
-        pattern = r"(?<![a-zA-Z0-9_])" + re.escape(content) + r"(?![a-zA-Z0-9_]|/[a-zA-Z0-9_])"
-        if re.search(pattern, rendered_text):
+        # Strict boundary matching depending on anchor type
+        if getattr(req, "anchor_type", "") == "validation":
+            val_pattern = r"(?:`|\n-\s*`)" + re.escape(content) + r"`"
+            found = bool(re.search(val_pattern, rendered_text) or (f"`{content}`" in rendered_text))
+        elif getattr(req, "anchor_type", "") == "file_reference":
+            file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_./\-])"
+            found = bool(re.search(file_pattern, rendered_text))
+        else:
+            pattern = r"(?<![a-zA-Z0-9_])" + re.escape(content) + r"(?![a-zA-Z0-9_./\-])"
+            found = bool(re.search(pattern, rendered_text))
+        if found:
             included_count += 1
         else:
             missing.append(req.anchor_id)
@@ -438,17 +446,20 @@ class HandoffPacket:
         }
         final_ft_bytes = sum(len(v.encode("utf-8")) for v in ft_parts.values())
         if final_ft_bytes > ft_budget:
-            per_field = ft_budget // 4
+            per_field = max(64, ft_budget // 4)
+            marker = "\n[TRUNCATED:BOUND]"
+            marker_b = len(marker.encode("utf-8"))
+            alloc = max(16, per_field - marker_b)
             if isinstance(self.consumer_notes, str):
-                self.consumer_notes = self.consumer_notes.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
+                self.consumer_notes = self.consumer_notes.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             if isinstance(self.contracts, str):
-                self.contracts = self.contracts.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
+                self.contracts = self.contracts.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             if isinstance(self.decisions, str):
-                self.decisions = self.decisions.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
+                self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
                 self.decisions = self.decisions[:5]
             if isinstance(self.known_risks, str):
-                self.known_risks = self.known_risks.encode("utf-8")[:per_field].decode("utf-8", errors="ignore")
+                self.known_risks = self.known_risks.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.known_risks, list):
                 self.known_risks = self.known_risks[:5]
 
@@ -622,6 +633,8 @@ class FilesystemGitContextSource(ContextSource):
 
     SENSITIVE_PATTERNS = [
         re.compile(r"(^|/)\.env(\..*)?$", re.IGNORECASE),
+        re.compile(r"(^|/)(?:secrets?\.)?env(?:\..*)?$", re.IGNORECASE),
+        re.compile(r".*\.env$", re.IGNORECASE),
         re.compile(r"(^|/)\.envrc$", re.IGNORECASE),
         re.compile(r".*\.(pem|key|secret)$", re.IGNORECASE),
         re.compile(r"(^|/)\.aws(/|$)", re.IGNORECASE),

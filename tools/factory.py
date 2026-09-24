@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import urllib.request
+import unicodedata
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Context Compiler & Efficiency System (Factory v8.0.0)
@@ -3598,6 +3599,7 @@ class TaskExecutor:
                  herdr: HerdrClient, res_mgr: ResourceManager, factory_config: dict,
                  goal_spec: dict = None, plan: dict = None, handoffs: list = None,
                  retry_info: dict = None, context_compiler: ContextCompiler = None):
+        snapshot_secret_env()
         self.run_id = run_id
         self.task = plan_task
         self.task_id = plan_task["task_id"]
@@ -3661,6 +3663,10 @@ class TaskExecutor:
                     if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-.:]{1,32}$", cid)
                 ]
             }
+            audit_metrics = DerivedRequirementAuditor.audit_requirements(self.goal_spec)
+            if audit_metrics.get("orphan_count", 0) > 0:
+                raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements in fallback goal_spec")
+            self.goal_spec["derived_requirement_metrics"] = audit_metrics
 
         self.plan = plan or {"tasks": [self.task]}
         self.handoffs = handoffs or []
@@ -3818,15 +3824,23 @@ class TaskExecutor:
         atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
 
         try:
-            _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if getattr(self, "review_only", False) else "task")
-            curr_hashes = {
-                "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                "plan": sha256_text(canonical_json_dump(snap_plan)),
-                "task_def": sha256_text(canonical_json_dump(snap_task)),
-                "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
-                "stable_prefix": prefix_hash,
-            }
-            if not self.current_context_packet:
+            is_rev = getattr(self, "review_only", False)
+            _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
+            if is_rev:
+                curr_hashes = {
+                    "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(snap_plan)),
+                    "stable_prefix": prefix_hash,
+                }
+            else:
+                curr_hashes = {
+                    "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(snap_plan)),
+                    "task_def": sha256_text(canonical_json_dump(snap_task)),
+                    "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
+                    "stable_prefix": prefix_hash,
+                }
+            if (not self.current_context_packet) or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
                 prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
             else:
                 is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
@@ -3834,6 +3848,11 @@ class TaskExecutor:
                     prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
                 else:
                     prompt_content = self.current_context_packet.render_full_prompt()
+
+            # Sanitize prompt content and verify redaction before writing
+            clean_prompt = redact_secrets(prompt_content) if prompt_content is not None else None
+            assert clean_prompt is None or redact_secrets(clean_prompt) == clean_prompt
+            prompt_content = clean_prompt
 
             # Capture local reference to packet immediately after compilation/validation
             active_packet = self.current_context_packet
@@ -3975,7 +3994,7 @@ class TaskExecutor:
                 "error": raw_res.get("error", "Worker timed out")
             }
             attempt_record = redact_secrets(attempt_record)
-            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source)
+            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source, prompt_content=prompt_content)
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
             atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
@@ -4152,21 +4171,33 @@ class TaskExecutor:
         attempt_record["telemetry"] = telemetry
 
         # Context Metrics telemetry recording (v8.0.0)
-        if self.current_context_packet:
+        if self.current_context_packet and prompt_content is not None:
+            clean_prompt = redact_secrets(prompt_content)
+            assert redact_secrets(clean_prompt) == clean_prompt
             pkt = self.current_context_packet
             sp_prefix, sp_hash, sp_bytes = StablePrefixManager.get_stable_prefix("reviewer" if self.review_only else "task")
 
-            # Extract provider token metrics if reported by provider
+            # Extract provider token metrics if reported by provider (preserving valid 0 counts)
             agy_data = raw_res.get("data", {}) if isinstance(raw_res.get("data"), dict) else {}
             usage = agy_data.get("usage", {}) if isinstance(agy_data.get("usage"), dict) else {}
-            provider_input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens")
-            provider_cached_tokens = usage.get("cached_input_tokens") or usage.get("cache_read_tokens")
-            provider_output_tokens = usage.get("output_tokens") or usage.get("completion_tokens")
-            provider_reasoning_tokens = usage.get("reasoning_tokens") or usage.get("thinking_tokens")
+            provider_input_tokens = usage.get("input_tokens") if usage.get("input_tokens") is not None else usage.get("prompt_tokens")
+            provider_cached_tokens = usage.get("cached_input_tokens") if usage.get("cached_input_tokens") is not None else usage.get("cache_read_tokens")
+            provider_output_tokens = usage.get("output_tokens") if usage.get("output_tokens") is not None else usage.get("completion_tokens")
+            provider_reasoning_tokens = usage.get("reasoning_tokens") if usage.get("reasoning_tokens") is not None else usage.get("thinking_tokens")
+
+            if provider_input_tokens is not None:
+                pkt.token_count = int(provider_input_tokens)
+                pkt.token_count_source = "provider_usage"
+                attempt_pkt_file = self.task_root_dir / f"att-{attempt_record.get('attempt_id', 1)}" / "context_packet.json"
+                if attempt_pkt_file.exists():
+                    try:
+                        save_context_packet(pkt, attempt_pkt_file)
+                    except Exception:
+                        pass
 
             dynamic_bytes = len(pkt.rendered_tail.encode("utf-8"))
             factory_bytes = sp_bytes + dynamic_bytes
-            rendered_prompt = prompt_content if prompt_content is not None else pkt.render_full_prompt()
+            rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
 
             role = "reviewer" if self.review_only else "task"
@@ -4257,6 +4288,29 @@ class TaskExecutor:
                     f"MISSING_CONTEXT_PACKET: Attempt #{attempt_id} has no context_packet.json on disk to verify at commit time"
                 )
 
+        # Staleness verification at commit time (gate against mid-run drift)
+        is_rev = getattr(self, "review_only", False)
+        _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
+        raw_rinfo = getattr(self, "retry_info", None)
+        snap_rinfo = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
+        if is_rev:
+            commit_source_hashes = {
+                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+                "plan": sha256_text(canonical_json_dump(self.plan)),
+                "stable_prefix": prefix_hash,
+            }
+        else:
+            commit_source_hashes = {
+                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
+                "plan": sha256_text(canonical_json_dump(self.plan)),
+                "task_def": sha256_text(canonical_json_dump(self.task)),
+                "retry_info": sha256_text(canonical_json_dump(snap_rinfo)),
+                "stable_prefix": prefix_hash,
+            }
+        is_stale, reasons = self.current_context_packet.verify_staleness(commit_source_hashes)
+        if is_stale:
+            raise StaleContextPacketError(f"Context packet is stale at commit time for attempt #{attempt_id}: {reasons}")
+
         subprocess.run(["git", "add", "-A"], cwd=str(worktree_path), check=True)
         diff_check = subprocess.run(["git", "status", "--porcelain"], cwd=str(worktree_path), capture_output=True, text=True)
         if not diff_check.stdout.strip():
@@ -4288,6 +4342,7 @@ class FactoryOrchestrator:
     """Dependency-driven arbitrary DAG scheduler and state machine engine."""
 
     def __init__(self, plan_path: pathlib.Path, run_id: str = None, real_only: bool = False, routing_overrides: dict = None):
+        snapshot_secret_env()
         self.plan_path = plan_path
         with open(plan_path, "r", encoding="utf-8") as f:
             self.plan = json.load(f)
@@ -4302,6 +4357,8 @@ class FactoryOrchestrator:
 
         self.res_mgr = ResourceManager(self.herdr)
         self.merge_lock = threading.Lock()
+        # Strict lock ordering convention: always acquire _manifest_lock before _events_lock if both are needed.
+        # board_projector.sync() must never call log_event while holding locks.
         self._manifest_lock = threading.RLock()
         self._events_lock = threading.Lock()
         self.board_projector = HerdrBoardProjector(PROJECT_ROOT)
@@ -4404,6 +4461,7 @@ class FactoryOrchestrator:
         def _sanitize_worker_text(val: str, max_chars: int = 512) -> str:
             if not isinstance(val, str):
                 return ""
+            val = unicodedata.normalize("NFKC", str(val))
             val = redact_secrets(val)
             # Strip ANSI escape sequences
             cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", val)
@@ -4434,6 +4492,10 @@ class FactoryOrchestrator:
 
         is_passed = attempt_result.get("status") in ("SUCCESS", "COMPLETED") and attempt_result.get("exit_code", 0) == 0
         actual_exit_code = attempt_result.get("exit_code", 0 if is_passed else 1)
+        contracts_text = _sanitize_worker_text(f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}", 512)
+        decisions_text = _sanitize_worker_text(f"Implemented {clean_summary}", 512)
+        consumer_notes_text = _sanitize_worker_text(clean_notes or f"Changes integrated in commit {commit_hash[:8]}", 512)
+        known_risks_text = _sanitize_worker_text("", 512)
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
             producer_task_id=task_id,
@@ -4441,10 +4503,10 @@ class FactoryOrchestrator:
             changed_paths=safe_changed_paths,
             satisfied_criteria=satisfied,
             commit=commit_hash,
-            contracts=f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}",
-            decisions=f"Implemented {clean_summary}",
-            consumer_notes=clean_notes or f"Changes integrated in commit {commit_hash[:8]}",
-            known_risks="",
+            contracts=contracts_text,
+            decisions=decisions_text,
+            consumer_notes=consumer_notes_text,
+            known_risks=known_risks_text,
             validation_result={"passed": is_passed, "exit_code": actual_exit_code}
         )
         handoff_file = self.handoffs_dir / f"{task_id}.json"
@@ -4464,8 +4526,9 @@ class FactoryOrchestrator:
                     try:
                         task_handoffs.append(load_handoff_packet(ho_file))
                     except Exception as exc:
-                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": str(exc)})
-                        raise RuntimeError(f"Failed to load dependency handoff {dep_id}: {exc}")
+                        clean_err = redact_secrets(f"Failed to load dependency handoff {dep_id}: {exc}")
+                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
+                        raise RuntimeError(clean_err)
                 else:
                     dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
                     if dep_tinfo.get("status") == "SUCCESS":
@@ -4962,7 +5025,14 @@ class FactoryOrchestrator:
                                     self.active_handoffs[tid] = ho
                                     self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
                                     ho_path = self.handoffs_dir / f"{tid}.json"
-                                    # Round-trip integrity check on persisted handoff
+                                    # Round-trip integrity check on persisted handoff (disk-level tamper detection)
+                                    raw_ho_bytes = ho_path.read_bytes()
+                                    raw_ho_dict = json.loads(raw_ho_bytes.decode("utf-8"))
+                                    stored_hash = raw_ho_dict.get("handoff_hash")
+                                    raw_dict_to_hash = {k: v for k, v in raw_ho_dict.items() if k not in ("handoff_hash", "handoff_bytes")}
+                                    recomputed_hash = sha256_text(canonical_json_dump(raw_dict_to_hash))
+                                    if not stored_hash or recomputed_hash != stored_hash or stored_hash != ho.handoff_hash:
+                                        raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
                                     verified_ho = load_handoff_packet(ho_path)
                                     if verified_ho.handoff_hash != ho.handoff_hash:
                                         raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
@@ -5102,13 +5172,13 @@ class FactoryOrchestrator:
                             elif k == "plan":
                                 curr_hashes[k] = sha256_text(canonical_json_dump(self.plan))
                             elif k == "task_def":
-                                tid = getattr(pkt, "task_id", "")
-                                tdef = self.tasks_def.get(tid, {})
+                                pkt_tid = getattr(pkt, "task_id", "")
+                                tdef = self.tasks_def.get(pkt_tid, {})
                                 curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
                             elif k == "retry_info":
-                                tid = getattr(pkt, "task_id", "")
+                                pkt_tid = getattr(pkt, "task_id", "")
                                 att_id = getattr(pkt, "attempt_id", 1)
-                                att_dir = self.run_dir / "workers" / tid / f"att-{att_id}"
+                                att_dir = self.run_dir / "workers" / pkt_tid / f"att-{att_id}"
                                 rinfo_file = att_dir / "retry_info.json"
                                 if rinfo_file.exists():
                                     try:
@@ -5116,8 +5186,8 @@ class FactoryOrchestrator:
                                     except Exception:
                                         r_info = {}
                                 elif att_id > 1:
-                                    tinfo = self.manifest.get("tasks", {}).get(tid, {})
-                                    r_info = tinfo.get("retry_info", {})
+                                    pkt_tinfo = self.manifest.get("tasks", {}).get(pkt_tid, {})
+                                    r_info = pkt_tinfo.get("retry_info", {})
                                 else:
                                     r_info = {}
                                 curr_hashes[k] = sha256_text(canonical_json_dump(r_info or {}))
