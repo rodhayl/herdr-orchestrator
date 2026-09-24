@@ -5045,7 +5045,7 @@ Output ONLY the JSON object.
 """
         schema_path = (PROJECT_ROOT / "schemas" / "goal-spec.schema.json") if (PROJECT_ROOT / "schemas" / "goal-spec.schema.json").exists() else (FACTORY_ROOT / "schemas" / "goal-spec.schema.json")
         try:
-            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json"]
+            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
             proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=90)
@@ -5285,7 +5285,7 @@ Requirements:
 """
         schema_path = (PROJECT_ROOT / "schemas" / "plan.schema.json") if (PROJECT_ROOT / "schemas" / "plan.schema.json").exists() else (FACTORY_ROOT / "schemas" / "plan.schema.json")
         try:
-            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json"]
+            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
             proc = subprocess.run(cmd, cwd=str(project_policy.project_root), capture_output=True, text=True, timeout=90)
@@ -5470,7 +5470,7 @@ Output ONLY a JSON object:
 """
         schema_path = (PROJECT_ROOT / "schemas" / "review-result.schema.json") if (PROJECT_ROOT / "schemas" / "review-result.schema.json").exists() else (FACTORY_ROOT / "schemas" / "review-result.schema.json")
         try:
-            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json"]
+            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
             proc = subprocess.run(cmd, cwd=str(project_policy.project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 m = re.search(r"\{.*\}", proc.stdout.strip(), re.DOTALL)
@@ -5564,7 +5564,7 @@ Output ONLY a JSON object:
 }}
 """
         try:
-            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json"]
+            cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
             proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 m = re.search(r"\{.*\}", proc.stdout.strip(), re.DOTALL)
