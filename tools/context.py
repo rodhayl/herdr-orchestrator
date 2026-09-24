@@ -140,33 +140,40 @@ def normalize_homoglyphs(text: str) -> str:
 _INITIAL_SECRET_ENV: dict[str, str] = {}
 _SECRET_ENV_LOCK = threading.RLock()
 
+SECRET_SUBKEY_NAMES = {
+    "private_key", "private_key_id", "client_secret", "token", "access_token",
+    "refresh_token", "secret", "password", "passwd", "api_key", "apikey",
+    "auth", "credential", "credentials"
+}
+
 
 def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
-    """Recursively extracts all string values with length >= 6 from JSON credential structures."""
+    """Extracts string values from JSON credential structures where keys match sensitive patterns."""
     extracted = {}
     if isinstance(obj, dict):
         for sub_k, sub_v in obj.items():
+            sk_str = str(sub_k).lower()
             combined = f"{prefix}_{str(sub_k).upper()}"
+            is_sensitive = (sk_str in SECRET_SUBKEY_NAMES or ENV_SECRET_KEY_PATTERN.search(str(sub_k)) is not None)
             if isinstance(sub_v, str):
                 s = sub_v.strip()
-                if len(s) >= 6:
+                if is_sensitive and len(s) >= 6:
                     extracted[combined] = s
             elif isinstance(sub_v, (dict, list)):
                 extracted.update(_extract_json_secrets(combined, sub_v))
     elif isinstance(obj, list):
         for idx, sub_item in enumerate(obj):
             combined = f"{prefix}_{idx}"
-            if isinstance(sub_item, str):
-                s = sub_item.strip()
-                if len(s) >= 6:
-                    extracted[combined] = s
-            elif isinstance(sub_item, (dict, list)):
+            if isinstance(sub_item, (dict, list)):
                 extracted.update(_extract_json_secrets(combined, sub_item))
     return extracted
 
 
 def snapshot_secret_env() -> dict[str, str]:
-    """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot."""
+    """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot.
+
+    Idempotent and safe to invoke multiple times; always operates under _SECRET_ENV_LOCK.
+    """
     with _SECRET_ENV_LOCK:
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
@@ -210,7 +217,7 @@ snapshot_secret_env()
 
 
 def redact_secrets(val: Any) -> Any:
-    """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
+    """Recursively redacts secret API keys, tokens, and sensitive env vars across values, preserving dict structure."""
     if isinstance(val, str):
         res = val
         # Check frozen environment snapshot under lock to prevent iteration mutation and race conditions
@@ -226,7 +233,7 @@ def redact_secrets(val: Any) -> Any:
     elif isinstance(val, tuple):
         return tuple(redact_secrets(item) for item in val)
     elif isinstance(val, dict):
-        return {redact_secrets(k): redact_secrets(v) for k, v in val.items()}
+        return {k: redact_secrets(v) for k, v in val.items()}
     return val
 
 
@@ -561,11 +568,25 @@ class HandoffPacket:
             if isinstance(self.decisions, str):
                 self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
-                self.decisions = [str(d)[:alloc] for d in self.decisions[:3]] + ["[TRUNCATED:BOUND]"]
+                self.decisions = [str(d)[:max(16, alloc // 2)] for d in self.decisions[:1]] + ["[TRUNCATED:BOUND]"]
             if isinstance(self.known_risks, str):
                 self.known_risks = self.known_risks.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.known_risks, list):
-                self.known_risks = [str(r)[:alloc] for r in self.known_risks[:3]] + ["[TRUNCATED:BOUND]"]
+                self.known_risks = [str(r)[:max(16, alloc // 2)] for r in self.known_risks[:1]] + ["[TRUNCATED:BOUND]"]
+
+            # Re-verify final_ft_bytes <= ft_budget and guarantee compliance
+            post_ft_parts = {
+                "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+                "known_risks": self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
+                "decisions": self.decisions if isinstance(self.decisions, str) else "\n".join(self.decisions),
+                "contracts": self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
+            }
+            if sum(len(v.encode("utf-8")) for v in post_ft_parts.values()) > ft_budget:
+                cut = max(16, ft_budget // 8)
+                self.consumer_notes = self.consumer_notes.encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
+                self.contracts = self.contracts.encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
+                self.decisions = ["[TRUNCATED:BOUND]"]
+                self.known_risks = ["[TRUNCATED:BOUND]"]
 
         # Bound individual path lengths to 512 bytes
         self.changed_paths = [str(p)[:512] for p in self.changed_paths]
@@ -1377,8 +1398,6 @@ class ContextPacket:
                 stale_reasons.append(f"{path} changed ({orig_hash[:8]} -> {curr[:8] if curr else 'MISSING'})")
         for path, curr_hash in current_source_hashes.items():
             if path not in self.source_hashes:
-                if path == "secret_env":
-                    continue
                 stale_reasons.append(f"expected source {path} missing in packet source_hashes")
         return len(stale_reasons) > 0, stale_reasons
 
@@ -1834,6 +1853,7 @@ class ContextCompiler:
             for ho in handoffs:
                 surviving_paths.update([p for p in ho.changed_paths[:200] if not str(p).startswith("[+")])
             anchors = [a for a in anchors if not (a.anchor_type == "file_reference" and a.source == "predecessor_handoff")]
+            rendered_ho_text = "\n".join(h.render_markdown() for h in handoffs)
             for ho_path in sorted(surviving_paths):
                 anchors.append(
                     Anchor(
@@ -1842,7 +1862,7 @@ class ContextCompiler:
                         source="predecessor_handoff",
                         source_hash=sha256_text(ho_path),
                         content=ho_path,
-                        required=True,
+                        required=(ho_path in rendered_ho_text),
                     )
                 )
 
@@ -2089,8 +2109,8 @@ class ContextCompiler:
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
-            "task_def": "REVIEWER_ROLE_N/A",
-            "retry_info": "REVIEWER_ROLE_N/A",
+            "task_def": sha256_text(canonical_json_dump(plan.get("tasks", []))),
+            "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY"),
             "stable_prefix": prefix_hash,
             "secret_env": get_secret_env_fingerprint(),
         }
@@ -2466,7 +2486,7 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
         target_path = storage_dir / f"{packet.packet_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(8)}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(16)}"
 
     data_str = canonical_json_dump(packet.to_dict())
     with open(temp_path, "w", encoding="utf-8") as f:
@@ -2514,7 +2534,7 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
         target_path = storage_dir / f"{handoff.handoff_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(8)}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(16)}"
 
     data_str = canonical_json_dump(handoff.to_dict())
     with open(temp_path, "w", encoding="utf-8") as f:

@@ -49,13 +49,13 @@ def main():
     ctx_sections = [
         "### Injection Filter Pattern, Secret Redaction & Frozen Snapshot:\n" + "\n".join(ctx_lines[110:240]),
         "\n### Anchor Data Model & Boundary-Safe Recall Calculation:\n" + "\n".join(ctx_lines[267:386]),
-        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[392:740]),
-        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[745:840]),
-        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1330:1470]),
-        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1605:1918]),
-        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2070:2235]),
-        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2365:2455]),
-        "\n### Atomic Persistence & Load Quarantine (Temp File + Flush + Fsync + os.replace):\n" + "\n".join(ctx_lines[2455:2560]),
+        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[392:765]),
+        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[765:860]),
+        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1350:1495]),
+        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1625:1939]),
+        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2090:2255]),
+        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2385:2475]),
+        "\n### Atomic Persistence, Quarantine & Context Telemetry:\n" + "\n".join(ctx_lines[2475:2590]),
     ]
     context_core_code = "\n".join(ctx_sections)
 

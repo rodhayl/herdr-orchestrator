@@ -3760,8 +3760,8 @@ class TaskExecutor:
             current_source_hashes = {
                 "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
                 "plan": sha256_text(canonical_json_dump(active_plan)),
-                "task_def": "REVIEWER_ROLE_N/A",
-                "retry_info": "REVIEWER_ROLE_N/A",
+                "task_def": sha256_text(canonical_json_dump(active_plan.get("tasks", []))),
+                "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY"),
                 "stable_prefix": packet.source_hashes.get("stable_prefix"),
                 "secret_env": get_secret_env_fingerprint(),
             }
@@ -4296,6 +4296,7 @@ class TaskExecutor:
                 raise ContextError(f"Prompt redaction is not idempotent for task {self.task_id}")
             pkt = active_pkt
             sp_prefix, sp_hash, sp_bytes = StablePrefixManager.get_stable_prefix("reviewer" if self.review_only else "task")
+            sp_prefix = redact_secrets(sp_prefix)
 
             # Extract provider token metrics if reported by provider (preserving valid 0 counts)
             agy_data = raw_res.get("data", {}) if isinstance(raw_res.get("data"), dict) else {}
@@ -4371,13 +4372,6 @@ class TaskExecutor:
             }
             ctx_metrics = redact_secrets(ctx_metrics)
             attempt_record["context_metrics"] = ctx_metrics
-            if valid_in_tokens is not None:
-                pkt.token_count = valid_in_tokens
-                pkt.token_count_source = "provider_reported"
-                try:
-                    save_context_packet(pkt, attempt_dir / "context_packet.json")
-                except Exception:
-                    pass
             try:
                 record_context_telemetry(self.run_dir, ctx_metrics)
             except Exception:
@@ -4436,8 +4430,8 @@ class TaskExecutor:
                 commit_source_hashes = {
                     "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                     "plan": sha256_text(canonical_json_dump(self.plan)),
-                    "task_def": "",
-                    "retry_info": "",
+                    "task_def": sha256_text(canonical_json_dump(self.plan.get("tasks", []))),
+                    "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY"),
                     "stable_prefix": prefix_hash,
                     "secret_env": get_secret_env_fingerprint(),
                 }
@@ -4699,11 +4693,13 @@ class FactoryOrchestrator:
         if isinstance(raw_mode, str) and raw_mode.upper() in VALID_PROVENANCES and raw_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
             synthesis_source = raw_mode.upper()
         else:
-            executor_prov = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode", "REAL")
+            executor_prov = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode")
             if executor_prov in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
                 synthesis_source = executor_prov
+            elif getattr(self, "real_only", False):
+                raise ContextError(f"real_only policy violation: task {task_id} attempt {attempt_id} has indeterminate provenance")
             else:
-                synthesis_source = "REAL"
+                synthesis_source = "MOCK"
 
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
@@ -4756,7 +4752,7 @@ class FactoryOrchestrator:
                             raise RuntimeError(clean_err)
 
                 if ho is not None:
-                    candidates.append((dep_id, ho))
+                    candidates.append((dep_id, copy.deepcopy(ho)))
 
         # Perform git history reachability checks outside manifest lock to prevent blocking or priority inversion
         for dep_id, ho in candidates:
@@ -5522,22 +5518,26 @@ class FactoryOrchestrator:
 
             if rendered_prompts:
                 total_prompts = len(rendered_prompts)
+                actual_run_total_bytes = sum(len(p.encode("utf-8")) for p in rendered_prompts)
                 is_capped = total_prompts > 50
                 if is_capped:
                     self.log_event("WARNING_CONTEXT_REDUNDANCY_PROMPTS_CAPPED", {"total_prompts": total_prompts, "capped_to": 50})
-                    rendered_prompts = rendered_prompts[:50]
-                redundancy_stats = calculate_context_redundancy(rendered_prompts)
+                    sampled_prompts = rendered_prompts[:50]
+                else:
+                    sampled_prompts = rendered_prompts
+                redundancy_stats = calculate_context_redundancy(sampled_prompts)
                 self.manifest["context_summary"] = {
                     "schema_version": "8.0.0",
                     "prompts_measured_post_redaction": True,
-                    "total_factory_supplied_bytes": redundancy_stats["total_factory_supplied_bytes"],
-                    "run_total_context_bytes": redundancy_stats["total_factory_supplied_bytes"],
+                    "total_factory_supplied_bytes": actual_run_total_bytes,
+                    "run_total_context_bytes": actual_run_total_bytes,
+                    "sampled_context_bytes": redundancy_stats["total_factory_supplied_bytes"],
                     "unique_content_bytes": redundancy_stats["unique_content_bytes"],
                     "repeated_content_bytes": redundancy_stats["repeated_content_bytes"],
                     "redundancy_ratio": redundancy_stats["redundancy_ratio"],
-                    "prompt_count": len(rendered_prompts),
+                    "prompt_count": len(sampled_prompts),
                     "prompt_count_total": total_prompts,
-                    "prompt_count_sampled": len(rendered_prompts),
+                    "prompt_count_sampled": len(sampled_prompts),
                     "prompt_count_capped": is_capped,
                     "required_anchor_recall": round(min_recall, 4) if min_recall is not None else None
                 }
