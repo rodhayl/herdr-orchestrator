@@ -22,6 +22,7 @@ import os
 import pathlib
 import re
 import subprocess
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Global Constants
@@ -791,11 +792,18 @@ class ContextPacket:
     def calculate_required_anchor_recall(self) -> Tuple[float, List[str]]:
         return calculate_anchor_recall(self.required_anchors, self.required_anchors)
 
+    def render_full_prompt(self) -> str:
+        """Returns the full rendered prompt combining the stable prefix and rendered tail."""
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(self.packet_role)
+        return stable_prefix + "\n" + self.rendered_tail
+
     def verify_staleness(self, current_source_hashes: Dict[str, str]) -> Tuple[bool, List[str]]:
         """Checks if any source artifact has changed since packet compilation."""
         stale_reasons = []
+        normalized_curr = {k.replace("_", "-"): v for k, v in current_source_hashes.items()}
         for path, orig_hash in self.source_hashes.items():
-            curr = current_source_hashes.get(path)
+            norm_key = path.replace("_", "-")
+            curr = normalized_curr.get(norm_key, current_source_hashes.get(path))
             if curr != orig_hash:
                 stale_reasons.append(f"{path} changed ({orig_hash[:8]} -> {curr[:8] if curr else 'MISSING'})")
         return len(stale_reasons) > 0, stale_reasons
@@ -1031,9 +1039,29 @@ class ContextCompiler:
             referenced_files.append("README.md")
         if extra_referenced_files:
             referenced_files.extend(extra_referenced_files)
-        # Add dependency changed paths
+        # Add dependency changed paths and normalize handoffs
+        norm_handoffs: List[HandoffPacket] = []
         for ho in handoffs:
-            referenced_files.extend(ho.changed_paths)
+            if isinstance(ho, HandoffPacket):
+                norm_handoffs.append(ho)
+                referenced_files.extend(ho.changed_paths)
+            elif isinstance(ho, dict):
+                hp = HandoffPacket(
+                    handoff_id=ho.get("handoff_id", f"ho-{uuid.uuid4().hex[:8]}"),
+                    producer_task_id=ho.get("producer_task_id", ho.get("from_task", "unknown")),
+                    producer_attempt=ho.get("producer_attempt", ho.get("attempt", 1)),
+                    changed_paths=ho.get("changed_paths", []),
+                    satisfied_criteria=ho.get("satisfied_criteria", []),
+                    commit=ho.get("commit"),
+                    contracts=ho.get("contracts", ""),
+                    decisions=ho.get("decisions", ""),
+                    consumer_notes=ho.get("consumer_notes", ho.get("summary", "")),
+                    known_risks=ho.get("known_risks", ""),
+                    validation_result=ho.get("validation_result", {"passed": True}),
+                )
+                norm_handoffs.append(hp)
+                referenced_files.extend(hp.changed_paths)
+        handoffs = norm_handoffs
         referenced_files = sorted(set(referenced_files))
 
         # Check for inline files (none by default unless explicitly needed)
