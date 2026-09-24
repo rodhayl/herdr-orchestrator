@@ -230,7 +230,7 @@ class TestV8ContextCompiler(unittest.TestCase):
         full_prompt = packet.render_full_prompt()
         self.assertEqual(packet.packet_bytes, len(full_prompt.encode("utf-8")))
         self.assertIsNone(packet.token_count)
-        self.assertEqual(packet.token_count_source, "UNAVAILABLE")
+        self.assertIsNone(packet.token_count_source)
 
 
 if __name__ == "__main__":

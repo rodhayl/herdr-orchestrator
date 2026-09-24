@@ -22,6 +22,7 @@ from tools.context import (
     DEFAULT_CONTEXT_POLICY,
     FilesystemGitContextSource,
     calculate_rendered_anchor_recall,
+    snapshot_secret_env,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -201,16 +202,22 @@ class TestV8IsolationAndSecurity(unittest.TestCase):
         finally:
             del os.environ["HERDR_TOKEN"]
 
-    def test_short_secret_environment_variable_redaction(self):
-        """Verifies that environment secret values with length <= 5 are redacted."""
-        os.environ["SHORT_VAULT_TOKEN"] = "abcde"
+    def test_environment_secret_variable_length_guard(self):
+        """Verifies that environment secrets with length >= 8 are redacted and short values (<8) do not cause false positives."""
+        os.environ["CUSTOM_VAULT_TOKEN"] = "vault-token-xyz-123"
+        os.environ["SHORT_KEY"] = "short"
         try:
-            text = "Using vault token abcde for access"
+            snapshot_secret_env()
+            text = "Using vault token vault-token-xyz-123 and short key"
             redacted = redact_secrets(text)
-            self.assertNotIn("abcde", redacted)
-            self.assertIn("[REDACTED_SHORT_VAULT_TOKEN]", redacted)
+            self.assertNotIn("vault-token-xyz-123", redacted)
+            self.assertIn("[REDACTED_CUSTOM_VAULT_TOKEN]", redacted)
+            # Short value < 8 chars is ignored to prevent false-positive corruption
+            self.assertIn("short", redacted)
         finally:
-            del os.environ["SHORT_VAULT_TOKEN"]
+            del os.environ["CUSTOM_VAULT_TOKEN"]
+            del os.environ["SHORT_KEY"]
+            snapshot_secret_env()
 
 
 if __name__ == "__main__":

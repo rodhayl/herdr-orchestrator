@@ -66,6 +66,11 @@ try:
         StaleContextPacketError,
         OrphanDerivedRequirementError,
         MalformedContextPacketError,
+        redact_secrets,
+        snapshot_secret_env,
+        register_secret_env,
+        validate_criterion_provenance,
+        VALID_PROVENANCES,
     )
     import tools.context as context
     sys.modules.setdefault("context", context)
@@ -105,6 +110,11 @@ except ImportError:
         StaleContextPacketError,
         OrphanDerivedRequirementError,
         MalformedContextPacketError,
+        redact_secrets,
+        snapshot_secret_env,
+        register_secret_env,
+        validate_criterion_provenance,
+        VALID_PROVENANCES,
     )
 
 # Base paths
@@ -316,24 +326,7 @@ SECRET_PATTERNS = [
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
 
 
-def redact_secrets(val):
-    """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
-    if isinstance(val, str):
-        res = val
-        for env_k, env_v in os.environ.items():
-            if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
-                if env_v and env_v.strip():
-                    res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
-        for pat in SECRET_PATTERNS:
-            res = pat.sub("[REDACTED_SECRET]", res)
-        return res
-    elif isinstance(val, list):
-        return [redact_secrets(item) for item in val]
-    elif isinstance(val, tuple):
-        return tuple(redact_secrets(item) for item in val)
-    elif isinstance(val, dict):
-        return {redact_secrets(k): redact_secrets(v) for k, v in val.items()}
-    return val
+# Note: redact_secrets is imported directly from tools.context for consistent load-time secret snapshotting
 
 
 def verify_binary_identity(cmd: str) -> dict:
@@ -4828,6 +4821,10 @@ class FactoryOrchestrator:
                                     ho = self.create_task_handoff(tid, att_id, commit_hash, res)
                                     self.active_handoffs[tid] = ho
                                     self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
+                                    ho_path = self.handoffs_dir / f"{tid}.json"
+                                    save_handoff_packet(ho, ho_path)
+                                    if not ho_path.exists():
+                                        raise ContextError(f"CRITICAL: Failed to persist individual handoff packet for {tid} to {ho_path}")
                                     self.save_manifest()
                             else:
                                 tinfo["canonical_state"] = "CONFLICTED"
@@ -4849,8 +4846,8 @@ class FactoryOrchestrator:
                                 "previous_attempt_id": att_id,
                                 "status": res.get("status", "FAILED"),
                                 "error_category": res.get("state", "FAILED"),
-                                "failing_command": res.get("failing_command"),
-                                "error_excerpt": res.get("error", "")
+                                "failing_command": redact_secrets(res.get("failing_command")),
+                                "error_excerpt": redact_secrets(res.get("error", ""))
                             }
                             self.log_event("TASK_RETRYING", {"task_id": tid, "previous_attempt": att_id, "retry_info": tinfo["retry_info"]})
                         else:
@@ -4945,14 +4942,18 @@ class FactoryOrchestrator:
             # Also check saved context packets on disk
             pkt_dir = self.run_dir / "context" / "packets"
             if pkt_dir.exists():
+                ctx_src = FilesystemGitContextSource(PROJECT_ROOT)
                 for pf in pkt_dir.glob("*.json"):
                     try:
                         p_data = json.loads(pf.read_text(encoding="utf-8"))
-                        reqs = [Anchor.from_dict(a) for a in p_data.get("required_anchors", [])]
-                        tail = p_data.get("rendered_tail", "")
-                        if reqs and tail:
-                            rec, _ = calculate_rendered_anchor_recall(reqs, tail)
-                            observed_recalls.append(rec)
+                        pkt = ContextPacket.from_dict(p_data)
+                        curr_hashes = {f: ctx_src.get_file_hash(f) for f in pkt.source_hashes.keys()}
+                        is_stale, stale_reasons = pkt.verify_staleness(curr_hashes)
+                        if is_stale:
+                            self.log_event("WARNING_STALE_PACKET_SKIPPED", {"packet_file": str(pf), "reasons": stale_reasons})
+                            continue
+                        rec, _ = pkt.calculate_required_anchor_recall()
+                        observed_recalls.append(rec)
                     except Exception as exc:
                         self.log_event("WARNING_PACKET_RELOAD_FAILED", {"packet_file": str(pf), "error": str(exc)})
 
@@ -5535,13 +5536,13 @@ Output ONLY the JSON object.
         c["id"] for c in acceptance_criteria
         if re.search(r"\b(?:test|tests|testing|verify|verification|validate)\b", (c.get("title", "") + " " + c.get("description", "")), re.IGNORECASE)
     ]
-    test_parent = test_matches or ([explicit_ids[-1]] if explicit_ids else ["INVARIANT:DETERMINISTIC_TESTING"])
+    test_parent = test_matches if test_matches else ["INVARIANT:DETERMINISTIC_TESTING"]
 
     cli_matches = [
         c["id"] for c in acceptance_criteria
         if re.search(r"\b(?:cli|command|argument|parser|options|error|exit)\b", (c.get("title", "") + " " + c.get("description", "")), re.IGNORECASE)
     ]
-    cli_parent = cli_matches or ([explicit_ids[0]] if explicit_ids else ["INVARIANT:STDLIB_ONLY"])
+    cli_parent = cli_matches if cli_matches else ["INVARIANT:STDLIB_ONLY"]
 
     derived_criteria = [
         "Deterministic post-execution verification test suite passing 100%",
@@ -5552,7 +5553,7 @@ Output ONLY the JSON object.
         "title": "Deterministic Unit and Integration Tests",
         "description": "Comprehensive test suite under tests/ verifying all requirements deterministically",
         "provenance": "DERIVED",
-        "derived_from": test_parent + ["INVARIANT:DETERMINISTIC_TESTING"],
+        "derived_from": sorted(set(test_parent + ["INVARIANT:DETERMINISTIC_TESTING"])),
         "rationale": "Ensures automated test suite under tests/ runs deterministically and passes 100% across all modules",
         "created_by": "GoalSpecCompiler",
         "downstream_tasks": ["task_unit_tests"],
@@ -5564,7 +5565,7 @@ Output ONLY the JSON object.
         "title": "Clean CLI and Error Handling",
         "description": "Standard error messaging, proper exit codes, and robust argument parsing",
         "provenance": "DERIVED",
-        "derived_from": cli_parent + ["INVARIANT:STDLIB_ONLY"],
+        "derived_from": sorted(set(cli_parent + ["INVARIANT:STDLIB_ONLY"])),
         "rationale": "Ensures CLI subcommands return proper exit codes and write clean errors to stderr",
         "created_by": "GoalSpecCompiler",
         "downstream_tasks": ["task_cli_impl", "task_unit_tests"],

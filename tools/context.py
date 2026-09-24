@@ -105,14 +105,41 @@ SECRET_PATTERNS = [
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
 
+# Freeze load-time environment secret snapshot (never re-read os.environ dynamically during redaction)
+_INITIAL_SECRET_ENV: dict[str, str] = {}
+
+
+def snapshot_secret_env() -> dict[str, str]:
+    """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
+    for _k, _v in os.environ.items():
+        if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
+            if _v and len(_v.strip()) >= 8:
+                _INITIAL_SECRET_ENV[_k] = _v.strip()
+    return _INITIAL_SECRET_ENV
+
+
+def register_secret_env(key: str, val: str) -> None:
+    """Registers a sensitive environment variable into the frozen snapshot for testing or runtime auth."""
+    if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val and len(val.strip()) >= 8:
+        _INITIAL_SECRET_ENV[key] = val.strip()
+
+
+# Initial module-load snapshot
+snapshot_secret_env()
+
 
 def redact_secrets(val: Any) -> Any:
     """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
     if isinstance(val, str):
         res = val
-        for env_k, env_v in os.environ.items():
-            if env_k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(env_k):
-                if env_v and env_v.strip():
+        # Check frozen environment snapshot (no dynamic os.environ scan during redaction)
+        for env_k, env_v in _INITIAL_SECRET_ENV.items():
+            res = res.replace(env_v, f"[REDACTED_{env_k}]")
+        # Check known secret env vars (minimum 8 characters to prevent false positives)
+        for env_k in KNOWN_SECRET_ENV_VARS:
+            if env_k not in _INITIAL_SECRET_ENV:
+                env_v = os.environ.get(env_k)
+                if env_v and len(env_v.strip()) >= 8:
                     res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
@@ -124,6 +151,19 @@ def redact_secrets(val: Any) -> Any:
     elif isinstance(val, dict):
         return {redact_secrets(k): redact_secrets(v) for k, v in val.items()}
     return val
+
+
+VALID_PROVENANCES = {"USER_EXPLICIT", "DERIVED", "MOCK", "TRANSPORT_ONLY", "REAL"}
+
+
+def validate_criterion_provenance(criterion: dict) -> None:
+    """Validates that criterion provenance is a valid member of the closed provenance enum."""
+    cid = criterion.get("id", "unknown")
+    prov = criterion.get("provenance")
+    if not prov or prov not in VALID_PROVENANCES:
+        raise ContextError(
+            f"Criterion '{cid}' has invalid or missing provenance: '{prov}'. Must be one of {sorted(VALID_PROVENANCES)}"
+        )
 
 
 def canonical_json_dump(obj: Any) -> str:
@@ -365,6 +405,9 @@ class HandoffPacket:
                 else:
                     break
 
+        # Bound individual path lengths to 512 bytes
+        self.changed_paths = [str(p)[:512] for p in self.changed_paths]
+
         # Cap structural lists to prevent unbounded growth from mass file changes
         if len(self.changed_paths) > 200:
             truncated_count = len(self.changed_paths) - 200
@@ -388,8 +431,11 @@ class HandoffPacket:
                 break
             b = b_new
         self.handoff_bytes = b
-        if self.handoff_bytes > max_bytes * 2:
-            raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {max_bytes * 2}")
+        actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
+        if actual_bytes != self.handoff_bytes:
+            self.handoff_bytes = actual_bytes
+        if self.handoff_bytes > max_bytes:
+            raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {max_bytes}")
 
     def to_dict_raw(self) -> dict:
         return {
@@ -416,6 +462,10 @@ class HandoffPacket:
 
     @classmethod
     def from_dict(cls, d: dict) -> HandoffPacket:
+        if not d.get("handoff_hash"):
+            raise MalformedContextPacketError(
+                f"HandoffPacket is missing required handoff_hash field: {d.get('handoff_id', 'unknown')}"
+            )
         hp = cls(
             handoff_id=d["handoff_id"],
             producer_task_id=d["producer_task_id"],
@@ -432,12 +482,11 @@ class HandoffPacket:
             handoff_hash=d.get("handoff_hash", ""),
             created_at=d.get("created_at", ""),
         )
-        if hp.handoff_hash:
-            computed = sha256_text(canonical_json_dump(hp.to_dict_raw()))
-            if computed != hp.handoff_hash:
-                raise MalformedContextPacketError(
-                    f"Handoff integrity verification failed for {hp.handoff_id}: stored hash {hp.handoff_hash[:8]} != computed hash {computed[:8]}"
-                )
+        computed = sha256_text(canonical_json_dump(hp.to_dict_raw()))
+        if computed != hp.handoff_hash:
+            raise MalformedContextPacketError(
+                f"Handoff integrity verification failed for {hp.handoff_id}: stored hash {hp.handoff_hash[:8]} != computed hash {computed[:8]}"
+            )
         return hp
 
     def render_markdown(self) -> str:
@@ -516,7 +565,12 @@ class FilesystemGitContextSource(ContextSource):
     def _resolve_safe_path(self, rel_path: str) -> pathlib.Path:
         if self._is_sensitive_path(rel_path):
             raise ContextError(f"Access to sensitive file path '{rel_path}' is forbidden")
-        target = (self.project_root / rel_path).resolve()
+        raw_path = self.project_root / rel_path
+        if raw_path.is_symlink():
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
+        target = raw_path.resolve()
+        if target.is_symlink():
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
         # Path traversal guard
         try:
             target.relative_to(self.project_root)
@@ -526,6 +580,8 @@ class FilesystemGitContextSource(ContextSource):
 
     def get_file_hash(self, rel_path: str) -> str:
         path = self._resolve_safe_path(rel_path)
+        if path.is_symlink():
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
         if not path.exists() or not path.is_file():
             return "MISSING"
         try:
@@ -535,6 +591,8 @@ class FilesystemGitContextSource(ContextSource):
 
     def get_file_bytes(self, rel_path: str) -> int:
         path = self._resolve_safe_path(rel_path)
+        if path.is_symlink():
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
         if not path.exists() or not path.is_file():
             return 0
         try:
@@ -544,6 +602,8 @@ class FilesystemGitContextSource(ContextSource):
 
     def read_file_excerpt(self, rel_path: str, max_bytes: int = DEFAULT_MAX_INLINE_BYTES) -> Tuple[str, bool, str]:
         path = self._resolve_safe_path(rel_path)
+        if path.is_symlink():
+            raise ContextError(f"Symlinked file '{rel_path}' cannot be accessed directly by ContextSource")
         if not path.exists() or not path.is_file():
             return "", False, "MISSING"
 
@@ -651,16 +711,20 @@ class FilesystemGitContextSource(ContextSource):
                 # Screen diff hunks for sensitive file paths
                 filtered_lines = []
                 skipping_sensitive = False
+                redacted_count = 0
                 for line in raw_diff.splitlines(keepends=True):
                     if line.startswith("diff --git "):
                         parts = line.split()
-                        file_b = parts[-1].lstrip("b/") if len(parts) >= 4 else ""
-                        skipping_sensitive = self._is_sensitive_path(file_b)
+                        file_a = parts[2].removeprefix("a/") if len(parts) >= 3 else ""
+                        file_b = parts[-1].removeprefix("b/") if len(parts) >= 4 else ""
+                        skipping_sensitive = (file_a and self._is_sensitive_path(file_a)) or (file_b and self._is_sensitive_path(file_b))
                         if skipping_sensitive:
-                            filtered_lines.append(f"diff --git {file_b} [SENSITIVE FILE CONTENT REDACTED]\n")
+                            redacted_count += 1
                             continue
                     if not skipping_sensitive:
                         filtered_lines.append(line)
+                if redacted_count > 0:
+                    filtered_lines.insert(0, f"[{redacted_count} SENSITIVE FILE(S) REDACTED]\n")
                 clean_diff = "".join(filtered_lines)
                 encoded = clean_diff.encode("utf-8")
                 if len(encoded) > max_bytes:
@@ -816,13 +880,7 @@ class ContextPolicy:
 
     def get_role_policy(self, role: str) -> dict:
         if role not in self.roles:
-            return {
-                "soft_budget_bytes": 4096,
-                "hard_budget_bytes": 12288,
-                "session_mode": "fresh",
-                "max_handoff_bytes": 4096,
-                "allow_zero_required_anchors": False,
-            }
+            raise ContextError(f"Unknown context policy role: '{role}'. Must be one of {sorted(self.roles.keys())}")
         return self.roles[role]
 
     @classmethod
@@ -1063,11 +1121,11 @@ class ContextPacket:
         return calculate_rendered_anchor_recall(self.required_anchors, rendered)
 
     def render_full_prompt(self) -> str:
-        """Returns the full rendered prompt combining the stable prefix and rendered tail."""
+        """Returns the full rendered prompt combining the stable prefix and rendered tail, secret-redacted."""
         if not self.rendered_tail:
             raise ContextError(f"ContextPacket {self.packet_id} has empty rendered_tail; cannot render full prompt")
         stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(self.packet_role)
-        return stable_prefix + "\n" + self.rendered_tail
+        return redact_secrets(stable_prefix + "\n" + self.rendered_tail)
 
     def verify_staleness(self, current_source_hashes: Dict[str, str]) -> Tuple[bool, List[str]]:
         """Checks if any source artifact has changed since packet compilation."""
@@ -1302,6 +1360,8 @@ class ContextCompiler:
         criteria_map = {c["id"]: c for c in goal_spec.get("acceptance_criteria", [])}
         satisfies_ids = task_def.get("satisfies", [])
         task_requirements = [criteria_map[cid] for cid in satisfies_ids if cid in criteria_map]
+        for r in task_requirements:
+            validate_criterion_provenance(r)
 
         # Build Anchors
         anchors: List[Anchor] = []
@@ -1459,8 +1519,12 @@ class ContextCompiler:
                 f"CONTEXT_BUDGET_EXCEEDED: Task {task_id} context size ({current_bytes} bytes) exceeds hard budget ({hard_budget} bytes)"
             )
 
-        # Gate: Calculate required anchor recall
-        recall, missing = calculate_rendered_anchor_recall(anchors, current_tail)
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_rendered_prompt = redact_secrets(stable_prefix + "\n" + current_tail)
+        full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
+
+        # Gate: Calculate required anchor recall against full assembled prompt
+        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(
                 f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
@@ -1468,9 +1532,6 @@ class ContextCompiler:
 
         packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(current_tail)[:8]}"
         packet_hash = sha256_text(current_tail)
-
-        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
-        full_packet_bytes = len((stable_prefix + "\n" + current_tail).encode("utf-8"))
 
         return TaskContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1504,7 +1565,7 @@ class ContextCompiler:
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=current_tail,
             token_count=None,
-            token_count_source="UNAVAILABLE",
+            token_count_source=None,
         )
 
     def compile_planner_packet(
@@ -1549,6 +1610,7 @@ class ContextCompiler:
         if structured_requirements:
             sections.append("\n### Pre-Structured Acceptance Criteria:")
             for req in structured_requirements:
+                validate_criterion_provenance(req)
                 cid = req.get("id", "R")
                 desc = req.get("description", "")
                 sections.append(f"- **{cid}**: {desc}")
@@ -1583,15 +1645,16 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Planner context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
-        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
+        full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
+
+        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Planner packet missing required anchors: {missing}")
 
         packet_id = f"ctx-plan-{goal_id}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
-
-        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
-        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return PlannerContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1622,7 +1685,7 @@ class ContextCompiler:
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
             token_count=None,
-            token_count_source="UNAVAILABLE",
+            token_count_source=None,
         )
 
     def compile_plan_review_packet(
@@ -1647,6 +1710,7 @@ class ContextCompiler:
         # Build anchors for all criteria and deterministic validations
         anchors = []
         for r in goal_spec.get("acceptance_criteria", []):
+            validate_criterion_provenance(r)
             anchors.append(
                 Anchor(
                     anchor_id=f"req:{r['id']}",
@@ -1735,15 +1799,16 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
-        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
+        full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
+
+        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Plan review packet missing required anchors: {missing}")
 
         packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
-
-        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
-        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return PlanReviewContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1774,7 +1839,7 @@ class ContextCompiler:
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
             token_count=None,
-            token_count_source="UNAVAILABLE",
+            token_count_source=None,
         )
 
     def compile_audit_packet(
@@ -1800,6 +1865,7 @@ class ContextCompiler:
         # Build anchors
         anchors = []
         for r in goal_spec.get("acceptance_criteria", []):
+            validate_criterion_provenance(r)
             anchors.append(
                 Anchor(
                     anchor_id=f"req:{r['id']}",
@@ -1860,15 +1926,16 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Audit context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
-        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
+        full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
+
+        recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Audit packet missing required anchors: {missing}")
 
         packet_id = f"ctx-aud-{goal_spec.get('goal_id')}-r{round_num}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
-
-        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
-        full_packet_bytes = len((stable_prefix + "\n" + tail).encode("utf-8"))
 
         return AuditContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1899,7 +1966,7 @@ class ContextCompiler:
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             rendered_tail=tail,
             token_count=None,
-            token_count_source="UNAVAILABLE",
+            token_count_source=None,
         )
 
 
@@ -1929,13 +1996,14 @@ class DerivedRequirementAuditor:
         derived_criteria = []
         orphan_criteria = []
 
-        explicit_ids = {c["id"] for c in criteria if c.get("provenance") == "USER_EXPLICIT"}
+        explicit_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "MOCK", "TRANSPORT_ONLY", "REAL"}}
         all_valid_parents = explicit_ids.union(set(cls.HARD_INVARIANTS.keys()))
 
         for c in criteria:
+            validate_criterion_provenance(c)
             cid = c["id"]
-            prov = c.get("provenance", "USER_EXPLICIT")
-            if prov == "USER_EXPLICIT":
+            prov = c.get("provenance")
+            if prov in {"USER_EXPLICIT", "MOCK", "TRANSPORT_ONLY", "REAL"}:
                 explicit_criteria.append(c)
             elif prov == "DERIVED":
                 # Validate derivation: requires non-empty derived_from and rationale
@@ -1945,8 +2013,8 @@ class DerivedRequirementAuditor:
                     orphan_criteria.append(cid)
                     continue
 
-                # Ensure at least one parent matches an explicit criterion or hard invariant
-                valid_trace = any(p in all_valid_parents for p in parents)
+                # Ensure all parents match an existing criterion or defined hard invariant
+                valid_trace = bool(parents) and all(p in all_valid_parents for p in parents)
                 if not valid_trace:
                     orphan_criteria.append(cid)
                 else:
