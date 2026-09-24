@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GoalSpec",
+  "type": "object",
+  "properties": {
+    "goal_id": {
+      "type": "string",
+      "description": "Unique identifier for this goal"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short title summarizing the goal"
+    },
+    "raw_goal": {
+      "type": "string",
+      "description": "Verbatim text of the input goal"
+    },
+    "user_explicit_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of explicit user requirements parsed directly from goal"
+    },
+    "derived_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of derived technical criteria necessary for execution"
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of explicitly excluded non-goals"
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of technical or operational constraints"
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "provenance": {
+            "type": "string",
+            "enum": ["USER_EXPLICIT", "DERIVED"]
+          }
+        },
+        "required": ["id", "title", "description", "provenance"]
+      },
+      "description": "Canonical list of acceptance criteria tagged with provenance"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO-8601 creation timestamp"
+    }
+  },
+  "required": [
+    "goal_id",
+    "title",
+    "raw_goal",
+    "user_explicit_criteria",
+    "derived_criteria",
+    "acceptance_criteria"
+  ]
+}

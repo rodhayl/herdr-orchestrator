@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GoalControllerState",
+  "type": "object",
+  "properties": {
+    "goal_id": { "type": "string" },
+    "project_root": { "type": "string" },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "RECEIVED",
+        "DISCOVERING",
+        "STRUCTURING",
+        "PLANNING",
+        "PLAN_VALIDATING",
+        "PLAN_REVIEWING",
+        "READY",
+        "EXECUTING",
+        "POST_VALIDATING",
+        "AUDITING",
+        "REMEDIATING",
+        "COMPLETE",
+        "FAILED",
+        "BLOCKED"
+      ]
+    },
+    "plan_revision_count": { "type": "integer", "default": 0 },
+    "remediation_round_count": { "type": "integer", "default": 0 },
+    "goal_spec_path": { "type": "string" },
+    "current_plan_path": { "type": "string" },
+    "approved_plan_path": { "type": "string" },
+    "run_id": { "type": "string" },
+    "validation_results": { "type": "array" },
+    "audit_results": { "type": "array" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "error": { "type": "string" }
+  },
+  "required": [
+    "goal_id",
+    "project_root",
+    "phase",
+    "plan_revision_count",
+    "remediation_round_count",
+    "created_at",
+    "updated_at"
+  ]
+}

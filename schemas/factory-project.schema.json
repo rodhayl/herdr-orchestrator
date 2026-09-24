@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FactoryProjectPolicy",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Factory policy schema version"
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Human-readable name of the target project"
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of allowed path prefixes/globs within target project root"
+    },
+    "forbidden_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of strictly forbidden path prefixes/globs within target project root"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_tasks": { "type": "integer", "minimum": 1, "default": 12 },
+        "max_task_attempts": { "type": "integer", "minimum": 1, "default": 2 },
+        "max_plan_revisions": { "type": "integer", "minimum": 0, "default": 2 },
+        "max_remediation_rounds": { "type": "integer", "minimum": 0, "default": 2 },
+        "max_concurrency": { "type": "integer", "minimum": 1, "default": 4 }
+      },
+      "additionalProperties": false
+    },
+    "execution_policy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["real_only", "mock_allowed"],
+          "default": "real_only"
+        },
+        "planner_profile": { "type": "string", "default": "agy-spec-high" },
+        "plan_reviewer_profile": { "type": "string", "default": "agy-audit-high" },
+        "final_auditor_profile": { "type": "string", "default": "agy-audit-high" }
+      },
+      "additionalProperties": false
+    },
+    "routing_overrides": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Mapping from task_type or tag to preferred profile_id"
+    }
+  },
+  "required": ["version", "project_name"]
+}
