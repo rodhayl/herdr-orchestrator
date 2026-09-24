@@ -111,9 +111,9 @@ if herdr_ver != board_supported_herdr:
 matrix = [
     {
         "component": "Factory Engine",
-        "prev_certified": prev_lock.get("factory", {}).get("version", "6.1.0"),
-        "installed": "7.0.0",
-        "latest_stable": "7.0.0",
+        "prev_certified": prev_lock.get("factory", {}).get("version", "8.0.0"),
+        "installed": "8.0.0",
+        "latest_stable": "8.0.0",
         "action": "Maintain",
         "evidence": "Local package declaration"
     },
@@ -217,7 +217,7 @@ matrix = [
 ]
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v7.0.0) — Toolchain & Package Update Gate")
+print("AGY-Herdr Software Factory (v8.0.0) — Toolchain & Package Update Gate")
 print("=" * 80)
 header_fmt = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
 row_fmt    = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
