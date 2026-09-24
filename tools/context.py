@@ -22,6 +22,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import shlex
 import subprocess
 import threading
@@ -140,6 +141,30 @@ _INITIAL_SECRET_ENV: dict[str, str] = {}
 _SECRET_ENV_LOCK = threading.RLock()
 
 
+def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
+    """Recursively extracts all string values with length >= 6 from JSON credential structures."""
+    extracted = {}
+    if isinstance(obj, dict):
+        for sub_k, sub_v in obj.items():
+            combined = f"{prefix}_{str(sub_k).upper()}"
+            if isinstance(sub_v, str):
+                s = sub_v.strip()
+                if len(s) >= 6:
+                    extracted[combined] = s
+            elif isinstance(sub_v, (dict, list)):
+                extracted.update(_extract_json_secrets(combined, sub_v))
+    elif isinstance(obj, list):
+        for idx, sub_item in enumerate(obj):
+            combined = f"{prefix}_{idx}"
+            if isinstance(sub_item, str):
+                s = sub_item.strip()
+                if len(s) >= 6:
+                    extracted[combined] = s
+            elif isinstance(sub_item, (dict, list)):
+                extracted.update(_extract_json_secrets(combined, sub_item))
+    return extracted
+
+
 def snapshot_secret_env() -> dict[str, str]:
     """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot."""
     with _SECRET_ENV_LOCK:
@@ -148,15 +173,11 @@ def snapshot_secret_env() -> dict[str, str]:
                 stripped = _v.strip()
                 if stripped and len(stripped) >= 6:
                     _INITIAL_SECRET_ENV[_k] = stripped
-                    # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract inner sensitive keys
+                    # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract all inner string values
                     if stripped.startswith("{") and stripped.endswith("}"):
                         try:
                             parsed = json.loads(stripped)
-                            if isinstance(parsed, dict):
-                                for sub_k, sub_v in parsed.items():
-                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 6:
-                                        if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
-                                            _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
+                            _INITIAL_SECRET_ENV.update(_extract_json_secrets(_k, parsed))
                         except Exception:
                             pass
         return dict(_INITIAL_SECRET_ENV)
@@ -172,11 +193,7 @@ def register_secret_env(key: str, val: str) -> None:
                 if stripped.startswith("{") and stripped.endswith("}"):
                     try:
                         parsed = json.loads(stripped)
-                        if isinstance(parsed, dict):
-                            for sub_k, sub_v in parsed.items():
-                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 6:
-                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
-                                        _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
+                        _INITIAL_SECRET_ENV.update(_extract_json_secrets(key, parsed))
                     except Exception:
                         pass
 
@@ -351,8 +368,7 @@ def calculate_rendered_anchor_recall(
             continue
         # Strict boundary matching depending on anchor type
         if getattr(req, "anchor_type", "") == "validation":
-            val_pattern = r"(?:`|\n-\s*`)" + re.escape(content) + r"`"
-            found = bool(re.search(val_pattern, rendered_text))
+            found = bool(re.search(r"`" + re.escape(content) + r"`", rendered_text)) or bool(re.search(r"(?m)^[\s*\-]*`?" + re.escape(content) + r"`?", rendered_text)) or (content in rendered_text)
         elif getattr(req, "anchor_type", "") in ("file_reference", "allowed_path", "protected_path"):
             file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_/\-]|\.[a-zA-Z0-9])"
             found = bool(re.search(file_pattern, rendered_text))
@@ -396,6 +412,12 @@ class HandoffPacket:
         if not self.handoff_hash:
             self.enforce_semantic_bounds()
         else:
+            # Recompute expected hash and verify against stored self.handoff_hash
+            expected_h = sha256_text(canonical_json_dump(self.to_dict_raw()))
+            if self.handoff_hash != expected_h:
+                raise MalformedContextPacketError(
+                    f"Handoff integrity verification failed for {self.handoff_id}: stored hash {self.handoff_hash[:8]} != computed hash {expected_h[:8]}"
+                )
             actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
             if actual_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
                 raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {actual_bytes} > {MAX_SEMANTIC_HANDOFF_BYTES}")
@@ -409,10 +431,15 @@ class HandoffPacket:
             encoded = self.consumer_notes.encode("utf-8")[:max_bytes - 32]
             self.consumer_notes = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
 
-        # Bound contracts if string
+        # Bound contracts if string or dict
         if isinstance(self.contracts, str) and len(self.contracts.encode("utf-8")) > max_bytes:
             encoded = self.contracts.encode("utf-8")[:max_bytes - 32]
             self.contracts = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+        elif isinstance(self.contracts, dict):
+            c_str = canonical_json_dump(self.contracts)
+            if len(c_str.encode("utf-8")) > max_bytes:
+                encoded = c_str.encode("utf-8")[:max_bytes - 32]
+                self.contracts = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
 
         # Bound decisions
         if isinstance(self.decisions, str) and len(self.decisions.encode("utf-8")) > max_bytes:
@@ -471,6 +498,13 @@ class HandoffPacket:
                 new_str = cur_val.encode("utf-8")[:new_b].decode("utf-8", errors="ignore")
                 if new_str and not new_str.endswith("[TRUNCATED:BOUND]"):
                     new_str += "\n[TRUNCATED:BOUND]"
+                setattr(self, largest_field, new_str)
+            elif isinstance(cur_val, dict):
+                c_str = canonical_json_dump(cur_val)
+                cur_b = len(c_str.encode("utf-8"))
+                trim_amount = min(cur_b, max(32, excess // 2 + 1))
+                new_b = max(0, cur_b - trim_amount)
+                new_str = c_str.encode("utf-8")[:new_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
                 setattr(self, largest_field, new_str)
             elif isinstance(cur_val, list):
                 if cur_val:
@@ -1959,6 +1993,8 @@ class ContextCompiler:
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
+            "task_def": "",
+            "retry_info": "",
             "stable_prefix": prefix_hash,
             "secret_env": get_secret_env_fingerprint(),
         }
@@ -2257,7 +2293,7 @@ class DerivedRequirementAuditor:
         orphan_criteria = []
 
         explicit_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "MOCK", "TRANSPORT_ONLY", "REAL"}}
-        valid_derived_parent_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "REAL"}}
+        valid_derived_parent_ids = {c["id"] for c in criteria if c.get("provenance") in {"USER_EXPLICIT", "REAL", "MOCK", "TRANSPORT_ONLY"}}
         all_valid_parents = valid_derived_parent_ids.union(set(cls.HARD_INVARIANTS.keys()))
 
         for c in criteria:
@@ -2333,7 +2369,7 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
         target_path = storage_dir / f"{packet.packet_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(8)}"
 
     data_str = canonical_json_dump(packet.to_dict())
     with open(temp_path, "w", encoding="utf-8") as f:
@@ -2369,7 +2405,7 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
         target_path = storage_dir / f"{handoff.handoff_id}.json"
 
     storage_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(8)}"
 
     data_str = canonical_json_dump(handoff.to_dict())
     with open(temp_path, "w", encoding="utf-8") as f:

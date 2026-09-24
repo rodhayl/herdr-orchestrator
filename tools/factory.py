@@ -19,12 +19,14 @@ import datetime
 import fnmatch
 import glob
 import hashlib
+import html
 import inspect
 import json
 import math
 import os
 import pathlib
 import re
+import secrets
 import shlex
 import shutil
 import sqlite3
@@ -639,7 +641,7 @@ def assert_real_certifiable(manifest: dict) -> tuple[bool, str]:
 def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
     """Atomically writes data to a JSON file using a unique temp file, flush, fsync, and replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}")
+    tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(16)}")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=indent)
         f.flush()
@@ -3686,7 +3688,7 @@ class TaskExecutor:
 
         self.plan = copy.deepcopy(plan or {"tasks": [self.task]})
         self.handoffs = copy.deepcopy(handoffs or [])
-        self.retry_info = copy.deepcopy(retry_info)
+        self.retry_info = redact_secrets(copy.deepcopy(retry_info)) if retry_info else None
         if context_compiler:
             self.context_compiler = copy.deepcopy(context_compiler)
         else:
@@ -3754,6 +3756,8 @@ class TaskExecutor:
             current_source_hashes = {
                 "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                 "plan": sha256_text(canonical_json_dump(self.plan)),
+                "task_def": "",
+                "retry_info": "",
                 "stable_prefix": packet.source_hashes.get("stable_prefix"),
                 "secret_env": get_secret_env_fingerprint(),
             }
@@ -3764,6 +3768,12 @@ class TaskExecutor:
                 )
             self.current_context_packet = packet
             return prompt_content
+
+        # Filter expected_files and context_files through sensitive path checks before compilation
+        ctx_src = getattr(self.context_compiler, "source", None)
+        for cand in list(self.expected_files) + list(self.context_files):
+            if ctx_src and ctx_src._is_sensitive_path(cand):
+                raise ContextError(f"Sensitive path pattern detected in task file references: {cand}")
 
         # Normal worker task: compile immutable TaskContextPacket
         extra_refs = [f for f in self.expected_files]
@@ -3882,7 +3892,8 @@ class TaskExecutor:
                     packets_dir.mkdir(parents=True, exist_ok=True)
                     save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
         except (ContextAnchorMissingError, ContextError) as err:
-            return {
+            self.state = "FAILED"
+            fail_rec = {
                 "attempt_id": attempt_id,
                 "task_id": self.task_id,
                 "status": "FAILED",
@@ -3893,8 +3904,17 @@ class TaskExecutor:
                 "start_time": start_time,
                 "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
+            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+            self.attempts.append(fail_rec)
+            self.latest_result = fail_rec
+            try:
+                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+            except Exception:
+                pass
+            return fail_rec
         except Exception as err:
-            return {
+            self.state = "FAILED"
+            fail_rec = {
                 "attempt_id": attempt_id,
                 "task_id": self.task_id,
                 "status": "FAILED",
@@ -3905,9 +3925,36 @@ class TaskExecutor:
                 "start_time": start_time,
                 "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
+            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+            self.attempts.append(fail_rec)
+            self.latest_result = fail_rec
+            try:
+                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+            except Exception:
+                pass
+            return fail_rec
 
         if not prompt_content:
-            raise ContextError(f"Prompt content was not initialized before execution for attempt #{attempt_id}")
+            self.state = "FAILED"
+            fail_rec = {
+                "attempt_id": attempt_id,
+                "task_id": self.task_id,
+                "status": "FAILED",
+                "state": "FAILED",
+                "error_category": "CONTEXT_COMPILATION_FAILED",
+                "error": f"Prompt content was not initialized before execution for attempt #{attempt_id}",
+                "exit_code": 1,
+                "start_time": start_time,
+                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+            atomic_write_json(attempt_dir / "attempt_record.json", fail_rec)
+            self.attempts.append(fail_rec)
+            self.latest_result = fail_rec
+            try:
+                self.adapter.cleanup_attempt(self.run_id, self.task_id, attempt_id, env_info)
+            except Exception:
+                pass
+            return fail_rec
 
         custom_schema = self.task.get("result_schema")
         if custom_schema:
@@ -4236,7 +4283,7 @@ class TaskExecutor:
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
             raw_tail_bytes = len(pkt.rendered_tail.encode("utf-8"))
-            factory_bytes = sp_bytes + dynamic_bytes
+            factory_bytes = len((sp_prefix + "\n" + clean_tail).encode("utf-8"))
             rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
 
@@ -4520,6 +4567,10 @@ class FactoryOrchestrator:
         raw_summary = attempt_result.get("structured_output", {}).get("summary", f"Completed {task_id}")
         raw_notes = attempt_result.get("structured_output", {}).get("notes", "")
 
+        # Guard against uninitialized or missing goal_spec
+        if not self.goal_spec or not isinstance(self.goal_spec, dict):
+            self.goal_spec = {"acceptance_criteria": []}
+
         # Sanitize worker-supplied fields to prevent prompt injection or markdown smuggling
         def _sanitize_worker_text(val: str, max_chars: int = 512) -> str:
             if not isinstance(val, str):
@@ -4528,16 +4579,19 @@ class FactoryOrchestrator:
             # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
             val = "".join(c for c in val if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
             val = redact_secrets(val)
-            # Strip ANSI escape sequences
-            cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", val)
+            # Pass 1: Homoglyph normalization and injection filtering before HTML stripping
+            val = normalize_homoglyphs(unicodedata.normalize("NFKC", val))
+            val = INJECTION_PATTERN.sub("[FILTERED]", val)
+            # HTML entity decode and ANSI escape sequence stripping
+            cleaned = html.unescape(val)
+            cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", cleaned)
             # Strip markdown headers, code fences, and backticks
             cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Re-normalize with NFKC and homoglyphs after all stripping steps
+            # Pass 2: Re-normalize with NFKC and homoglyphs after HTML stripping to catch reassembled tokens
             cleaned = normalize_homoglyphs(unicodedata.normalize("NFKC", cleaned))
-            # Filter adversarial prompt injection variants and role markers using canonical pattern
             cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
@@ -4586,6 +4640,7 @@ class FactoryOrchestrator:
         """Collects verified predecessor HandoffPackets for a task definition, failing fast on missing or invalid handoffs."""
         task_deps = tdef.get("dependencies", [])
         task_handoffs = []
+        candidates = []
         with self._manifest_lock:
             for dep_id in task_deps:
                 if not isinstance(dep_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", dep_id):
@@ -4615,18 +4670,21 @@ class FactoryOrchestrator:
                             raise RuntimeError(clean_err)
 
                 if ho is not None:
-                    # If git repository and real commit hex, verify commit is reachable in repository history
-                    if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
-                        verify_res = subprocess.run(
-                            ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
-                            cwd=str(PROJECT_ROOT),
-                            capture_output=True
-                        )
-                        if verify_res.returncode != 0:
-                            clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
-                            self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
-                            raise RuntimeError(clean_err)
-                    task_handoffs.append(ho)
+                    candidates.append((dep_id, ho))
+
+        # Perform git history reachability checks outside manifest lock to prevent blocking or priority inversion
+        for dep_id, ho in candidates:
+            if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
+                verify_res = subprocess.run(
+                    ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
+                    cwd=str(PROJECT_ROOT),
+                    capture_output=True
+                )
+                if verify_res.returncode != 0:
+                    clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
+                    self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                    raise RuntimeError(clean_err)
+            task_handoffs.append(ho)
         return task_handoffs
 
     def _build_task_graph(self):
@@ -4776,6 +4834,7 @@ class FactoryOrchestrator:
 
     def reconcile_state(self):
         """Reconciles durable state across cases A through F when resuming an interrupted run."""
+        snapshot_secret_env()
         self.log_event("RECONCILIATION_STARTED", {"run_id": self.run_id})
 
         for tid, tinfo in self.manifest["tasks"].items():
@@ -4823,6 +4882,7 @@ class FactoryOrchestrator:
                             reconcile_rinfo = json.loads(rinfo_file.read_text(encoding="utf-8"))
                         except Exception:
                             pass
+                    reconcile_rinfo = redact_secrets(reconcile_rinfo) if reconcile_rinfo else None
                     executor = TaskExecutor(
                         self.run_id,
                         self.tasks_def[tid],
@@ -4864,6 +4924,7 @@ class FactoryOrchestrator:
                             reconcile_rinfo = json.loads(rinfo_file.read_text(encoding="utf-8"))
                         except Exception:
                             pass
+                    reconcile_rinfo = redact_secrets(reconcile_rinfo) if reconcile_rinfo else None
                     # Re-run attempt evaluation
                     executor = TaskExecutor(
                         self.run_id,
@@ -5262,8 +5323,15 @@ class FactoryOrchestrator:
                 for att in tinfo.get("attempts", []):
                     att_id = att.get("attempt_id", 1)
                     p_file = self.run_dir / "workers" / tid / f"att-{att_id}" / "prompt.md"
-                    if p_file.exists() and p_file.stat().st_size <= 1024 * 1024:
-                        rendered_prompts.append(p_file.read_text(encoding="utf-8"))
+                    if p_file.exists():
+                        try:
+                            with open(p_file, "r", encoding="utf-8") as pf_handle:
+                                prompt_raw = pf_handle.read(1024 * 1024 + 1)
+                            if len(prompt_raw) <= 1024 * 1024:
+                                clean_prompt = redact_secrets(prompt_raw)
+                                rendered_prompts.append(clean_prompt)
+                        except Exception:
+                            pass
                     cm = att.get("context_metrics", {})
                     if "required_anchor_recall" in cm and cm["required_anchor_recall"] is not None:
                         observed_recalls.append(float(cm["required_anchor_recall"]))
