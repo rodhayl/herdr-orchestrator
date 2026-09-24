@@ -101,6 +101,7 @@ SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"[a-zA-Z][a-zA-Z0-9+\-.]*://[^:@/\s]+:[^:@/\s]+@", re.IGNORECASE),
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
@@ -321,6 +322,9 @@ class HandoffPacket:
             self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if not self.handoff_hash:
             self.enforce_semantic_bounds()
+        else:
+            if self.handoff_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
+                raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {MAX_SEMANTIC_HANDOFF_BYTES}")
 
     def enforce_semantic_bounds(self, max_bytes: int = MAX_SEMANTIC_HANDOFF_BYTES) -> None:
         """Enforces hard bound on semantic free-text fields without losing deterministic facts."""
@@ -521,6 +525,22 @@ class HandoffPacket:
             handoff_hash=stored_hash,
             created_at=d.get("created_at", ""),
         )
+        # Verify semantic bounds on loaded packet to prevent unconstrained reload injection
+        actual_bytes = len(canonical_json_dump(hp.to_dict()).encode("utf-8"))
+        if actual_bytes > MAX_SEMANTIC_HANDOFF_BYTES or hp.handoff_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
+            raise MalformedContextPacketError(
+                f"Handoff packet {hp.handoff_id} payload exceeds maximum semantic bound: {max(actual_bytes, hp.handoff_bytes)} > {MAX_SEMANTIC_HANDOFF_BYTES}"
+            )
+        for field_name, field_val in [
+            ("consumer_notes", hp.consumer_notes),
+            ("contracts", hp.contracts),
+            ("decisions", hp.decisions),
+            ("known_risks", hp.known_risks),
+        ]:
+            if isinstance(field_val, str) and len(field_val.encode("utf-8")) > MAX_SEMANTIC_HANDOFF_BYTES:
+                raise MalformedContextPacketError(
+                    f"Handoff packet {hp.handoff_id} field '{field_name}' exceeds maximum semantic bound: {len(field_val.encode('utf-8'))} > {MAX_SEMANTIC_HANDOFF_BYTES}"
+                )
         return hp
 
     def render_markdown(self) -> str:
@@ -1382,12 +1402,16 @@ class ContextCompiler:
         soft_budget = role_policy["soft_budget_bytes"]
         hard_budget = role_policy["hard_budget_bytes"]
 
+        stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
+
         # Track sources and hashes
         source_artifacts = ["goal-spec.json", "plan.json"]
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
             "task_def": sha256_text(canonical_json_dump(task_def)),
+            "retry_info": sha256_text(canonical_json_dump(retry_info or {})),
+            "stable_prefix": prefix_hash,
         }
 
         # Build scoped acceptance criteria
@@ -1445,6 +1469,28 @@ class ContextCompiler:
             referenced_files.append("README.md")
         if extra_referenced_files:
             referenced_files.extend(extra_referenced_files)
+            for ef in extra_referenced_files:
+                anchors.append(
+                    Anchor(
+                        anchor_id=f"extra_ref:{sha256_text(ef)[:8]}",
+                        anchor_type="file_reference",
+                        source="extra_referenced_files",
+                        source_hash=sha256_text(ef),
+                        content=ef,
+                        required=False,
+                    )
+                )
+        for cf in task_def.get("context_files", []):
+            anchors.append(
+                Anchor(
+                    anchor_id=f"context_file:{sha256_text(cf)[:8]}",
+                    anchor_type="file_reference",
+                    source="task_def:context_files",
+                    source_hash=sha256_text(cf),
+                    content=cf,
+                    required=False,
+                )
+            )
         # Add dependency changed paths and normalize handoffs
         norm_handoffs: List[HandoffPacket] = []
         handoff_required_paths: Set[str] = set()
@@ -1564,8 +1610,8 @@ class ContextCompiler:
                 f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
             )
 
-        packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(current_tail)[:8]}"
-        packet_hash = sha256_text(current_tail)
+        packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(full_rendered_prompt)[:8]}"
+        packet_hash = sha256_text(full_rendered_prompt)
 
         return TaskContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1617,9 +1663,12 @@ class ContextCompiler:
         soft_budget = role_policy["soft_budget_bytes"]
         hard_budget = role_policy["hard_budget_bytes"]
 
+        stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
+
         source_artifacts = ["GOAL.md"] if (self.source.project_root / "GOAL.md").exists() else []
         source_hashes = {
             "raw_goal": sha256_text(raw_goal),
+            "stable_prefix": prefix_hash,
         }
 
         anchors = [
@@ -1716,8 +1765,8 @@ class ContextCompiler:
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Planner packet missing required anchors: {missing}")
 
-        packet_id = f"ctx-plan-{goal_id}-{sha256_text(tail)[:8]}"
-        packet_hash = sha256_text(tail)
+        packet_id = f"ctx-plan-{goal_id}-{sha256_text(full_rendered_prompt)[:8]}"
+        packet_hash = sha256_text(full_rendered_prompt)
 
         return PlannerContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1764,10 +1813,13 @@ class ContextCompiler:
         soft_budget = role_policy["soft_budget_bytes"]
         hard_budget = role_policy["hard_budget_bytes"]
 
+        stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
+
         source_artifacts = ["goal-spec.json", "plan.json"]
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
+            "stable_prefix": prefix_hash,
         }
 
         # Build anchors for all criteria and deterministic validations
@@ -1870,8 +1922,8 @@ class ContextCompiler:
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Plan review packet missing required anchors: {missing}")
 
-        packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(tail)[:8]}"
-        packet_hash = sha256_text(tail)
+        packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(full_rendered_prompt)[:8]}"
+        packet_hash = sha256_text(full_rendered_prompt)
 
         return PlanReviewContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -1919,10 +1971,13 @@ class ContextCompiler:
         soft_budget = role_policy["soft_budget_bytes"]
         hard_budget = role_policy["hard_budget_bytes"]
 
+        stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
+
         source_artifacts = ["goal-spec.json"]
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "base_commit": sha256_text(base_commit),
+            "stable_prefix": prefix_hash,
         }
 
         # Build anchors
@@ -1997,8 +2052,8 @@ class ContextCompiler:
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Audit packet missing required anchors: {missing}")
 
-        packet_id = f"ctx-aud-{goal_spec.get('goal_id')}-r{round_num}-{sha256_text(tail)[:8]}"
-        packet_hash = sha256_text(tail)
+        packet_id = f"ctx-aud-{goal_spec.get('goal_id')}-r{round_num}-{sha256_text(full_rendered_prompt)[:8]}"
+        packet_hash = sha256_text(full_rendered_prompt)
 
         return AuditContextPacket(
             schema_version=SCHEMA_VERSION,
@@ -2204,9 +2259,15 @@ def record_context_telemetry(run_dir: pathlib.Path, record: dict) -> None:
     evidence_dir = run_dir.parent.parent / "evidence" if run_dir.parent.name == "runs" else run_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     telemetry_file = evidence_dir / "context-telemetry.jsonl"
-    record["timestamp"] = record.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
-    record["schema_version"] = SCHEMA_VERSION
-    line = json.dumps(record, sort_keys=True) + "\n"
+    bounded_record = {}
+    for k, v in record.items():
+        if isinstance(v, str) and len(v) > 2048:
+            bounded_record[k] = v[:2048]
+        else:
+            bounded_record[k] = v
+    bounded_record["timestamp"] = bounded_record.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    bounded_record["schema_version"] = SCHEMA_VERSION
+    line = json.dumps(bounded_record, sort_keys=True) + "\n"
     with open(telemetry_file, "a", encoding="utf-8") as f:
         f.write(line)
 

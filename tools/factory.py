@@ -321,6 +321,7 @@ SECRET_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"Bearer\s+[a-zA-Z0-9_\.\-]{20,}", re.IGNORECASE),
     re.compile(r"glpat-[a-zA-Z0-9_\-]{20,}"),
+    re.compile(r"[a-zA-Z][a-zA-Z0-9+\-.]*://[^:@/\s]+:[^:@/\s]+@", re.IGNORECASE),
 ]
 
 ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_AUTH|_CREDENTIAL|_PRIVATE)$", re.IGNORECASE)
@@ -3554,6 +3555,9 @@ def run_preflight() -> dict:
 
 class TaskExecutor:
     """Executes a task across explicit attempts in isolated Git worktrees."""
+    retry_info = None
+    last_anchor_recall = 1.0
+    current_context_packet = None
 
     def __init__(self, run_id: str, plan_task: dict, run_dir: pathlib.Path,
                  herdr: HerdrClient, res_mgr: ResourceManager, factory_config: dict,
@@ -3614,7 +3618,9 @@ class TaskExecutor:
                         "id": str(cid)[:32],
                         "title": str(cid)[:32],
                         "description": f"Requirement {str(cid)[:32]}",
-                        "provenance": "USER_EXPLICIT"
+                        "provenance": "DERIVED",
+                        "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
+                        "rationale": f"Synthesized fallback requirement for task {self.task_id}",
                     }
                     for cid in plan_task.get("satisfies", [])
                     if isinstance(cid, str) and re.match(r"^[a-zA-Z0-9_\-.:]{1,32}$", cid)
@@ -3680,6 +3686,8 @@ class TaskExecutor:
             )
             stable_prefix, _, _ = StablePrefixManager.get_stable_prefix("reviewer")
             prompt_content = stable_prefix + "\n" + packet.rendered_tail
+            recall, _ = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
+            self.last_anchor_recall = recall
             self.current_context_packet = packet
             return prompt_content
 
@@ -3700,7 +3708,7 @@ class TaskExecutor:
             allowed_paths=self.allowed_paths,
             dependencies=self.task.get("dependencies", []),
             handoffs=self.handoffs,
-            retry_info=self.retry_info,
+            retry_info=getattr(self, "retry_info", None),
             extra_referenced_files=extra_refs
         )
 
@@ -3716,10 +3724,13 @@ class TaskExecutor:
             )
 
         # Staleness Verification Gate: ensure packet was not compiled from outdated source state
+        r_info = getattr(self, "retry_info", None)
         current_source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
             "plan": sha256_text(canonical_json_dump(self.plan)),
             "task_def": sha256_text(canonical_json_dump(self.task)),
+            "retry_info": sha256_text(canonical_json_dump(r_info if isinstance(r_info, dict) else {})),
+            "stable_prefix": prefix_hash,
         }
         is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
         if is_stale:
@@ -3739,15 +3750,28 @@ class TaskExecutor:
         start_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.state = "DISPATCHING"
 
+        # Snapshot inputs at method start to guarantee consistency across execution and staleness checks
+        raw_gspec = getattr(self, "goal_spec", {})
+        snap_goal_spec = copy.deepcopy(raw_gspec) if isinstance(raw_gspec, dict) else {}
+        raw_plan = getattr(self, "plan", {})
+        snap_plan = copy.deepcopy(raw_plan) if isinstance(raw_plan, dict) else {}
+        raw_task = getattr(self, "task", {})
+        snap_task = copy.deepcopy(raw_task) if isinstance(raw_task, dict) else {}
+        raw_rinfo = getattr(self, "retry_info", None)
+        snap_retry_info = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
+
         worktree_path, attempt_branch = self.prepare_attempt_worktree(attempt_id, base_commit)
         env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
         prompt_file = attempt_dir / "prompt.md"
         try:
+            _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if getattr(self, "review_only", False) else "task")
             curr_hashes = {
-                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                "plan": sha256_text(canonical_json_dump(self.plan)),
-                "task_def": sha256_text(canonical_json_dump(self.task)),
+                "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                "plan": sha256_text(canonical_json_dump(snap_plan)),
+                "task_def": sha256_text(canonical_json_dump(snap_task)),
+                "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
+                "stable_prefix": prefix_hash,
             }
             if not self.current_context_packet:
                 prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
@@ -3762,17 +3786,16 @@ class TaskExecutor:
 
             # Save immutable ContextPacket for this attempt
             if self.current_context_packet:
-                save_context_packet(self.current_context_packet, attempt_dir / "context_packet.json")
-                packets_dir = self.run_dir / "context" / "packets"
-                packets_dir.mkdir(parents=True, exist_ok=True)
-                save_context_packet(self.current_context_packet, packets_dir / f"{self.current_context_packet.packet_id}.json")
-
-                # Verify source staleness before dispatch
+                # Verify source staleness before saving/dispatch
                 is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
                 if is_stale:
                     raise StaleContextPacketError(
                         f"STALE_CONTEXT_PACKET: Task {self.task_id} packet is stale before dispatch: {reasons}"
                     )
+                save_context_packet(self.current_context_packet, attempt_dir / "context_packet.json")
+                packets_dir = self.run_dir / "context" / "packets"
+                packets_dir.mkdir(parents=True, exist_ok=True)
+                save_context_packet(self.current_context_packet, packets_dir / f"{self.current_context_packet.packet_id}.json")
         except (ContextAnchorMissingError, ContextError) as err:
             return {
                 "attempt_id": attempt_id,
@@ -4091,6 +4114,11 @@ class TaskExecutor:
             provider_output_tokens = usage.get("output_tokens") or usage.get("completion_tokens")
             provider_reasoning_tokens = usage.get("reasoning_tokens") or usage.get("thinking_tokens")
 
+            dynamic_bytes = len(pkt.rendered_tail.encode("utf-8"))
+            factory_bytes = sp_bytes + dynamic_bytes
+            rendered_prompt = prompt_content if "prompt_content" in locals() else pkt.render_full_prompt()
+            red_stats = calculate_context_redundancy([rendered_prompt])
+
             ctx_metrics = {
                 "schema_version": "8.0.0",
                 "run_id": self.run_id,
@@ -4103,7 +4131,7 @@ class TaskExecutor:
                 "stable_prefix_version": STABLE_PREFIX_VERSION,
                 "stable_prefix_hash": sp_hash,
                 "stable_prefix_bytes": sp_bytes,
-                "dynamic_packet_bytes": pkt.packet_bytes,
+                "dynamic_packet_bytes": dynamic_bytes,
                 "referenced_file_count": len(pkt.referenced_files),
                 "inline_file_count": len(pkt.included_files),
                 "inline_file_bytes": sum(len(f.get("inline_content", "").encode("utf-8")) for f in pkt.included_files),
@@ -4112,10 +4140,10 @@ class TaskExecutor:
                 "requirement_count": len(pkt.requirements),
                 "required_anchor_count": len([a for a in pkt.required_anchors if a.required]),
                 "required_anchor_recall": getattr(self, "last_anchor_recall", 1.0),
-                "factory_supplied_bytes": sp_bytes + pkt.packet_bytes,
-                "repeated_bytes": 0,
-                "unique_bytes": sp_bytes + pkt.packet_bytes,
-                "redundancy_ratio": 0.0,
+                "factory_supplied_bytes": factory_bytes,
+                "repeated_bytes": red_stats["repeated_content_bytes"],
+                "unique_bytes": red_stats["unique_content_bytes"],
+                "redundancy_ratio": red_stats["redundancy_ratio"],
                 "provider_input_tokens": int(provider_input_tokens) if provider_input_tokens is not None else None,
                 "provider_cached_input_tokens": int(provider_cached_tokens) if provider_cached_tokens is not None else None,
                 "provider_output_tokens": int(provider_output_tokens) if provider_output_tokens is not None else None,
@@ -4159,6 +4187,19 @@ class TaskExecutor:
         """Commits verified changes in the attempt worktree."""
         self.state = "COMMITTING"
         worktree_path = WORKTREES_DIR / self.run_id / self.task_id / f"att-{attempt_id}"
+
+        # Context Packet Verification: ensure attempt has a validated context packet before committing
+        attempt_dir = self.task_root_dir / f"att-{attempt_id}"
+        pkt_file = attempt_dir / "context_packet.json"
+        if not self.current_context_packet:
+            if pkt_file.exists():
+                try:
+                    self.current_context_packet = load_context_packet(pkt_file)
+                except Exception:
+                    self.build_prompt(worktree_path, attempt_id=attempt_id)
+            else:
+                self.build_prompt(worktree_path, attempt_id=attempt_id)
+
         subprocess.run(["git", "add", "-A"], cwd=str(worktree_path), check=True)
         diff_check = subprocess.run(["git", "status", "--porcelain"], cwd=str(worktree_path), capture_output=True, text=True)
         if not diff_check.stdout.strip():
@@ -4305,6 +4346,7 @@ class FactoryOrchestrator:
         def _sanitize_worker_text(val: str, max_chars: int = 512) -> str:
             if not isinstance(val, str):
                 return ""
+            val = redact_secrets(val)
             cleaned = re.sub(r"^#+\s*", "", val, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
             cleaned = re.sub(r"(?i)(ignore\s+all\s+prior\s+instructions|system\s+prompt|developer\s+mode)", "[FILTERED]", cleaned)
@@ -4335,6 +4377,26 @@ class FactoryOrchestrator:
         handoff_file = self.handoffs_dir / f"{task_id}.json"
         save_handoff_packet(handoff, handoff_file)
         return handoff
+
+    def _collect_task_handoffs(self, tdef: dict) -> list[HandoffPacket]:
+        """Collects verified predecessor HandoffPackets for a task definition."""
+        task_deps = tdef.get("dependencies", [])
+        task_handoffs = []
+        for dep_id in task_deps:
+            if dep_id in self.active_handoffs:
+                task_handoffs.append(self.active_handoffs[dep_id])
+            else:
+                ho_file = self.handoffs_dir / f"{dep_id}.json"
+                if ho_file.exists():
+                    try:
+                        task_handoffs.append(load_handoff_packet(ho_file))
+                    except Exception as exc:
+                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": str(exc)})
+                else:
+                    dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
+                    if dep_tinfo.get("status") == "SUCCESS":
+                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
+        return task_handoffs
 
     def _build_task_graph(self):
         """Constructs unified task definition map from either 'waves' or 'tasks'."""
@@ -4513,7 +4575,19 @@ class FactoryOrchestrator:
                 worktree_path = WORKTREES_DIR / self.run_id / tid / f"att-{att_id}"
                 if worktree_path.exists():
                     self.log_event("RECONCILE_CASE_C_COMMIT", {"task_id": tid, "worktree": str(worktree_path)})
-                    executor = TaskExecutor(self.run_id, self.tasks_def[tid], self.run_dir, self.herdr, self.res_mgr, self.factory_config, goal_spec=self.goal_spec, plan=self.plan, context_compiler=self.context_compiler)
+                    executor = TaskExecutor(
+                        self.run_id,
+                        self.tasks_def[tid],
+                        self.run_dir,
+                        self.herdr,
+                        self.res_mgr,
+                        self.factory_config,
+                        goal_spec=self.goal_spec,
+                        plan=self.plan,
+                        handoffs=self._collect_task_handoffs(self.tasks_def[tid]),
+                        retry_info=tinfo.get("retry_info"),
+                        context_compiler=self.context_compiler
+                    )
                     executor.current_attempt_id = att_id
                     executor.latest_result = tinfo.get("latest_result", {})
                     commit_hash = executor.commit_work(att_id)
@@ -4536,7 +4610,19 @@ class FactoryOrchestrator:
                 if status_file.exists() and status_file.stat().st_size > 0:
                     self.log_event("RECONCILE_CASE_D_WORKER_COMPLETED", {"task_id": tid, "attempt_id": att_id})
                     # Re-run attempt evaluation
-                    executor = TaskExecutor(self.run_id, self.tasks_def[tid], self.run_dir, self.herdr, self.res_mgr, self.factory_config, goal_spec=self.goal_spec, plan=self.plan, context_compiler=self.context_compiler)
+                    executor = TaskExecutor(
+                        self.run_id,
+                        self.tasks_def[tid],
+                        self.run_dir,
+                        self.herdr,
+                        self.res_mgr,
+                        self.factory_config,
+                        goal_spec=self.goal_spec,
+                        plan=self.plan,
+                        handoffs=self._collect_task_handoffs(self.tasks_def[tid]),
+                        retry_info=tinfo.get("retry_info"),
+                        context_compiler=self.context_compiler
+                    )
                     current_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
                     res = executor.execute_attempt(att_id, current_head)
                     if res.get("status") == "SUCCESS":
@@ -4822,9 +4908,10 @@ class FactoryOrchestrator:
                                     self.active_handoffs[tid] = ho
                                     self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
                                     ho_path = self.handoffs_dir / f"{tid}.json"
-                                    save_handoff_packet(ho, ho_path)
-                                    if not ho_path.exists():
-                                        raise ContextError(f"CRITICAL: Failed to persist individual handoff packet for {tid} to {ho_path}")
+                                    # Round-trip integrity check on persisted handoff
+                                    verified_ho = load_handoff_packet(ho_path)
+                                    if verified_ho.handoff_hash != ho.handoff_hash:
+                                        raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
                                     self.save_manifest()
                             else:
                                 tinfo["canonical_state"] = "CONFLICTED"
@@ -4847,7 +4934,7 @@ class FactoryOrchestrator:
                                 "status": res.get("status", "FAILED"),
                                 "error_category": res.get("state", "FAILED"),
                                 "failing_command": redact_secrets(res.get("failing_command")),
-                                "error_excerpt": redact_secrets(res.get("error", ""))
+                                "error_excerpt": redact_secrets(res.get("error", ""))[:2048]
                             }
                             self.log_event("TASK_RETRYING", {"task_id": tid, "previous_attempt": att_id, "retry_info": tinfo["retry_info"]})
                         else:
@@ -4955,8 +5042,17 @@ class FactoryOrchestrator:
                                 curr_hashes[k] = sha256_text(canonical_json_dump(self.plan))
                             elif k == "task_def":
                                 tid = getattr(pkt, "task_id", "")
-                                tdef = self.tasks.get(tid, {}) if hasattr(self, "tasks") else {}
+                                tdef = self.tasks_def.get(tid, {})
                                 curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
+                            elif k == "retry_info":
+                                tid = getattr(pkt, "task_id", "")
+                                tinfo = self.manifest.get("tasks", {}).get(tid, {})
+                                r_info = tinfo.get("retry_info", {})
+                                curr_hashes[k] = sha256_text(canonical_json_dump(r_info or {}))
+                            elif k == "stable_prefix":
+                                role = getattr(pkt, "packet_role", "task")
+                                _, sp_hash, _ = StablePrefixManager.get_stable_prefix(role)
+                                curr_hashes[k] = sp_hash
                             elif k == "raw_goal":
                                 curr_hashes[k] = sha256_text(getattr(self, "goal_text", ""))
                             else:
