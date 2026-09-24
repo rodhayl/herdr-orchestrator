@@ -3725,8 +3725,7 @@ class TaskExecutor:
                 project_policy_summary=self.factory_config.get("limits", {}),
                 revision_index=0
             )
-            stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer")
-            prompt_content = stable_prefix + "\n" + packet.rendered_tail
+            prompt_content = packet.render_full_prompt()
             recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
             self.last_anchor_recall = recall
             if recall < 1.0:
@@ -3736,7 +3735,7 @@ class TaskExecutor:
             current_source_hashes = {
                 "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                 "plan": sha256_text(canonical_json_dump(self.plan)),
-                "stable_prefix": prefix_hash,
+                "stable_prefix": packet.source_hashes.get("stable_prefix"),
             }
             is_stale, stale_reasons = packet.verify_staleness(current_source_hashes)
             if is_stale:
@@ -3819,7 +3818,7 @@ class TaskExecutor:
         env_info = self.adapter.prepare_environment(self.run_id, self.task_id, attempt_id, worktree_path)
 
         prompt_file = attempt_dir / "prompt.md"
-        prompt_content = None
+        prompt_content = ""
         # Snapshot retry_info to attempt_dir for attempt-specific staleness checks
         atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
 
@@ -3847,11 +3846,12 @@ class TaskExecutor:
                 if is_stale:
                     prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
                 else:
-                    prompt_content = self.current_context_packet.render_full_prompt()
+                    prompt_content = redact_secrets(self.current_context_packet.render_full_prompt())
 
             # Sanitize prompt content and verify redaction before writing
-            clean_prompt = redact_secrets(prompt_content) if prompt_content is not None else None
-            assert clean_prompt is None or redact_secrets(clean_prompt) == clean_prompt
+            clean_prompt = redact_secrets(prompt_content)
+            assert clean_prompt is not None and len(clean_prompt) > 0
+            assert redact_secrets(clean_prompt) == clean_prompt
             prompt_content = clean_prompt
 
             # Capture local reference to packet immediately after compilation/validation
@@ -3876,6 +3876,20 @@ class TaskExecutor:
                 "start_time": start_time,
                 "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
+        except Exception as err:
+            return {
+                "attempt_id": attempt_id,
+                "task_id": self.task_id,
+                "status": "FAILED",
+                "state": "FAILED",
+                "error_category": "UNEXPECTED_COMPILATION_ERROR",
+                "error": redact_secrets(str(err)),
+                "exit_code": 1,
+                "start_time": start_time,
+                "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+
+        assert prompt_content is not None and len(prompt_content) > 0
 
         custom_schema = self.task.get("result_schema")
         if custom_schema:
@@ -4185,8 +4199,12 @@ class TaskExecutor:
             provider_output_tokens = usage.get("output_tokens") if usage.get("output_tokens") is not None else usage.get("completion_tokens")
             provider_reasoning_tokens = usage.get("reasoning_tokens") if usage.get("reasoning_tokens") is not None else usage.get("thinking_tokens")
 
-            if provider_input_tokens is not None:
-                pkt.token_count = int(provider_input_tokens)
+            def _valid_token_int(val):
+                return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0 else None
+
+            valid_in_tokens = _valid_token_int(provider_input_tokens)
+            if valid_in_tokens is not None:
+                pkt.token_count = valid_in_tokens
                 pkt.token_count_source = "provider_usage"
                 attempt_pkt_file = self.task_root_dir / f"att-{attempt_record.get('attempt_id', 1)}" / "context_packet.json"
                 if attempt_pkt_file.exists():
@@ -4233,10 +4251,10 @@ class TaskExecutor:
                 "repeated_bytes": red_stats["repeated_content_bytes"],
                 "unique_bytes": red_stats["unique_content_bytes"],
                 "redundancy_ratio": red_stats["redundancy_ratio"],
-                "provider_input_tokens": int(provider_input_tokens) if provider_input_tokens is not None else None,
-                "provider_cached_input_tokens": int(provider_cached_tokens) if provider_cached_tokens is not None else None,
-                "provider_output_tokens": int(provider_output_tokens) if provider_output_tokens is not None else None,
-                "provider_reasoning_tokens": int(provider_reasoning_tokens) if provider_reasoning_tokens is not None else None,
+                "provider_input_tokens": valid_in_tokens,
+                "provider_cached_input_tokens": _valid_token_int(provider_cached_tokens),
+                "provider_output_tokens": _valid_token_int(provider_output_tokens),
+                "provider_reasoning_tokens": _valid_token_int(provider_reasoning_tokens),
                 "session_mode": session_mode,
                 "session_reused": session_reused,
                 "native_compaction_used": native_compaction_used,
@@ -4379,6 +4397,15 @@ class FactoryOrchestrator:
         else:
             self.goal_spec = None
 
+        self.goal_text = ""
+        if isinstance(self.goal_spec, dict):
+            self.goal_text = self.goal_spec.get("raw_goal", "")
+        if not self.goal_text and (self.plan_path.parent / "GOAL.md").exists():
+            try:
+                self.goal_text = (self.plan_path.parent / "GOAL.md").read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
         if run_id:
             self.run_id = run_id
             self.run_dir = RUNS_DIR / self.run_id
@@ -4468,9 +4495,9 @@ class FactoryOrchestrator:
             # Strip markdown headers, code fences, and backticks
             cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
-            # Strip HTML tags
-            cleaned = re.sub(r"<[^>]+>", "", cleaned)
-            # Filter adversarial prompt injection variants
+            # Strip HTML tags (including space variations)
+            cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
+            # Filter adversarial prompt injection variants and role markers
             injection_pattern = re.compile(
                 r"(?i)(ignore\s+all\s+prior\s+instructions"
                 r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
@@ -4478,14 +4505,19 @@ class FactoryOrchestrator:
                 r"|new\s+instructions:"
                 r"|system\s+prompt"
                 r"|developer\s+mode"
-                r"|override\s+instructions)"
+                r"|override\s+instructions"
+                r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
+                r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
+                r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
             )
             cleaned = injection_pattern.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
+        ctx_src = getattr(self.context_compiler, "source", None)
         safe_changed_paths = [
             p for p in changed_paths
             if isinstance(p, str) and not p.startswith("/") and ".." not in p and re.match(r"^[a-zA-Z0-9_\-./]+$", p)
+            and not (ctx_src and ctx_src._is_sensitive_path(p))
         ]
         clean_summary = _sanitize_worker_text(raw_summary, 256) or f"Completed {task_id}"
         clean_notes = _sanitize_worker_text(raw_notes, 512)
@@ -4531,7 +4563,7 @@ class FactoryOrchestrator:
                         raise RuntimeError(clean_err)
                 else:
                     dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
-                    if dep_tinfo.get("status") == "SUCCESS":
+                    if dep_tinfo.get("status") in ("SUCCESS", "INTEGRATED", "COMPLETED") or dep_tinfo.get("canonical_state") in ("SUCCESS", "INTEGRATED", "COMPLETED"):
                         self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
                         raise RuntimeError(f"Required dependency handoff {dep_id} missing on disk at {ho_file}")
         return task_handoffs
@@ -4598,10 +4630,12 @@ class FactoryOrchestrator:
             self.manifest["waves"] = [wave_map[k] for k in sorted(wave_map.keys())]
             clean_manifest = redact_secrets(self.manifest)
             atomic_write_json(self.manifest_path, clean_manifest)
-            try:
-                self.board_projector.sync(self.run_id)
-            except Exception:
-                pass
+
+        # Sync board projector outside _manifest_lock critical section to prevent deadlocks
+        try:
+            self.board_projector.sync(self.run_id)
+        except Exception:
+            pass
 
     def run_validation_commands(self, commands_list: list) -> dict:
         """Executes declared verification commands."""
@@ -4714,6 +4748,14 @@ class FactoryOrchestrator:
                 worktree_path = WORKTREES_DIR / self.run_id / tid / f"att-{att_id}"
                 if worktree_path.exists():
                     self.log_event("RECONCILE_CASE_C_COMMIT", {"task_id": tid, "worktree": str(worktree_path)})
+                    attempt_dir = self.run_dir / "workers" / tid / f"att-{att_id}"
+                    rinfo_file = attempt_dir / "retry_info.json"
+                    reconcile_rinfo = tinfo.get("retry_info")
+                    if rinfo_file.exists():
+                        try:
+                            reconcile_rinfo = json.loads(rinfo_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
                     executor = TaskExecutor(
                         self.run_id,
                         self.tasks_def[tid],
@@ -4724,7 +4766,7 @@ class FactoryOrchestrator:
                         goal_spec=self.goal_spec,
                         plan=self.plan,
                         handoffs=self._collect_task_handoffs(self.tasks_def[tid]),
-                        retry_info=tinfo.get("retry_info"),
+                        retry_info=reconcile_rinfo,
                         context_compiler=self.context_compiler
                     )
                     executor.current_attempt_id = att_id
@@ -4748,6 +4790,13 @@ class FactoryOrchestrator:
                 status_file = attempt_dir / "exit_code.txt"
                 if status_file.exists() and status_file.stat().st_size > 0:
                     self.log_event("RECONCILE_CASE_D_WORKER_COMPLETED", {"task_id": tid, "attempt_id": att_id})
+                    rinfo_file = attempt_dir / "retry_info.json"
+                    reconcile_rinfo = tinfo.get("retry_info")
+                    if rinfo_file.exists():
+                        try:
+                            reconcile_rinfo = json.loads(rinfo_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
                     # Re-run attempt evaluation
                     executor = TaskExecutor(
                         self.run_id,
@@ -4759,7 +4808,7 @@ class FactoryOrchestrator:
                         goal_spec=self.goal_spec,
                         plan=self.plan,
                         handoffs=self._collect_task_handoffs(self.tasks_def[tid]),
-                        retry_info=tinfo.get("retry_info"),
+                        retry_info=reconcile_rinfo,
                         context_compiler=self.context_compiler
                     )
                     current_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True).stdout.strip()
@@ -5025,14 +5074,7 @@ class FactoryOrchestrator:
                                     self.active_handoffs[tid] = ho
                                     self.manifest.setdefault("handoffs", {})[tid] = ho.to_dict()
                                     ho_path = self.handoffs_dir / f"{tid}.json"
-                                    # Round-trip integrity check on persisted handoff (disk-level tamper detection)
-                                    raw_ho_bytes = ho_path.read_bytes()
-                                    raw_ho_dict = json.loads(raw_ho_bytes.decode("utf-8"))
-                                    stored_hash = raw_ho_dict.get("handoff_hash")
-                                    raw_dict_to_hash = {k: v for k, v in raw_ho_dict.items() if k not in ("handoff_hash", "handoff_bytes")}
-                                    recomputed_hash = sha256_text(canonical_json_dump(raw_dict_to_hash))
-                                    if not stored_hash or recomputed_hash != stored_hash or stored_hash != ho.handoff_hash:
-                                        raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
+                                    # Canonical integrity verification on persisted handoff
                                     verified_ho = load_handoff_packet(ho_path)
                                     if verified_ho.handoff_hash != ho.handoff_hash:
                                         raise ContextError(f"CRITICAL: Integrity verification failed for handoff packet {tid} at {ho_path}")
