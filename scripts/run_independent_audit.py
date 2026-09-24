@@ -52,17 +52,17 @@ def main():
         "\n### Anchor Data Model & Boundary-Safe Recall Calculation:",
         "\n".join(ctx_lines[235:370]),
         "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
-        "\n".join(ctx_lines[375:570]),
+        "\n".join(ctx_lines[375:500]),
         "\n### ContextSource & Sensitive File Pattern Matcher:",
-        "\n".join(ctx_lines[675:810]),
+        "\n".join(ctx_lines[675:770]),
         "\n### ContextPacket & Cryptographic Staleness Verification:",
-        "\n".join(ctx_lines[1258:1345]),
+        "\n".join(ctx_lines[1258:1320]),
         "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
-        "\n".join(ctx_lines[1408:1750]),
+        "\n".join(ctx_lines[1540:1750]),
         "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
-        "\n".join(ctx_lines[2235:2320]),
+        "\n".join(ctx_lines[2235:2295]),
         "\n### Atomic Persistence (Temp File + Flush + Fsync + os.replace):",
-        "\n".join(ctx_lines[2322:2400]),
+        "\n".join(ctx_lines[2322:2380]),
     ]
     context_core_code = "\n".join(ctx_sections)
 
