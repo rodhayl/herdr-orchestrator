@@ -1484,8 +1484,14 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
 
 def load_context_packet(packet_file: pathlib.Path) -> ContextPacket:
     """Loads a ContextPacket from disk."""
-    data = json.loads(packet_file.read_text(encoding="utf-8"))
-    return ContextPacket.from_dict(data)
+    try:
+        data = json.loads(packet_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise MalformedContextPacketError(f"Failed to parse ContextPacket JSON from {packet_file}: {e}")
+    try:
+        return ContextPacket.from_dict(data)
+    except Exception as e:
+        raise MalformedContextPacketError(f"Invalid ContextPacket structure in {packet_file}: {e}")
 
 
 def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib.Path:
@@ -1508,16 +1514,17 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
     os.replace(temp_path, target_path)
     return target_path
 
-    data_str = canonical_json_dump(handoff.to_dict())
-    temp_path.write_text(data_str, encoding="utf-8")
-    os.replace(temp_path, target_path)
-    return target_path
-
 
 def load_handoff_packet(handoff_file: pathlib.Path) -> HandoffPacket:
     """Loads a HandoffPacket from disk."""
-    data = json.loads(handoff_file.read_text(encoding="utf-8"))
-    return HandoffPacket.from_dict(data)
+    try:
+        data = json.loads(handoff_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise MalformedContextPacketError(f"Failed to parse HandoffPacket JSON from {handoff_file}: {e}")
+    try:
+        return HandoffPacket.from_dict(data)
+    except Exception as e:
+        raise MalformedContextPacketError(f"Invalid HandoffPacket structure in {handoff_file}: {e}")
 
 
 # ==============================================================================
