@@ -25,6 +25,7 @@ import re
 import shlex
 import subprocess
 import threading
+import unicodedata
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -124,15 +125,11 @@ INJECTION_PATTERN = re.compile(
 # Freeze load-time environment secret snapshot (never re-read os.environ dynamically during redaction)
 _INITIAL_SECRET_ENV: dict[str, str] = {}
 _SECRET_ENV_LOCK = threading.RLock()
-_SECRET_ENV_INITIALIZED = False
 
 
-def snapshot_secret_env(force: bool = False) -> dict[str, str]:
+def snapshot_secret_env() -> dict[str, str]:
     """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
-    global _SECRET_ENV_INITIALIZED
     with _SECRET_ENV_LOCK:
-        if _SECRET_ENV_INITIALIZED and not force:
-            return dict(_INITIAL_SECRET_ENV)
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
@@ -149,7 +146,6 @@ def snapshot_secret_env(force: bool = False) -> dict[str, str]:
                                             _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
                         except Exception:
                             pass
-        _SECRET_ENV_INITIALIZED = True
         return dict(_INITIAL_SECRET_ENV)
 
 
