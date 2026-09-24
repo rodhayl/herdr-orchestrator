@@ -3558,9 +3558,41 @@ def run_preflight() -> dict:
 
 class TaskExecutor:
     """Executes a task across explicit attempts in isolated Git worktrees."""
-    retry_info = None
-    last_anchor_recall = 1.0
-    current_context_packet = None
+    run_id: str = ""
+    task: dict = {}
+    task_id: str = ""
+    worker_id: str = ""
+    routing_provenance: dict = {}
+    run_dir: Any = None
+    herdr: Any = None
+    res_mgr: Any = None
+    factory_config: dict = {}
+    task_type: str = "implementation"
+    worker_config: dict = {}
+    adapter: Any = None
+    profile_id: str = ""
+    harness: str = "agy"
+    model: str = ""
+    effort: str = "high"
+    allowed_paths: list = []
+    expected_files: list = []
+    context_files: list = []
+    review_only: bool = False
+    is_repair: bool = False
+    timeout: int = 180
+    max_retries: int = 0
+    goal_spec: Any = None
+    plan: Any = None
+    handoffs: list = []
+    retry_info: Any = None
+    context_compiler: Any = None
+    current_context_packet: Any = None
+    last_anchor_recall: float = 1.0
+    task_root_dir: Any = None
+    state: str = "PENDING"
+    current_attempt_id: int = 0
+    attempts: list = []
+    latest_result: dict = {}
 
     def __init__(self, run_id: str, plan_task: dict, run_dir: pathlib.Path,
                  herdr: HerdrClient, res_mgr: ResourceManager, factory_config: dict,
