@@ -749,11 +749,44 @@ def match_path_allowlist(rel_path: str, allowed_patterns: list) -> bool:
     return False
 
 
+class NonReentrantLock:
+    """A portable non-reentrant lock that tracks ownership and raises on re-entrant acquisition."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._owner = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        cur = threading.get_ident()
+        if self._owner == cur:
+            raise RuntimeError("Reentrant deadlock risk: lock is already held by the current thread")
+        res = self._lock.acquire(blocking, timeout)
+        if res:
+            self._owner = cur
+        return res
+
+    def release(self):
+        cur = threading.get_ident()
+        if self._owner != cur:
+            raise RuntimeError("Cannot release unowned lock")
+        self._owner = None
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+    def is_owned(self) -> bool:
+        return self._owner == threading.get_ident()
+
+
 def sanitize_env_info(env_info: Any) -> dict:
     """Projects env_info to safe non-credential metadata keys."""
     if not isinstance(env_info, dict):
         return {}
-    allowed_keys = ("workspace_id", "pane_id", "worktree", "label", "profile_home", "status")
+    allowed_keys = ("workspace_id", "pane_id", "worktree", "worktree_path", "label", "profile_home", "status")
     return {k: env_info[k] for k in allowed_keys if k in env_info and isinstance(env_info[k], (str, int, bool))}
 
 
@@ -4038,7 +4071,7 @@ class TaskExecutor:
                 "schema_file": schema_file,
                 "timeout": self.timeout,
                 "task_attempt_dir": attempt_dir,
-                "env_info": env_info,
+                "env_info": sanitize_env_info(env_info),
                 "model": self.model
             }
             if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
@@ -4072,6 +4105,8 @@ class TaskExecutor:
                 execution_mode = "MOCK"
             elif raw_res.get("execution_mode") == "REAL":
                 execution_mode = "REAL"
+            elif raw_res.get("execution_mode") == "TRANSPORT_ONLY":
+                execution_mode = "TRANSPORT_ONLY"
             else:
                 execution_mode = "MOCK" 
 
@@ -4079,8 +4114,8 @@ class TaskExecutor:
             if is_test_harness or bin_identity.get("is_fixture"):
                 execution_mode = "MOCK"
             self.execution_mode = execution_mode
-            if execution_mode == "MOCK" and isinstance(self.routing_provenance, dict):
-                self.routing_provenance["mode"] = "MOCK" 
+            if execution_mode in ("MOCK", "TRANSPORT_ONLY") and isinstance(self.routing_provenance, dict):
+                self.routing_provenance["mode"] = execution_mode
 
             git_diff_hash = ""
             try:
@@ -4482,23 +4517,52 @@ class TaskExecutor:
                     )
 
             # Staleness verification at commit time (gate against mid-run drift)
+            # Re-read authoritative on-disk goal_spec and plan to prevent stale in-memory drift
+            ref_goal_spec = self.goal_spec
+            spec_candidates = [
+                self.run_dir / "goal-spec.json",
+                self.run_dir.parent / "goal-spec.json",
+                PROJECT_ROOT / ".agy-factory" / "goal-spec.json"
+            ]
+            for sc in spec_candidates:
+                if sc.exists():
+                    try:
+                        ref_goal_spec = redact_secrets(json.loads(sc.read_text(encoding="utf-8")))
+                        break
+                    except Exception:
+                        pass
+
+            ref_plan = self.plan
+            plan_candidates = [
+                self.run_dir / "plan.json",
+                self.run_dir.parent / "plan.json",
+                PROJECT_ROOT / ".agy-factory" / "plan.json"
+            ]
+            for pc in plan_candidates:
+                if pc.exists():
+                    try:
+                        ref_plan = redact_secrets(json.loads(pc.read_text(encoding="utf-8")))
+                        break
+                    except Exception:
+                        pass
+
             is_rev = getattr(self, "review_only", False)
             _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
             raw_rinfo = getattr(self, "retry_info", None)
             snap_rinfo = copy.deepcopy(raw_rinfo) if isinstance(raw_rinfo, dict) else {}
             if is_rev:
                 commit_source_hashes = {
-                    "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                    "plan": sha256_text(canonical_json_dump(self.plan)),
-                    "task_def": sha256_text(canonical_json_dump(self.plan.get("tasks", []))),
+                    "goal-spec": sha256_text(canonical_json_dump(ref_goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(ref_plan)),
+                    "task_def": sha256_text(canonical_json_dump(ref_plan.get("tasks", []))),
                     "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY"),
                     "stable_prefix": prefix_hash,
                     "secret_env": get_secret_env_fingerprint(),
                 }
             else:
                 commit_source_hashes = {
-                    "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                    "plan": sha256_text(canonical_json_dump(self.plan)),
+                    "goal-spec": sha256_text(canonical_json_dump(ref_goal_spec)),
+                    "plan": sha256_text(canonical_json_dump(ref_plan)),
                     "task_def": sha256_text(canonical_json_dump(self.task)),
                     "retry_info": sha256_text(canonical_json_dump(snap_rinfo)),
                     "stable_prefix": prefix_hash,
@@ -4556,7 +4620,7 @@ class FactoryOrchestrator:
         self.merge_lock = threading.Lock()
         # Strict lock ordering convention: always acquire _manifest_lock before _events_lock if both are needed.
         # board_projector.sync() must never call log_event while holding locks.
-        self._manifest_lock = threading.RLock()
+        self._manifest_lock = NonReentrantLock()
         self._events_lock = threading.Lock()
         self.board_projector = HerdrBoardProjector(PROJECT_ROOT)
 
@@ -4940,7 +5004,7 @@ class FactoryOrchestrator:
 
     def save_manifest(self):
         """Persists current manifest to disk with secret redaction and syncs board projector."""
-        if self._manifest_lock._is_owned():
+        if self._manifest_lock.is_owned():
             raise RuntimeError("Reentrant deadlock risk: _manifest_lock must not be held when calling save_manifest()")
         with self._manifest_lock:
             # Update display states and wave projection
@@ -4972,7 +5036,7 @@ class FactoryOrchestrator:
         atomic_write_json(self.manifest_path, clean_manifest)
 
         # Sync board projector outside _manifest_lock critical section to prevent deadlocks
-        if self._manifest_lock._is_owned():
+        if self._manifest_lock.is_owned():
             raise RuntimeError("_manifest_lock must not be held when calling board_projector.sync()")
         try:
             self.board_projector.sync(self.run_id)
@@ -5060,14 +5124,14 @@ class FactoryOrchestrator:
                 with open(self.plan_path, "r", encoding="utf-8") as f:
                     self.plan = json.load(f)
                 self._build_task_graph()
-            except Exception:
-                pass
+            except Exception as e:
+                raise RuntimeError(f"Failed to read authoritative plan during reconciliation: {e}")
         spec_path = self.plan_path.parent / "goal-spec.json"
         if spec_path.exists():
             try:
                 self.goal_spec = redact_secrets(json.loads(spec_path.read_text(encoding="utf-8")))
-            except Exception:
-                pass
+            except Exception as e:
+                raise RuntimeError(f"Failed to read authoritative goal-spec.json during reconciliation: {e}")
 
         for tid, tinfo in self.manifest["tasks"].items():
             if tinfo.get("worker_id"):
@@ -5430,9 +5494,13 @@ class FactoryOrchestrator:
                     # Authoritative provenance is set from orchestrator's route_meta; never blindly trust worker-reported provenance
                     if tid not in self.routing_provenance or not self.routing_provenance[tid]:
                         self.routing_provenance[tid] = copy.deepcopy(route_meta)
-                    # Cross-check: If worker or attempt executed in MOCK mode, force mode to MOCK in routing_provenance
+                    # Cross-check: If worker or attempt executed in MOCK or TRANSPORT_ONLY mode, preserve exact mode
                     worker_mode = res.get("execution_mode")
-                    if worker_mode != "REAL" or getattr(executor, "execution_mode", None) != "REAL" or not res.get("is_real_execution"):
+                    if worker_mode in ("MOCK", "TRANSPORT_ONLY"):
+                        self.routing_provenance[tid]["mode"] = worker_mode
+                    elif getattr(executor, "execution_mode", None) in ("MOCK", "TRANSPORT_ONLY"):
+                        self.routing_provenance[tid]["mode"] = executor.execution_mode
+                    elif not res.get("is_real_execution"):
                         self.routing_provenance[tid]["mode"] = "MOCK"
                     tinfo["routing_provenance"] = self.routing_provenance[tid]
 

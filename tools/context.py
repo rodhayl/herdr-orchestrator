@@ -208,9 +208,10 @@ def register_secret_env(key: str, val: str) -> None:
 
 
 def get_secret_env_fingerprint() -> str:
-    """Returns SHA-256 fingerprint of registered secret env keys to detect secret registration drift."""
+    """Returns SHA-256 fingerprint of registered secret env keys and hashed secret values to detect secret rotation or drift."""
     with _SECRET_ENV_LOCK:
-        keys_summary = "|".join(f"{k}:{len(v)}" for k, v in sorted(_INITIAL_SECRET_ENV.items()))
+        entries = [f"{k}:{sha256_text(v)}" for k, v in sorted(_INITIAL_SECRET_ENV.items())]
+        keys_summary = "|".join(entries)
     return sha256_text(keys_summary)
 
 
@@ -685,6 +686,10 @@ class HandoffPacket:
         actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
         if actual_bytes != self.handoff_bytes:
             self.handoff_bytes = actual_bytes
+        # Verification invariant: handoff_bytes measures full to_dict() serialization (including synthesis_source),
+        # while handoff_hash is scoped to immutable to_dict_raw(). The one-shot patch is sufficient because
+        # synthesis_source is fixed-length ("REAL", "MOCK", or "TRANSPORT_ONLY").
+        assert actual_bytes <= max_bytes, f"Handoff packet {self.handoff_id} structural payload exceeds limit: {actual_bytes} > {max_bytes}"
         if self.handoff_bytes > max_bytes:
             raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {max_bytes}")
 
@@ -1957,24 +1962,14 @@ class ContextCompiler:
 
             # Re-synchronize surviving handoff path anchors after compaction to prevent false anchor recall misses
             surviving_paths = set()
-            # Top-5 changed paths from each predecessor handoff are guaranteed hard anchors
-            guaranteed_paths = set()
+            # All predecessor handoff changed paths survive and remain required anchors
             for ho in handoffs:
                 valid_paths = [p for p in ho.changed_paths if not str(p).startswith("[+")]
-                guaranteed_paths.update(valid_paths[:5])
-                surviving_paths.update(valid_paths[:200])
-            surviving_paths.update(guaranteed_paths)
+                surviving_paths.update(valid_paths)
 
-            demoted_paths = []
             for a in anchors:
                 if a.anchor_type == "file_reference" and a.source == "predecessor_handoff":
-                    if a.content in guaranteed_paths:
-                        a.required = True
-                    elif a.content not in surviving_paths:
-                        a.required = False
-                        demoted_paths.append(a.content)
-            if demoted_paths:
-                logging.getLogger("factory").warning("WARNING_HANDOFF_PATH_ANCHOR_DEMOTED: Demoted %d predecessor handoff paths under budget pressure: %s", len(demoted_paths), demoted_paths)
+                    a.required = True
             existing_ho_paths = {a.content for a in anchors if a.anchor_type == "file_reference" and a.source == "predecessor_handoff"}
             for ho_path in sorted(surviving_paths):
                 if ho_path not in existing_ho_paths:
