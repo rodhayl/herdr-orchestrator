@@ -13,6 +13,7 @@ Zero third-party Python dependencies (Python 3 standard library only).
 
 import argparse
 import concurrent.futures
+import contextlib
 import copy
 import datetime
 import fnmatch
@@ -3587,6 +3588,7 @@ class TaskExecutor:
     retry_info: Any = None
     context_compiler: Any = None
     current_context_packet: Any = None
+    _packet_lock: Any = None
     last_anchor_recall: float = 1.0
     task_root_dir: Any = None
     state: str = "PENDING"
@@ -3823,8 +3825,12 @@ class TaskExecutor:
         prompt_file = attempt_dir / "prompt.md"
         prompt_content = ""
 
+        lock = getattr(self, "_packet_lock", None)
+        if lock is None:
+            lock = contextlib.nullcontext()
+
         try:
-            with self._packet_lock:
+            with lock:
                 is_rev = getattr(self, "review_only", False)
                 _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
                 if is_rev:
