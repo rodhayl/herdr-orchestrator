@@ -3741,6 +3741,7 @@ class TaskExecutor:
     def build_prompt(self, worktree_path: pathlib.Path, attempt_id: int = 1) -> str:
         active_goal_spec = redact_secrets(copy.deepcopy(self.goal_spec)) if isinstance(self.goal_spec, dict) else {}
         active_plan = redact_secrets(copy.deepcopy(self.plan)) if isinstance(self.plan, dict) else {}
+        active_task = redact_secrets(copy.deepcopy(self.task)) if isinstance(self.task, dict) else {}
         if self.review_only:
             packet = self.context_compiler.compile_plan_review_packet(
                 goal_spec=active_goal_spec,
@@ -3789,7 +3790,7 @@ class TaskExecutor:
             run_id=self.run_id,
             task_id=self.task_id,
             attempt_id=attempt_id,
-            task_def=self.task,
+            task_def=active_task,
             plan=active_plan,
             goal_spec=active_goal_spec,
             worktree_path=str(worktree_path),
@@ -3816,7 +3817,7 @@ class TaskExecutor:
         current_source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
             "plan": sha256_text(canonical_json_dump(active_plan)),
-            "task_def": sha256_text(canonical_json_dump(self.task)),
+            "task_def": sha256_text(canonical_json_dump(active_task)),
             "retry_info": sha256_text(canonical_json_dump(r_info if isinstance(r_info, dict) else {})),
             "stable_prefix": packet.source_hashes.get("stable_prefix"),
             "secret_env": get_secret_env_fingerprint(),
@@ -4289,7 +4290,7 @@ class TaskExecutor:
             return
 
         # Context Metrics telemetry recording (v8.0.0)
-        active_pkt = context_packet or self.current_context_packet
+        active_pkt = context_packet
         if active_pkt and prompt_content is not None:
             clean_prompt = redact_secrets(prompt_content)
             if redact_secrets(clean_prompt) != clean_prompt:
@@ -4630,29 +4631,43 @@ class FactoryOrchestrator:
             self.goal_spec = {"acceptance_criteria": []}
 
         # Sanitize worker-supplied fields to prevent prompt injection or markdown smuggling
+        class _WorkerHTMLTextExtractor(html.parser.HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.chunks = []
+            def handle_data(self, data):
+                self.chunks.append(data)
+            def get_text(self):
+                return "".join(self.chunks)
+
         def _sanitize_worker_text(val: str, max_chars: int = MAX_SEMANTIC_HANDOFF_BYTES) -> str:
             if not isinstance(val, str):
                 return ""
-            val = unicodedata.normalize("NFKC", str(val))
-            # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
-            val = "".join(c for c in val if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
-            val = redact_secrets(val)
-            # Pass 1: Homoglyph normalization, Unicode whitespace normalization, and injection filtering before HTML stripping
-            val = normalize_homoglyphs(unicodedata.normalize("NFKC", val))
-            val = re.sub(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+', ' ', val)
-            val = INJECTION_PATTERN.sub("[FILTERED]", val)
-            # HTML entity decode and ANSI escape sequence stripping
-            cleaned = html.unescape(val)
-            cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", cleaned)
-            # Strip markdown headers, code fences, and backticks
+            # Phase 1: Strip ANSI escape sequences, CDATA, comments, and extract text from HTML
+            cleaned = re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", str(val))
+            cleaned = re.sub(r"<!--[\s\S]*?-->", " ", cleaned)
+            cleaned = re.sub(r"<!\[CDATA\[[\s\S]*?\]\]>", " ", cleaned)
+            try:
+                parser = _WorkerHTMLTextExtractor()
+                parser.feed(cleaned)
+                cleaned = parser.get_text()
+            except Exception:
+                cleaned = re.sub(r"<[^>]*>", " ", cleaned)
+            cleaned = html.unescape(cleaned)
+
+            # Phase 2: Unicode normalization, control char stripping, secret redaction, homoglyphs, whitespace normalization, and injection filter
+            cleaned = unicodedata.normalize("NFKC", cleaned)
+            cleaned = "".join(c for c in cleaned if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
+            cleaned = redact_secrets(cleaned)
+            cleaned = normalize_homoglyphs(cleaned)
+            cleaned = re.sub(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+', ' ', cleaned)
+            cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
+
+            # Phase 3: Strip markdown headers, code fences, and backticks
             cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
-            # Strip HTML comments and CDATA blocks first to prevent hidden payload bypasses
-            cleaned = re.sub(r"<!--[\s\S]*?-->", "", cleaned)
-            cleaned = re.sub(r"<!\[CDATA\[[\s\S]*?\]\]>", "", cleaned)
-            # Strip HTML tags (including space variations)
-            cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Pass 2: Re-normalize with NFKC, homoglyphs, and Unicode whitespace after HTML stripping to catch reassembled tokens
+
+            # Final verification pass
             cleaned = normalize_homoglyphs(unicodedata.normalize("NFKC", cleaned))
             cleaned = re.sub(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+', ' ', cleaned)
             cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
@@ -4688,21 +4703,26 @@ class FactoryOrchestrator:
         val_result = {"passed": is_passed, "exit_code": actual_exit_code}
         if filtered_criteria:
             val_result["filtered_criteria"] = filtered_criteria
-        # Determine actual synthesis source / provenance mode
+        # Determine actual synthesis source / provenance mode (authoritative: orchestrator routing_provenance)
+        orch_mode = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode")
         raw_mode = None
         if isinstance(attempt_result.get("provenance"), dict):
             raw_mode = attempt_result["provenance"].get("mode")
         elif isinstance(attempt_result.get("routing_provenance"), dict):
             raw_mode = attempt_result["routing_provenance"].get("mode")
 
-        if isinstance(raw_mode, str) and raw_mode.upper() in VALID_PROVENANCES and raw_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
+        if isinstance(orch_mode, str) and orch_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
+            synthesis_source = orch_mode.upper()
+            if raw_mode and raw_mode.upper() != synthesis_source:
+                self.log_event("WARNING_WORKER_PROVENANCE_DISCREPANCY", {
+                    "task_id": task_id,
+                    "orchestrator_mode": synthesis_source,
+                    "worker_mode": raw_mode
+                })
+        elif isinstance(raw_mode, str) and raw_mode.upper() in VALID_PROVENANCES and raw_mode.upper() in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
             synthesis_source = raw_mode.upper()
         else:
-            executor_prov = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode")
-            if executor_prov in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
-                synthesis_source = executor_prov
-            else:
-                raise ContextError(f"CRITICAL: Indeterminate execution provenance for task {task_id}; cannot construct handoff packet with unknown mode.")
+            raise ContextError(f"CRITICAL: Indeterminate execution provenance for task {task_id}; cannot construct handoff packet with unknown mode.")
 
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
@@ -4768,18 +4788,19 @@ class FactoryOrchestrator:
                 pass
 
         for dep_id, ho in candidates:
-            if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
+            validated_commit = ho.commit
+            if (PROJECT_ROOT / ".git").exists() and validated_commit and len(validated_commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", validated_commit):
                 verify_res = subprocess.run(
-                    ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
+                    ["git", "cat-file", "-e", f"{validated_commit}^{{commit}}"],
                     cwd=str(PROJECT_ROOT),
                     capture_output=True
                 )
                 if verify_res.returncode != 0:
-                    clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
-                    self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                    clean_err = f"Stale handoff {dep_id}: referenced commit {validated_commit} is missing from git history"
+                    self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
                     raise RuntimeError(clean_err)
                 anc_res = subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", ho.commit, target_head],
+                    ["git", "merge-base", "--is-ancestor", validated_commit, target_head],
                     cwd=str(PROJECT_ROOT),
                     capture_output=True
                 )
@@ -4788,16 +4809,25 @@ class FactoryOrchestrator:
                     is_anc = False
                     if base_c:
                         base_anc = subprocess.run(
-                            ["git", "merge-base", "--is-ancestor", ho.commit, base_c],
+                            ["git", "merge-base", "--is-ancestor", validated_commit, base_c],
                             cwd=str(PROJECT_ROOT),
                             capture_output=True
                         )
                         if base_anc.returncode == 0:
                             is_anc = True
                     if not is_anc:
-                        clean_err = f"Disjoint handoff {dep_id}: referenced commit {ho.commit} is not reachable from current HEAD or base commit"
-                        self.log_event("CRITICAL_HANDOFF_DISJOINT_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                        clean_err = f"Disjoint handoff {dep_id}: referenced commit {validated_commit} is not reachable from current HEAD or base commit"
+                        self.log_event("CRITICAL_HANDOFF_DISJOINT_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
                         raise RuntimeError(clean_err)
+                if ho.commit != validated_commit:
+                    raise RuntimeError(f"Handoff {dep_id} commit altered during validation")
+
+            # Post-check: ensure on-disk handoff file has not been replaced or tampered with
+            ho_file = self.handoffs_dir / f"{dep_id}.json"
+            if ho_file.exists():
+                disk_ho = load_handoff_packet(ho_file)
+                if disk_ho.handoff_hash != ho.handoff_hash or disk_ho.commit != ho.commit:
+                    raise RuntimeError(f"Handoff packet {dep_id} on disk drifted during validation")
             task_handoffs.append(ho)
         return task_handoffs
 
@@ -5456,8 +5486,7 @@ class FactoryOrchestrator:
                             with open(p_file, "r", encoding="utf-8") as pf_handle:
                                 prompt_raw = pf_handle.read(1024 * 1024 + 1)
                             if len(prompt_raw) <= 1024 * 1024:
-                                clean_prompt = redact_secrets(prompt_raw)
-                                rendered_prompts.append(clean_prompt)
+                                rendered_prompts.append(prompt_raw)
                         except Exception:
                             pass
                     cm = att.get("context_metrics", {})

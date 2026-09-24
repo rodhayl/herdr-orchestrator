@@ -47,15 +47,15 @@ def main():
     # Extract key sections from tools/context.py to provide complete self-contained context
     ctx_lines = (REPO_ROOT / "tools" / "context.py").read_text(encoding="utf-8").splitlines()
     ctx_sections = [
-        "### Injection Filter Pattern, Secret Redaction & Frozen Snapshot:\n" + "\n".join(ctx_lines[110:241]),
-        "\n### Anchor Data Model & Boundary-Safe Recall Calculation:\n" + "\n".join(ctx_lines[277:396]),
-        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[402:767]),
-        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[772:999]),
-        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1355:1499]),
-        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1637:1946]),
-        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2100:2261]),
-        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2397:2478]),
-        "\n### Atomic Persistence, Quarantine & Context Telemetry:\n" + "\n".join(ctx_lines[2483:2601]),
+        "### Injection Filter Pattern, Secret Redaction & Frozen Snapshot:\n" + "\n".join(ctx_lines[109:240]),
+        "\n### Anchor Data Model & Boundary-Safe Recall Calculation:\n" + "\n".join(ctx_lines[276:395]),
+        "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):\n" + "\n".join(ctx_lines[401:772]),
+        "\n### ContextSource & Sensitive File Pattern Matcher:\n" + "\n".join(ctx_lines[777:1006]),
+        "\n### ContextPacket & Cryptographic Staleness Verification:\n" + "\n".join(ctx_lines[1362:1506]),
+        "\n### ContextCompiler (compile_task_packet complete method with Pruning):\n" + "\n".join(ctx_lines[1644:1975]),
+        "\n### ContextCompiler (compile_plan_review_packet complete method with Pruning):\n" + "\n".join(ctx_lines[2129:2293]),
+        "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):\n" + "\n".join(ctx_lines[2429:2510]),
+        "\n### Atomic Persistence, Quarantine & Context Telemetry:\n" + "\n".join(ctx_lines[2515:2640]),
     ]
     context_core_code = "\n".join(ctx_sections)
 
@@ -114,6 +114,50 @@ Output ONLY a JSON object adhering to this schema:
     # Extract JSON object
     import re
 
+    def decode_loose_json(s: str) -> str:
+        out = []
+        in_string = False
+        escape = False
+        i = 0
+        while i < len(s):
+            c = s[i]
+            if not in_string:
+                if c == '"':
+                    in_string = True
+                out.append(c)
+                i += 1
+            else:
+                if escape:
+                    out.append(c)
+                    escape = False
+                    i += 1
+                else:
+                    if c == "\\":
+                        if i + 1 < len(s):
+                            nxt = s[i + 1]
+                            if nxt in ('"', '\\', '/', 'b', 'f', 'n', 'r', 't'):
+                                out.append(c)
+                                escape = True
+                                i += 1
+                            elif nxt == 'u' and i + 5 < len(s) and all(h in "0123456789abcdefABCDEF" for h in s[i+2:i+6]):
+                                out.append(c)
+                                escape = True
+                                i += 1
+                            else:
+                                out.append("\\\\")
+                                i += 1
+                        else:
+                            out.append("\\\\")
+                            i += 1
+                    elif c == '"':
+                        in_string = False
+                        out.append(c)
+                        i += 1
+                    else:
+                        out.append(c)
+                        i += 1
+        return "".join(out)
+
     def parse_llm_json(s: str) -> dict:
         m = re.search(r"\{.*\}", s, re.DOTALL)
         if not m:
@@ -122,9 +166,8 @@ Output ONLY a JSON object adhering to this schema:
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Sanitize invalid backslash escapes produced by LLM
-            sanitized = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', content)
-            return json.loads(sanitized)
+            cleaned = decode_loose_json(content)
+            return json.loads(cleaned, strict=False)
 
     try:
         raw_obj = parse_llm_json(out)

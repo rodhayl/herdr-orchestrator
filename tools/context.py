@@ -222,15 +222,14 @@ def redact_secrets(val: Any) -> Any:
     """Recursively redacts secret API keys, tokens, and sensitive env vars across values, preserving dict structure."""
     if isinstance(val, str):
         res = val
-        # Check frozen environment snapshot under lock to prevent iteration mutation and race conditions
         with _SECRET_ENV_LOCK:
             sorted_secrets = sorted(_INITIAL_SECRET_ENV.items(), key=lambda x: len(x[1]), reverse=True)
             for env_k, env_v in sorted_secrets:
                 if env_v:
                     res = res.replace(env_v, f"[REDACTED_{env_k}]")
-        for pat in SECRET_PATTERNS:
-            res = pat.sub("[REDACTED_SECRET]", res)
-        return res
+            for pat in SECRET_PATTERNS:
+                res = pat.sub("[REDACTED_SECRET]", res)
+            return res
     elif isinstance(val, list):
         return [redact_secrets(item) for item in val]
     elif isinstance(val, tuple):
@@ -426,12 +425,7 @@ class HandoffPacket:
         if not self.handoff_hash:
             self.enforce_semantic_bounds()
         else:
-            # Recompute expected hash and verify against stored self.handoff_hash
-            expected_h = sha256_text(canonical_json_dump(self.to_dict_raw()))
-            if self.handoff_hash != expected_h:
-                raise MalformedContextPacketError(
-                    f"Handoff integrity verification failed for {self.handoff_id}: stored hash {self.handoff_hash[:8]} != computed hash {expected_h[:8]}"
-                )
+            # Hash verification is strictly performed pre-instantiation in HandoffPacket.from_dict()
             actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
             if actual_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
                 raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {actual_bytes} > {MAX_SEMANTIC_HANDOFF_BYTES}")
@@ -590,6 +584,17 @@ class HandoffPacket:
                 self.contracts = self.contracts.encode("utf-8")[:cut].decode("utf-8", errors="ignore") + marker
                 self.decisions = ["[TRUNCATED:BOUND]"]
                 self.known_risks = ["[TRUNCATED:BOUND]"]
+
+            final_ft_check = sum(
+                len(v.encode("utf-8")) for v in [
+                    self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+                    self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
+                    self.decisions if isinstance(self.decisions, str) else "\n".join(self.decisions),
+                    self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
+                ]
+            )
+            if final_ft_check > ft_budget:
+                raise ContextError(f"HandoffPacket free-text bytes ({final_ft_check}) exceed budget ({ft_budget}) after hard fallback")
 
         # Bound individual path lengths to 512 bytes
         self.changed_paths = [str(p)[:512] for p in self.changed_paths]
@@ -892,12 +897,14 @@ class FilesystemGitContextSource(ContextSource):
         try:
             for root, dirs, files in os.walk(self.project_root):
                 # Filter ignore dirs and symlinked directories in-place
+                rel_root = pathlib.Path(root).relative_to(self.project_root)
                 dirs[:] = [
                     d for d in sorted(dirs)
-                    if d not in ignore_dirs and not d.startswith(".") and not (pathlib.Path(root) / d).is_symlink()
+                    if d not in ignore_dirs
+                    and not d.startswith(".")
+                    and not (pathlib.Path(root) / d).is_symlink()
+                    and not self._is_sensitive_path(str((rel_root / d).as_posix()) + "/")
                 ]
-
-                rel_root = pathlib.Path(root).relative_to(self.project_root)
                 depth = len(rel_root.parts)
                 if depth > max_depth:
                     dirs[:] = []
@@ -1849,10 +1856,25 @@ class ContextCompiler:
             compact_handoffs = []
             for ho in handoffs:
                 orig_hash = ho.original_handoff_hash or ho.handoff_hash
+                if not orig_hash or len(orig_hash) not in (40, 64) or not re.match(r"^[0-9a-fA-F]+$", orig_hash):
+                    raise MalformedContextPacketError(f"Handoff {ho.handoff_id} has invalid pre-compaction hash '{orig_hash}'")
                 h_copy = copy.deepcopy(ho)
                 h_copy.compacted = True
                 h_copy.original_handoff_hash = orig_hash
                 h_copy.handoff_hash = ""
+                # Re-run sanitization on free text fields before bounding & hash recomputation
+                if isinstance(h_copy.consumer_notes, str):
+                    h_copy.consumer_notes = redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", h_copy.consumer_notes))
+                if isinstance(h_copy.decisions, str):
+                    h_copy.decisions = redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", h_copy.decisions))
+                elif isinstance(h_copy.decisions, list):
+                    h_copy.decisions = [redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", str(x))) for x in h_copy.decisions]
+                if isinstance(h_copy.known_risks, str):
+                    h_copy.known_risks = redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", h_copy.known_risks))
+                elif isinstance(h_copy.known_risks, list):
+                    h_copy.known_risks = [redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", str(x))) for x in h_copy.known_risks]
+                if isinstance(h_copy.contracts, str):
+                    h_copy.contracts = redact_secrets(INJECTION_PATTERN.sub("[FILTERED]", h_copy.contracts))
                 h_copy.enforce_semantic_bounds(max_bytes=1024)
                 compact_handoffs.append(h_copy)
             handoffs = compact_handoffs
@@ -1898,6 +1920,13 @@ class ContextCompiler:
             raise ContextAnchorMissingError(
                 f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
             )
+        # Verify specifically that every required=True file_reference anchor appears in the rendered prompt
+        req_file_anchors = [a for a in anchors if a.required and a.anchor_type == "file_reference"]
+        for fa in req_file_anchors:
+            if fa.content not in full_rendered_prompt:
+                raise ContextAnchorMissingError(
+                    f"CONTEXT_ANCHOR_MISSING: Task {task_id} required file anchor '{fa.content}' dropped during compilation/pruning"
+                )
 
         # Hard budget check
         if current_bytes > hard_budget:
@@ -2113,11 +2142,14 @@ class ContextCompiler:
 
         stable_prefix, prefix_hash, _ = StablePrefixManager.get_stable_prefix(role)
 
+        clean_goal_spec = redact_secrets(copy.deepcopy(goal_spec))
+        clean_plan = redact_secrets(copy.deepcopy(plan))
+
         source_artifacts = ["goal-spec.json", "plan.json"]
         source_hashes = {
-            "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
-            "plan": sha256_text(canonical_json_dump(plan)),
-            "task_def": sha256_text(canonical_json_dump(plan.get("tasks", []))),
+            "goal-spec": sha256_text(canonical_json_dump(clean_goal_spec)),
+            "plan": sha256_text(canonical_json_dump(clean_plan)),
+            "task_def": sha256_text(canonical_json_dump(clean_plan.get("tasks", []))),
             "retry_info": sha256_text("REVIEWER_ROLE_NO_RETRY"),
             "stable_prefix": prefix_hash,
             "secret_env": get_secret_env_fingerprint(),
@@ -2125,7 +2157,7 @@ class ContextCompiler:
 
         # Build anchors for all criteria and deterministic validations
         anchors = []
-        for r in goal_spec.get("acceptance_criteria", []):
+        for r in clean_goal_spec.get("acceptance_criteria", []):
             validate_criterion_provenance(r)
             anchors.append(
                 Anchor(
@@ -2138,7 +2170,7 @@ class ContextCompiler:
                 )
             )
 
-        for t in plan.get("tasks", []):
+        for t in clean_plan.get("tasks", []):
             tid = t.get("task_id", "")
             for v in t.get("validations", []):
                 cmd_str = " ".join(v) if isinstance(v, list) else str(v)
@@ -2157,16 +2189,16 @@ class ContextCompiler:
         # Compact representation: instead of 16KB uncompacted dump, render clean structured review context
         sections = [
             f"## Plan Review Assignment (Revision #{revision_index})",
-            f"### Goal: {goal_spec.get('title', 'Autopilot Goal')}",
-            f"**Goal ID**: `{goal_spec.get('goal_id')}`",
+            f"### Goal: {clean_goal_spec.get('title', 'Autopilot Goal')}",
+            f"**Goal ID**: `{clean_goal_spec.get('goal_id')}`",
             "\n### Acceptance Criteria to Verify:",
         ]
-        for r in goal_spec.get("acceptance_criteria", []):
+        for r in clean_goal_spec.get("acceptance_criteria", []):
             prov = r.get("provenance", "USER_EXPLICIT")
             sections.append(f"- **{r['id']}** ({prov}): {r.get('description', '')}")
 
         sections.append("\n### Proposed Orchestration Plan Tasks:")
-        for t in plan.get("tasks", []):
+        for t in clean_plan.get("tasks", []):
             tid = t.get("task_id", "")
             sats = ", ".join(t.get("satisfies", []))
             deps = ", ".join(t.get("dependencies", [])) or "None"
@@ -2190,16 +2222,16 @@ class ContextCompiler:
             pruned = True
             compact_sections = [
                 f"## Plan Review Assignment (Revision #{revision_index})",
-                f"### Goal: {goal_spec.get('title', 'Autopilot Goal')}",
-                f"**Goal ID**: `{goal_spec.get('goal_id')}`",
+                f"### Goal: {clean_goal_spec.get('title', 'Autopilot Goal')}",
+                f"**Goal ID**: `{clean_goal_spec.get('goal_id')}`",
                 "\n### Acceptance Criteria to Verify:",
             ]
-            for r in goal_spec.get("acceptance_criteria", []):
+            for r in clean_goal_spec.get("acceptance_criteria", []):
                 prov = r.get("provenance", "USER_EXPLICIT")
                 compact_sections.append(f"- **{r['id']}** ({prov}): {r.get('description', '')}")
 
             compact_sections.append("\n### Proposed Orchestration Plan Tasks:")
-            for t in plan.get("tasks", []):
+            for t in clean_plan.get("tasks", []):
                 tid = t.get("task_id", "")
                 sats = ", ".join(t.get("satisfies", []))
                 deps = ", ".join(t.get("dependencies", [])) or "None"
@@ -2224,17 +2256,17 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
-        packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(full_rendered_prompt)[:8]}"
+        packet_id = f"ctx-rev-{clean_goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(full_rendered_prompt)[:8]}"
         packet_hash = sha256_text(full_rendered_prompt)
 
         return PlanReviewContextPacket(
             schema_version=SCHEMA_VERSION,
             packet_id=packet_id,
             packet_role=role,
-            goal_id=goal_spec.get("goal_id", "unknown"),
+            goal_id=clean_goal_spec.get("goal_id", "unknown"),
             source_artifacts=source_artifacts,
             source_hashes=source_hashes,
-            requirements=goal_spec.get("acceptance_criteria", []),
+            requirements=clean_goal_spec.get("acceptance_criteria", []),
             required_anchors=anchors,
             included_files=[],
             referenced_files=["GOAL.md"] if (self.source.project_root / "GOAL.md").exists() else [],
@@ -2506,7 +2538,8 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
 
 
 def load_context_packet(packet_file: pathlib.Path) -> ContextPacket:
-    """Loads a ContextPacket from disk."""
+    """Loads a ContextPacket from disk with secret environment initialization."""
+    snapshot_secret_env()
     try:
         data = json.loads(packet_file.read_text(encoding="utf-8"))
     except Exception as e:
@@ -2518,6 +2551,8 @@ def load_context_packet(packet_file: pathlib.Path) -> ContextPacket:
         raise MalformedContextPacketError(f"Failed to parse ContextPacket JSON from {packet_file}: {e}")
     try:
         return ContextPacket.from_dict(data)
+    except StaleContextPacketError:
+        raise
     except Exception as e:
         try:
             corrupt_path = packet_file.with_suffix(packet_file.suffix + ".corrupt")
@@ -2598,6 +2633,10 @@ def record_context_telemetry(run_dir: pathlib.Path, record: dict) -> None:
         with open(telemetry_file, "a", encoding="utf-8") as f:
             f.write(line)
             f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
 
 
 def cmd_context_inspect(run_id: str, task_id: Optional[str] = None, project_root: Optional[pathlib.Path] = None) -> int:
