@@ -408,6 +408,7 @@ class HandoffPacket:
     created_at: str = ""
     compacted: bool = False
     original_handoff_hash: str = ""
+    synthesis_source: str = "REAL"
 
     def __post_init__(self):
         if not self.created_at:
@@ -649,6 +650,7 @@ class HandoffPacket:
         d = self.to_dict_raw()
         d["handoff_bytes"] = self.handoff_bytes
         d["handoff_hash"] = self.handoff_hash
+        d["synthesis_source"] = getattr(self, "synthesis_source", "REAL")
         return d
 
     @classmethod
@@ -699,6 +701,7 @@ class HandoffPacket:
             created_at=d.get("created_at", ""),
             compacted=bool(d.get("compacted", False)),
             original_handoff_hash=d.get("original_handoff_hash", ""),
+            synthesis_source=d.get("synthesis_source", "REAL"),
         )
         # Verify semantic bounds on loaded packet to prevent unconstrained reload injection
         actual_bytes = len(canonical_json_dump(hp.to_dict()).encode("utf-8"))
@@ -1410,6 +1413,18 @@ class ContextPacket:
 
     @classmethod
     def from_dict(cls, d: dict) -> ContextPacket:
+        stored_hash = d.get("packet_hash", "")
+        if not stored_hash:
+            raise MalformedContextPacketError(f"ContextPacket is missing required packet_hash field: {d.get('packet_id', 'unknown')}")
+        role = d.get("packet_role", "")
+        rendered_tail = d.get("rendered_tail", "")
+        stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
+        expected_prompt = redact_secrets(stable_prefix + "\n" + rendered_tail)
+        computed_hash = sha256_text(expected_prompt)
+        if computed_hash != stored_hash:
+            raise MalformedContextPacketError(
+                f"ContextPacket integrity verification failed for {d.get('packet_id')}: stored hash {stored_hash[:8]} != computed hash {computed_hash[:8]}"
+            )
         anchors = [Anchor.from_dict(a) for a in d.get("required_anchors", [])]
         role = d.get("packet_role", "")
         cls_map = {
@@ -1704,8 +1719,9 @@ class ContextCompiler:
         for ho in handoffs:
             if isinstance(ho, HandoffPacket):
                 norm_handoffs.append(ho)
-                referenced_files.extend(ho.changed_paths)
-                handoff_required_paths.update(ho.changed_paths)
+                valid_paths = [p for p in ho.changed_paths[:200] if not str(p).startswith("[+")]
+                referenced_files.extend(valid_paths)
+                handoff_required_paths.update(valid_paths)
             elif isinstance(ho, dict):
                 hp = HandoffPacket(
                     handoff_id=ho.get("handoff_id", f"ho-{uuid.uuid4().hex[:8]}"),
@@ -1719,10 +1735,14 @@ class ContextCompiler:
                     consumer_notes=ho.get("consumer_notes", ho.get("summary", "")),
                     known_risks=ho.get("known_risks", ""),
                     validation_result=ho.get("validation_result", {"passed": True}),
+                    compacted=bool(ho.get("compacted", False)),
+                    original_handoff_hash=ho.get("original_handoff_hash", ""),
+                    synthesis_source=ho.get("synthesis_source", "REAL"),
                 )
                 norm_handoffs.append(hp)
-                referenced_files.extend(hp.changed_paths)
-                handoff_required_paths.update(hp.changed_paths)
+                valid_paths = [p for p in hp.changed_paths[:200] if not str(p).startswith("[+")]
+                referenced_files.extend(valid_paths)
+                handoff_required_paths.update(valid_paths)
         handoffs = norm_handoffs
 
         # Register handoff changed paths as required anchors to prevent silent loss
@@ -2040,8 +2060,8 @@ class ContextCompiler:
         source_hashes = {
             "goal-spec": sha256_text(canonical_json_dump(goal_spec)),
             "plan": sha256_text(canonical_json_dump(plan)),
-            "task_def": "",
-            "retry_info": "",
+            "task_def": "REVIEWER_ROLE_N/A",
+            "retry_info": "REVIEWER_ROLE_N/A",
             "stable_prefix": prefix_hash,
             "secret_env": get_secret_env_fingerprint(),
         }
@@ -2130,6 +2150,7 @@ class ContextCompiler:
                 val_part = f", validations: {', '.join(val_strs)}" if val_strs else ""
                 compact_sections.append(f"- Task `{tid}`: satisfies `{sats}`, depends on `{deps}`{val_part}")
 
+            compact_sections.append(f"\n### Project Policy Limits:\n{canonical_json_dump(project_policy_summary)}")
             tail = "\n".join(compact_sections) + "\n"
 
         tail = redact_secrets(tail)

@@ -3737,10 +3737,12 @@ class TaskExecutor:
         return worktree_path, attempt_branch
 
     def build_prompt(self, worktree_path: pathlib.Path, attempt_id: int = 1) -> str:
+        active_goal_spec = redact_secrets(copy.deepcopy(self.goal_spec)) if isinstance(self.goal_spec, dict) else {}
+        active_plan = redact_secrets(copy.deepcopy(self.plan)) if isinstance(self.plan, dict) else {}
         if self.review_only:
             packet = self.context_compiler.compile_plan_review_packet(
-                goal_spec=self.goal_spec,
-                plan=self.plan,
+                goal_spec=active_goal_spec,
+                plan=active_plan,
                 project_policy_summary=self.factory_config.get("limits", {}),
                 revision_index=0
             )
@@ -3754,10 +3756,10 @@ class TaskExecutor:
                     f"CONTEXT_ANCHOR_MISSING: Prompt for reviewer (task '{self.task_id}') missing required anchors: {missing}"
                 )
             current_source_hashes = {
-                "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-                "plan": sha256_text(canonical_json_dump(self.plan)),
-                "task_def": "",
-                "retry_info": "",
+                "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
+                "plan": sha256_text(canonical_json_dump(active_plan)),
+                "task_def": "REVIEWER_ROLE_N/A",
+                "retry_info": "REVIEWER_ROLE_N/A",
                 "stable_prefix": packet.source_hashes.get("stable_prefix"),
                 "secret_env": get_secret_env_fingerprint(),
             }
@@ -3781,13 +3783,13 @@ class TaskExecutor:
             extra_refs.extend(self.context_files)
 
         packet = self.context_compiler.compile_task_packet(
-            goal_id=self.goal_spec.get("goal_id", "unknown"),
+            goal_id=active_goal_spec.get("goal_id", "unknown"),
             run_id=self.run_id,
             task_id=self.task_id,
             attempt_id=attempt_id,
             task_def=self.task,
-            plan=self.plan,
-            goal_spec=self.goal_spec,
+            plan=active_plan,
+            goal_spec=active_goal_spec,
             worktree_path=str(worktree_path),
             allowed_paths=self.allowed_paths,
             dependencies=self.task.get("dependencies", []),
@@ -3810,8 +3812,8 @@ class TaskExecutor:
         # Staleness Verification Gate: ensure packet was not compiled from outdated source state
         r_info = getattr(self, "retry_info", None)
         current_source_hashes = {
-            "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
-            "plan": sha256_text(canonical_json_dump(self.plan)),
+            "goal-spec": sha256_text(canonical_json_dump(active_goal_spec)),
+            "plan": sha256_text(canonical_json_dump(active_plan)),
             "task_def": sha256_text(canonical_json_dump(self.task)),
             "retry_info": sha256_text(canonical_json_dump(r_info if isinstance(r_info, dict) else {})),
             "stable_prefix": packet.source_hashes.get("stable_prefix"),
