@@ -3865,7 +3865,8 @@ class TaskExecutor:
                 clean_prompt = redact_secrets(prompt_content)
                 if not clean_prompt:
                     raise ContextError(f"Prompt content became empty after redaction for task '{self.task_id}' (attempt #{attempt_id})")
-                assert redact_secrets(clean_prompt) == clean_prompt
+                if redact_secrets(clean_prompt) != clean_prompt:
+                    raise ContextError(f"Prompt redaction is not idempotent for task '{self.task_id}' (attempt #{attempt_id})")
                 prompt_content = clean_prompt
 
                 # Capture local reference to packet immediately after compilation/validation
@@ -3887,6 +3888,17 @@ class TaskExecutor:
 
                 # Save immutable ContextPacket for this attempt
                 if active_packet:
+                    snap_cur_hashes = {
+                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                        "plan": sha256_text(canonical_json_dump(snap_plan)),
+                        "task_def": "" if self.review_only else sha256_text(canonical_json_dump(snap_task)),
+                        "retry_info": "" if self.review_only else sha256_text(canonical_json_dump(snap_retry_info)),
+                        "stable_prefix": active_packet.source_hashes.get("stable_prefix"),
+                        "secret_env": get_secret_env_fingerprint(),
+                    }
+                    is_stale, stale_reasons = active_packet.verify_staleness(snap_cur_hashes)
+                    if is_stale:
+                        raise ContextError(f"CONTEXT_PACKET_STALE: ContextPacket drifted before persistence: {stale_reasons}")
                     save_context_packet(active_packet, attempt_dir / "context_packet.json")
                     packets_dir = self.run_dir / "context" / "packets"
                     packets_dir.mkdir(parents=True, exist_ok=True)
@@ -3920,7 +3932,7 @@ class TaskExecutor:
                 "status": "FAILED",
                 "state": "FAILED",
                 "error_category": "UNEXPECTED_COMPILATION_ERROR",
-                "error": redact_secrets(str(err)),
+                "error": redact_secrets(str(err).splitlines()[-1] if str(err).splitlines() else str(err)),
                 "exit_code": 1,
                 "start_time": start_time,
                 "end_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -4187,9 +4199,6 @@ class TaskExecutor:
                           worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int,
                           auth_source: str = "unauthenticated", prompt_content: Optional[str] = None,
                           context_packet: Optional[Any] = None):
-        if prompt_content is None:
-            self.log_event("WARNING_TELEMETRY_PROMPT_NONE", {"task_id": self.task_id})
-            return
         churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
         try:
             diff_res = subprocess.run(
@@ -4262,11 +4271,25 @@ class TaskExecutor:
         telemetry = redact_secrets(telemetry)
         attempt_record["telemetry"] = telemetry
 
+        if prompt_content is None:
+            self.log_event("WARNING_TELEMETRY_PROMPT_NONE", {"task_id": self.task_id})
+            attempt_record["context_metrics"] = {
+                "schema_version": "8.0.0",
+                "run_id": self.run_id,
+                "task_id": self.task_id,
+                "attempt_id": attempt_record.get("attempt_id", 1),
+                "error": "PROMPT_UNAVAILABLE",
+                "required_anchor_recall": None,
+                "provider_cache_data_available": False,
+            }
+            return
+
         # Context Metrics telemetry recording (v8.0.0)
         active_pkt = context_packet or self.current_context_packet
         if active_pkt and prompt_content is not None:
             clean_prompt = redact_secrets(prompt_content)
-            assert redact_secrets(clean_prompt) == clean_prompt
+            if redact_secrets(clean_prompt) != clean_prompt:
+                raise ContextError(f"Prompt redaction is not idempotent for task {self.task_id}")
             pkt = active_pkt
             sp_prefix, sp_hash, sp_bytes = StablePrefixManager.get_stable_prefix("reviewer" if self.review_only else "task")
 
@@ -4283,15 +4306,16 @@ class TaskExecutor:
 
             valid_in_tokens = _valid_token_int(provider_input_tokens)
             valid_cached_tokens = _valid_token_int(provider_cached_tokens)
+            cache_data_avail = valid_cached_tokens is not None
             total_toks_inc_cache = (
-                (valid_in_tokens or 0) + (valid_cached_tokens or 0)
-                if (valid_in_tokens is not None or valid_cached_tokens is not None)
+                (valid_in_tokens + valid_cached_tokens)
+                if (valid_in_tokens is not None and valid_cached_tokens is not None)
                 else None
             )
 
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
-            raw_tail_bytes = len(pkt.rendered_tail.encode("utf-8"))
+            raw_tail_bytes = dynamic_bytes
             factory_bytes = len((sp_prefix + "\n" + clean_tail).encode("utf-8"))
             rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
@@ -4333,6 +4357,7 @@ class TaskExecutor:
                 "provider_input_tokens": valid_in_tokens,
                 "provider_cached_input_tokens": valid_cached_tokens,
                 "provider_total_tokens_including_cache": total_toks_inc_cache,
+                "provider_cache_data_available": cache_data_avail,
                 "provider_output_tokens": _valid_token_int(provider_output_tokens),
                 "provider_reasoning_tokens": _valid_token_int(provider_reasoning_tokens),
                 "session_mode": session_mode,
@@ -4480,7 +4505,7 @@ class FactoryOrchestrator:
         spec_path = self.plan_path.parent / "goal-spec.json"
         if spec_path.exists():
             try:
-                self.goal_spec = json.loads(spec_path.read_text(encoding="utf-8"))
+                self.goal_spec = redact_secrets(json.loads(spec_path.read_text(encoding="utf-8")))
             except Exception:
                 self.goal_spec = None
         else:
@@ -4488,10 +4513,10 @@ class FactoryOrchestrator:
 
         self.goal_text = ""
         if isinstance(self.goal_spec, dict):
-            self.goal_text = self.goal_spec.get("raw_goal", "")
+            self.goal_text = redact_secrets(self.goal_spec.get("raw_goal", ""))
         if not self.goal_text and (self.plan_path.parent / "GOAL.md").exists():
             try:
-                self.goal_text = (self.plan_path.parent / "GOAL.md").read_text(encoding="utf-8").strip()
+                self.goal_text = redact_secrets((self.plan_path.parent / "GOAL.md").read_text(encoding="utf-8").strip())
             except Exception:
                 pass
 
@@ -4600,6 +4625,9 @@ class FactoryOrchestrator:
             # Strip markdown headers, code fences, and backticks
             cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
+            # Strip HTML comments and CDATA blocks first to prevent hidden payload bypasses
+            cleaned = re.sub(r"<!--[\s\S]*?-->", "", cleaned)
+            cleaned = re.sub(r"<!\[CDATA\[[\s\S]*?\]\]>", "", cleaned)
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
             # Pass 2: Re-normalize with NFKC and homoglyphs after HTML stripping to catch reassembled tokens
@@ -5420,8 +5448,10 @@ class FactoryOrchestrator:
             min_recall = min(observed_recalls) if observed_recalls else None
 
             if rendered_prompts:
-                if len(rendered_prompts) > 50:
-                    self.log_event("WARNING_CONTEXT_REDUNDANCY_PROMPTS_CAPPED", {"total_prompts": len(rendered_prompts), "capped_to": 50})
+                total_prompts = len(rendered_prompts)
+                is_capped = total_prompts > 50
+                if is_capped:
+                    self.log_event("WARNING_CONTEXT_REDUNDANCY_PROMPTS_CAPPED", {"total_prompts": total_prompts, "capped_to": 50})
                     rendered_prompts = rendered_prompts[:50]
                 redundancy_stats = calculate_context_redundancy(rendered_prompts)
                 self.manifest["context_summary"] = {
@@ -5433,6 +5463,9 @@ class FactoryOrchestrator:
                     "repeated_content_bytes": redundancy_stats["repeated_content_bytes"],
                     "redundancy_ratio": redundancy_stats["redundancy_ratio"],
                     "prompt_count": len(rendered_prompts),
+                    "prompt_count_total": total_prompts,
+                    "prompt_count_sampled": len(rendered_prompts),
+                    "prompt_count_capped": is_capped,
                     "required_anchor_recall": round(min_recall, 4) if min_recall is not None else None
                 }
             else:

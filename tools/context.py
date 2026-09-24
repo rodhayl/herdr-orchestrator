@@ -213,11 +213,11 @@ def redact_secrets(val: Any) -> Any:
     """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
     if isinstance(val, str):
         res = val
-        # Check frozen environment snapshot under lock to prevent iteration mutation
+        # Check frozen environment snapshot under lock to prevent iteration mutation and race conditions
         with _SECRET_ENV_LOCK:
-            env_items = list(_INITIAL_SECRET_ENV.items())
-        for env_k, env_v in env_items:
-            res = res.replace(env_v, f"[REDACTED_{env_k}]")
+            for env_k, env_v in _INITIAL_SECRET_ENV.items():
+                if env_v:
+                    res = res.replace(env_v, f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
         return res
@@ -406,6 +406,8 @@ class HandoffPacket:
     handoff_bytes: int = 0
     handoff_hash: str = ""
     created_at: str = ""
+    compacted: bool = False
+    original_handoff_hash: str = ""
 
     def __post_init__(self):
         if not self.created_at:
@@ -529,7 +531,10 @@ class HandoffPacket:
             elif isinstance(cur_val, list):
                 if cur_val:
                     cur_val.pop()
-                    setattr(self, largest_field, cur_val)
+                    new_list = [x for x in cur_val if x != "[TRUNCATED:BOUND]"]
+                    if new_list:
+                        new_list.append("[TRUNCATED:BOUND]")
+                    setattr(self, largest_field, new_list)
                 else:
                     break
 
@@ -555,11 +560,11 @@ class HandoffPacket:
             if isinstance(self.decisions, str):
                 self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
-                self.decisions = [str(d)[:alloc] for d in self.decisions[:3]]
+                self.decisions = [str(d)[:alloc] for d in self.decisions[:3]] + ["[TRUNCATED:BOUND]"]
             if isinstance(self.known_risks, str):
                 self.known_risks = self.known_risks.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.known_risks, list):
-                self.known_risks = [str(r)[:alloc] for r in self.known_risks[:3]]
+                self.known_risks = [str(r)[:alloc] for r in self.known_risks[:3]] + ["[TRUNCATED:BOUND]"]
 
         # Bound individual path lengths to 512 bytes
         self.changed_paths = [str(p)[:512] for p in self.changed_paths]
@@ -620,7 +625,7 @@ class HandoffPacket:
             raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {max_bytes}")
 
     def to_dict_raw(self) -> dict:
-        return {
+        d = {
             "schema_version": SCHEMA_VERSION,
             "handoff_id": self.handoff_id,
             "producer_task_id": self.producer_task_id,
@@ -635,6 +640,10 @@ class HandoffPacket:
             "validation_result": self.validation_result,
             "created_at": self.created_at,
         }
+        if self.compacted:
+            d["compacted"] = True
+            d["original_handoff_hash"] = self.original_handoff_hash
+        return d
 
     def to_dict(self) -> dict:
         d = self.to_dict_raw()
@@ -664,6 +673,9 @@ class HandoffPacket:
             "validation_result": d.get("validation_result", {"passed": True}),
             "created_at": d.get("created_at", ""),
         }
+        if d.get("compacted"):
+            raw_dict["compacted"] = True
+            raw_dict["original_handoff_hash"] = d.get("original_handoff_hash", "")
         computed = sha256_text(canonical_json_dump(raw_dict))
         stored_hash = d["handoff_hash"]
         if computed != stored_hash:
@@ -685,6 +697,8 @@ class HandoffPacket:
             handoff_bytes=d.get("handoff_bytes", 0),
             handoff_hash=stored_hash,
             created_at=d.get("created_at", ""),
+            compacted=bool(d.get("compacted", False)),
+            original_handoff_hash=d.get("original_handoff_hash", ""),
         )
         # Verify semantic bounds on loaded packet to prevent unconstrained reload injection
         actual_bytes = len(canonical_json_dump(hp.to_dict()).encode("utf-8"))
@@ -1360,6 +1374,8 @@ class ContextPacket:
                 stale_reasons.append(f"{path} changed ({orig_hash[:8]} -> {curr[:8] if curr else 'MISSING'})")
         for path, curr_hash in current_source_hashes.items():
             if path not in self.source_hashes:
+                if path == "secret_env":
+                    continue
                 stale_reasons.append(f"expected source {path} missing in packet source_hashes")
         return len(stale_reasons) > 0, stale_reasons
 
@@ -1727,8 +1743,14 @@ class ContextCompiler:
         # Check for inline files (none by default unless explicitly needed)
         included_files: List[dict] = []
 
-        # Prepare initial dynamic tail (bound prompt to 2048 bytes to prevent internal context bloat)
-        task_prompt = task_def.get("prompt", "").encode("utf-8")[:2048].decode("utf-8", errors="ignore")
+        # Prepare initial dynamic tail (bound prompt to 2048 bytes and sanitize injection/homoglyphs)
+        raw_tp = str(task_def.get("prompt", ""))
+        raw_tp = unicodedata.normalize("NFKC", raw_tp)
+        raw_tp = "".join(c for c in raw_tp if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
+        raw_tp = normalize_homoglyphs(raw_tp)
+        raw_tp = INJECTION_PATTERN.sub("[FILTERED]", raw_tp)
+        raw_tp = redact_secrets(raw_tp)
+        task_prompt = raw_tp.encode("utf-8")[:2048].decode("utf-8", errors="ignore")
         tail = self._render_task_dynamic_tail(
             task_id, attempt_id, worktree_path, allowed_paths,
             task_requirements, referenced_files, included_files,
@@ -1764,10 +1786,13 @@ class ContextCompiler:
             core_files = sorted(set(list(handoff_required_paths) + [f for f in {"GOAL.md", "README.md"} if (self.source.project_root / f).exists()]))
             referenced_files = sorted(set(core_files + filtered_extra))
 
-            # Step 2: Bound handoff notes
+            # Step 2: Bound handoff notes while preserving original handoff hash for traceability
             compact_handoffs = []
             for ho in handoffs:
+                orig_hash = ho.original_handoff_hash or ho.handoff_hash
                 h_copy = copy.deepcopy(ho)
+                h_copy.compacted = True
+                h_copy.original_handoff_hash = orig_hash
                 h_copy.handoff_hash = ""
                 h_copy.enforce_semantic_bounds(max_bytes=1024)
                 compact_handoffs.append(h_copy)
