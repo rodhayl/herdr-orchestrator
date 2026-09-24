@@ -4,10 +4,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FACTORY_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TARGET_PROJECT="/root/treehash-project"
+TARGET_PROJECT="${TARGET_PROJECT:-/root/treehash-v8-project}"
 
 echo "================================================================================"
-echo "AGY-Herdr Software Factory (v7.0.0) — Real Provider Autopilot Certification"
+echo "AGY-Herdr Software Factory (v8.0.0) — Real Provider Autopilot Certification"
 echo "Target Project: $TARGET_PROJECT"
 echo "================================================================================"
 
@@ -171,12 +171,14 @@ else
 fi
 rm -rf "$TEST_DIR" "$MANIFEST_FILE"
 
-echo -e "\n[7. Exporting Autopilot Certification Bundle]"
-mkdir -p "$FACTORY_DIR/certification/v7"
+echo -e "\n[7. Verifying Context Packets and Exporting Autopilot Certification Bundle]"
+python3 "$FACTORY_DIR/tools/factory.py" --project-root "$TARGET_PROJECT" context stats --run "$RUN_ID"
+
+mkdir -p "$FACTORY_DIR/certification/v8"
 python3 -c "import json, sys
 r = json.loads(sys.argv[1])
 evidence = {
-    'certification_id': 'v7-autopilot-treehash-real',
+    'certification_id': 'v8-autopilot-treehash-real',
     'certified_at': sys.argv[2],
     'target_project': sys.argv[3],
     'goal_id': sys.argv[4],
@@ -187,9 +189,9 @@ evidence = {
 }
 with open(sys.argv[7], 'w', encoding='utf-8') as f:
     json.dump(evidence, f, indent=2)
-" "$REPORT_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET_PROJECT" "$GOAL_ID" "$RUN_ID" "$FINAL_PHASE" "$FACTORY_DIR/certification/v7/autopilot-real-certification.json"
+" "$REPORT_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET_PROJECT" "$GOAL_ID" "$RUN_ID" "$FINAL_PHASE" "$FACTORY_DIR/certification/v8/autopilot-real-certification.json"
 
 echo "================================================================================"
 echo "CERTIFICATION SUCCESS: Project Autopilot completed end-to-end with genuine providers!"
-echo "Bundle: $FACTORY_DIR/certification/v7/autopilot-real-certification.json"
+echo "Bundle: $FACTORY_DIR/certification/v8/autopilot-real-certification.json"
 echo "================================================================================"
