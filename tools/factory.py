@@ -4168,7 +4168,7 @@ class TaskExecutor:
         }
         attempt_record = redact_secrets(attempt_record)
 
-        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source, prompt_content=prompt_content)
+        self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, exit_code, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
         atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
         self.attempts.append(attempt_record)
         self.latest_result = attempt_record
@@ -4185,9 +4185,11 @@ class TaskExecutor:
 
     def _record_telemetry(self, attempt_record: dict, raw_res: dict, base_commit: str,
                           worktree_path: pathlib.Path, start_time: str, end_time: str, exit_code: int,
-                          auth_source: str = "unauthenticated", prompt_content: Optional[str] = None):
-        if not prompt_content:
-            raise ContextError(f"prompt_content cannot be empty when recording telemetry for task {self.task_id}")
+                          auth_source: str = "unauthenticated", prompt_content: Optional[str] = None,
+                          context_packet: Optional[Any] = None):
+        if prompt_content is None:
+            self.log_event("WARNING_TELEMETRY_PROMPT_NONE", {"task_id": self.task_id})
+            return
         churn = {"lines_added": 0, "lines_deleted": 0, "files_changed": 0}
         try:
             diff_res = subprocess.run(
@@ -4261,10 +4263,11 @@ class TaskExecutor:
         attempt_record["telemetry"] = telemetry
 
         # Context Metrics telemetry recording (v8.0.0)
-        if self.current_context_packet and prompt_content is not None:
+        active_pkt = context_packet or self.current_context_packet
+        if active_pkt and prompt_content is not None:
             clean_prompt = redact_secrets(prompt_content)
             assert redact_secrets(clean_prompt) == clean_prompt
-            pkt = self.current_context_packet
+            pkt = active_pkt
             sp_prefix, sp_hash, sp_bytes = StablePrefixManager.get_stable_prefix("reviewer" if self.review_only else "task")
 
             # Extract provider token metrics if reported by provider (preserving valid 0 counts)
@@ -4279,6 +4282,12 @@ class TaskExecutor:
                 return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0 else None
 
             valid_in_tokens = _valid_token_int(provider_input_tokens)
+            valid_cached_tokens = _valid_token_int(provider_cached_tokens)
+            total_toks_inc_cache = (
+                (valid_in_tokens or 0) + (valid_cached_tokens or 0)
+                if (valid_in_tokens is not None or valid_cached_tokens is not None)
+                else None
+            )
 
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
@@ -4322,7 +4331,8 @@ class TaskExecutor:
                 "unique_bytes": red_stats["unique_content_bytes"],
                 "redundancy_ratio": red_stats["redundancy_ratio"],
                 "provider_input_tokens": valid_in_tokens,
-                "provider_cached_input_tokens": _valid_token_int(provider_cached_tokens),
+                "provider_cached_input_tokens": valid_cached_tokens,
+                "provider_total_tokens_including_cache": total_toks_inc_cache,
                 "provider_output_tokens": _valid_token_int(provider_output_tokens),
                 "provider_reasoning_tokens": _valid_token_int(provider_reasoning_tokens),
                 "session_mode": session_mode,
@@ -4390,6 +4400,8 @@ class TaskExecutor:
                 commit_source_hashes = {
                     "goal-spec": sha256_text(canonical_json_dump(self.goal_spec)),
                     "plan": sha256_text(canonical_json_dump(self.plan)),
+                    "task_def": "",
+                    "retry_info": "",
                     "stable_prefix": prefix_hash,
                     "secret_env": get_secret_env_fingerprint(),
                 }
@@ -4572,7 +4584,7 @@ class FactoryOrchestrator:
             self.goal_spec = {"acceptance_criteria": []}
 
         # Sanitize worker-supplied fields to prevent prompt injection or markdown smuggling
-        def _sanitize_worker_text(val: str, max_chars: int = 512) -> str:
+        def _sanitize_worker_text(val: str, max_chars: int = MAX_SEMANTIC_HANDOFF_BYTES) -> str:
             if not isinstance(val, str):
                 return ""
             val = unicodedata.normalize("NFKC", str(val))
@@ -4601,22 +4613,27 @@ class FactoryOrchestrator:
             if isinstance(p, str) and not p.startswith("/") and ".." not in p and re.match(r"^[a-zA-Z0-9_\-./]+$", p)
             and not (ctx_src and ctx_src._is_sensitive_path(p))
         ]
-        clean_summary = _sanitize_worker_text(raw_summary, 256) or f"Completed {task_id}"
-        clean_notes = _sanitize_worker_text(raw_notes, 512)
+        clean_summary = _sanitize_worker_text(raw_summary) or f"Completed {task_id}"
+        clean_notes = _sanitize_worker_text(raw_notes)
 
         # Cross-reference satisfied criteria with goal_spec acceptance_criteria
-        known_criteria_ids = {c.get("id") for c in self.goal_spec.get("acceptance_criteria", []) if isinstance(c, dict)}
-        valid_satisfied = [cid for cid in satisfied if cid in known_criteria_ids]
-        filtered_criteria = [cid for cid in satisfied if cid not in known_criteria_ids]
-        if filtered_criteria:
-            self.log_event("WARNING_UNKNOWN_CRITERIA_IN_HANDOFF", {"task_id": task_id, "unknown_criteria": filtered_criteria})
+        criteria_list = self.goal_spec.get("acceptance_criteria", []) if isinstance(self.goal_spec, dict) else []
+        known_criteria_ids = {c.get("id") for c in criteria_list if isinstance(c, dict)}
+        if not known_criteria_ids:
+            valid_satisfied = list(satisfied)
+            filtered_criteria = []
+        else:
+            valid_satisfied = [cid for cid in satisfied if cid in known_criteria_ids]
+            filtered_criteria = [cid for cid in satisfied if cid not in known_criteria_ids]
+            if filtered_criteria:
+                self.log_event("WARNING_UNKNOWN_CRITERIA_IN_HANDOFF", {"task_id": task_id, "unknown_criteria": filtered_criteria})
 
         is_passed = attempt_result.get("status") in ("SUCCESS", "COMPLETED") and attempt_result.get("exit_code", 0) == 0
         actual_exit_code = attempt_result.get("exit_code", 0 if is_passed else 1)
-        contracts_text = _sanitize_worker_text(f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}", 512)
-        decisions_text = _sanitize_worker_text(f"Implemented {clean_summary}", 512)
-        consumer_notes_text = _sanitize_worker_text(clean_notes or f"Changes integrated in commit {commit_hash[:8]}", 512)
-        known_risks_text = _sanitize_worker_text("", 512)
+        contracts_text = _sanitize_worker_text(f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}")
+        decisions_text = _sanitize_worker_text(f"Implemented {clean_summary}")
+        consumer_notes_text = _sanitize_worker_text(clean_notes or f"Changes integrated in commit {commit_hash[:8]}")
+        known_risks_text = _sanitize_worker_text("")
         val_result = {"passed": is_passed, "exit_code": actual_exit_code}
         if filtered_criteria:
             val_result["filtered_criteria"] = filtered_criteria

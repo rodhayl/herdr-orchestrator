@@ -366,6 +366,7 @@ def calculate_rendered_anchor_recall(
         if not content:
             missing.append(req.anchor_id)
             continue
+        found = False
         # Strict boundary matching depending on anchor type
         if getattr(req, "anchor_type", "") == "validation":
             found = bool(re.search(r"`" + re.escape(content) + r"`", rendered_text)) or bool(re.search(r"(?m)^[\s*\-]*`?" + re.escape(content) + r"`?", rendered_text)) or (content in rendered_text)
@@ -478,6 +479,25 @@ class HandoffPacket:
         # Enforce total aggregate bound proportionally across all four free-text fields
         # Reserve envelope headroom so the overall serialized JSON remains <= max_bytes
         ft_budget = max(512, max_bytes - 768)
+
+        # Initial proportional scale down if massive initial excess
+        init_parts = {
+            "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+            "known_risks": self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
+            "decisions": self.decisions if isinstance(self.decisions, str) else "\n".join(self.decisions),
+            "contracts": self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
+        }
+        init_ft_bytes = sum(len(v.encode("utf-8")) for v in init_parts.values())
+        if init_ft_bytes > ft_budget * 2:
+            scale = ft_budget / float(init_ft_bytes)
+            for f_name, v_str in init_parts.items():
+                cur = getattr(self, f_name)
+                alloc_b = max(64, int(len(v_str.encode("utf-8")) * scale) - 32)
+                if isinstance(cur, str):
+                    setattr(self, f_name, cur.encode("utf-8")[:alloc_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]")
+                elif isinstance(cur, dict):
+                    setattr(self, f_name, canonical_json_dump(cur).encode("utf-8")[:alloc_b].decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]")
+
         for _ in range(50):
             ft_parts = {
                 "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
@@ -530,6 +550,8 @@ class HandoffPacket:
                 self.consumer_notes = self.consumer_notes.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             if isinstance(self.contracts, str):
                 self.contracts = self.contracts.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
+            elif isinstance(self.contracts, dict):
+                self.contracts = canonical_json_dump(self.contracts).encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             if isinstance(self.decisions, str):
                 self.decisions = self.decisions.encode("utf-8")[:alloc].decode("utf-8", errors="ignore") + marker
             elif isinstance(self.decisions, list):
