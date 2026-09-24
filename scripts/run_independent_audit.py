@@ -40,7 +40,7 @@ def main():
 
     # tools/factory.py diff
     factory_diff = subprocess.check_output(
-        ["git", "diff", "aa27ecc..HEAD", "--", "tools/factory.py"],
+        ["git", "diff", "-U1", "aa27ecc..HEAD", "--", "tools/factory.py"],
         cwd=str(REPO_ROOT)
     ).decode("utf-8", errors="replace")
 
@@ -50,16 +50,16 @@ def main():
         "### Secret Redaction & Frozen Snapshot:",
         "\n".join(ctx_lines[70:160]),
         "\n### Anchor Data Model & Boundary-Safe Recall Calculation:",
-        "\n".join(ctx_lines[175:335]),
+        "\n".join(ctx_lines[200:335]),
         "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
-        "\n".join(ctx_lines[335:540]),
+        "\n".join(ctx_lines[340:510]),
         "\n### ContextSource & Sensitive File Pattern Matcher:",
-        "\n".join(ctx_lines[615:770]),
+        "\n".join(ctx_lines[640:770]),
         "\n### ContextPacket & Cryptographic Staleness Verification:",
-        "\n".join(ctx_lines[1050:1200]),
+        "\n".join(ctx_lines[1050:1190]),
         "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
-        "\n".join(ctx_lines[1345:1570]),
-        "\n".join(ctx_lines[1635:1715]),
+        "\n".join(ctx_lines[1350:1540]),
+        "\n".join(ctx_lines[1635:1690]),
         "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
         "\n".join(ctx_lines[2170:2255]),
         "\n### Atomic Persistence (Temp File + Flush + Fsync + os.replace):",
