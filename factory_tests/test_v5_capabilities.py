@@ -16,9 +16,11 @@ import pathlib
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.factory import (
     PROJECT_ROOT,
+    _AUTH_PROBE_CACHE,
     CodexAdapter,
     DroidAdapter,
     AgyAdapter,
@@ -326,6 +328,7 @@ class TestV5ExecutionProfileRouting(unittest.TestCase):
     """Tests for deterministic routing by execution profile (Section 20 priority table)."""
 
     def setUp(self):
+        _AUTH_PROBE_CACHE.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.test_root = pathlib.Path(self.temp_dir.name)
         self.profiles_path = self.test_root / "harness_profiles.json"
@@ -335,6 +338,7 @@ class TestV5ExecutionProfileRouting(unittest.TestCase):
             self.factory_config = json.load(f)
 
     def tearDown(self):
+        _AUTH_PROBE_CACHE.clear()
         self.temp_dir.cleanup()
 
     def test_section_20_specification_routing(self):
@@ -435,8 +439,31 @@ class TestV5ExecutionProfileRouting(unittest.TestCase):
         finally:
             os.environ.pop("FACTORY_TEST_HARNESS", None)
 
-    def test_section_20_live_mode_auth_block_fallback(self):
+    @patch("tools.factory.probe_harness_auth")
+    def test_section_20_live_mode_auth_block_fallback(self, mock_probe):
         """In live mode without FACTORY_API_KEY / OPENAI_API_KEY, router falls back cleanly to AGY."""
+        def fake_probe(harness, force_refresh=False):
+            if harness == "agy":
+                return {
+                    "harness": "agy",
+                    "authenticated": True,
+                    "auth_source": "provider_credentials",
+                    "confidence": "high",
+                    "evidence": "agy models listed available models",
+                    "requires_interaction": False,
+                    "notes": ""
+                }
+            return {
+                "harness": harness,
+                "authenticated": False,
+                "auth_source": "unauthenticated",
+                "confidence": "high",
+                "evidence": f"{harness} unauthenticated in fallback test",
+                "requires_interaction": False,
+                "notes": ""
+            }
+        mock_probe.side_effect = fake_probe
+
         # Ensure credentials are unset
         old_fact = os.environ.pop("FACTORY_API_KEY", None)
         old_open = os.environ.pop("OPENAI_API_KEY", None)
@@ -503,6 +530,7 @@ class TestV5RouteExplain(unittest.TestCase):
     """Tests for route explain CLI inspection without mutation."""
 
     def setUp(self):
+        _AUTH_PROBE_CACHE.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.test_root = pathlib.Path(self.temp_dir.name)
         self.plan_path = self.test_root / "test_plan.json"
@@ -522,6 +550,7 @@ class TestV5RouteExplain(unittest.TestCase):
             json.dump(plan_content, f)
 
     def tearDown(self):
+        _AUTH_PROBE_CACHE.clear()
         self.temp_dir.cleanup()
 
     def test_explain_task_routing_structure(self):

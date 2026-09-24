@@ -1,7 +1,7 @@
 import unittest
 import pathlib
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from tools.factory import CodexAdapter, ClaudeAdapter, OpenCodeAdapter, AgyAdapter
 
 class TestV61NativeCLIContracts(unittest.TestCase):
@@ -10,7 +10,17 @@ class TestV61NativeCLIContracts(unittest.TestCase):
         self.mock_herdr.create_workspace.return_value = ("ws-test-1", "pane-test-1")
         self.mock_res_mgr = MagicMock()
 
-    def test_codex_toml_quoting_contract(self):
+    @patch("tools.factory.probe_harness_auth")
+    def test_codex_toml_quoting_contract(self, mock_probe):
+        mock_probe.return_value = {
+            "harness": "codex",
+            "authenticated": False,
+            "auth_source": "unauthenticated",
+            "confidence": "high",
+            "evidence": "simulated unauthenticated codex",
+            "requires_interaction": False,
+            "notes": ""
+        }
         adapter = CodexAdapter("codex", {
             "command": "/usr/local/bin/codex",
             "default_model": "gpt-5.6-luna",

@@ -1,13 +1,15 @@
 import os
 import unittest
 from unittest.mock import patch, MagicMock
-from tools.factory import probe_harness_auth, probe_profile_auth
+from tools.factory import probe_harness_auth, probe_profile_auth, _AUTH_PROBE_CACHE
 
 class TestV61AuthDiscovery(unittest.TestCase):
     def setUp(self):
+        _AUTH_PROBE_CACHE.clear()
         self.orig_env = os.environ.copy()
 
     def tearDown(self):
+        _AUTH_PROBE_CACHE.clear()
         os.environ.clear()
         os.environ.update(self.orig_env)
 
