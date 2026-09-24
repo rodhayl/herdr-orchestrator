@@ -48,22 +48,21 @@ def main():
     ctx_lines = (REPO_ROOT / "tools" / "context.py").read_text(encoding="utf-8").splitlines()
     ctx_sections = [
         "### Secret Redaction & Frozen Snapshot:",
-        "\n".join(ctx_lines[70:160]),
+        "\n".join(ctx_lines[80:205]),
         "\n### Anchor Data Model & Boundary-Safe Recall Calculation:",
-        "\n".join(ctx_lines[200:335]),
+        "\n".join(ctx_lines[235:370]),
         "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
-        "\n".join(ctx_lines[340:510]),
+        "\n".join(ctx_lines[375:570]),
         "\n### ContextSource & Sensitive File Pattern Matcher:",
-        "\n".join(ctx_lines[640:770]),
+        "\n".join(ctx_lines[675:810]),
         "\n### ContextPacket & Cryptographic Staleness Verification:",
-        "\n".join(ctx_lines[1050:1190]),
+        "\n".join(ctx_lines[1258:1345]),
         "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
-        "\n".join(ctx_lines[1350:1540]),
-        "\n".join(ctx_lines[1635:1690]),
+        "\n".join(ctx_lines[1408:1750]),
         "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
-        "\n".join(ctx_lines[2170:2255]),
+        "\n".join(ctx_lines[2235:2320]),
         "\n### Atomic Persistence (Temp File + Flush + Fsync + os.replace):",
-        "\n".join(ctx_lines[2255:2325]),
+        "\n".join(ctx_lines[2322:2400]),
     ]
     context_core_code = "\n".join(ctx_sections)
 
