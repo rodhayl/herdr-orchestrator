@@ -110,27 +110,29 @@ ENV_SECRET_KEY_PATTERN = re.compile(r"(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_PASSWD|_
 
 # Freeze load-time environment secret snapshot (never re-read os.environ dynamically during redaction)
 _INITIAL_SECRET_ENV: dict[str, str] = {}
+_SECRET_ENV_LOCK = threading.RLock()
 
 
 def snapshot_secret_env() -> dict[str, str]:
     """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
-    for _k, _v in os.environ.items():
-        if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
-            stripped = _v.strip()
-            if stripped and len(stripped) >= 8:
-                _INITIAL_SECRET_ENV[_k] = stripped
-                # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract inner sensitive keys
-                if stripped.startswith("{") and stripped.endswith("}"):
-                    try:
-                        parsed = json.loads(stripped)
-                        if isinstance(parsed, dict):
-                            for sub_k, sub_v in parsed.items():
-                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
-                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
-                                        _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
-                    except Exception:
-                        pass
-    return _INITIAL_SECRET_ENV
+    with _SECRET_ENV_LOCK:
+        for _k, _v in os.environ.items():
+            if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
+                stripped = _v.strip()
+                if stripped and len(stripped) >= 8:
+                    _INITIAL_SECRET_ENV[_k] = stripped
+                    # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract inner sensitive keys
+                    if stripped.startswith("{") and stripped.endswith("}"):
+                        try:
+                            parsed = json.loads(stripped)
+                            if isinstance(parsed, dict):
+                                for sub_k, sub_v in parsed.items():
+                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                        if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                            _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
+                        except Exception:
+                            pass
+        return dict(_INITIAL_SECRET_ENV)
 
 
 def register_secret_env(key: str, val: str) -> None:
@@ -138,17 +140,18 @@ def register_secret_env(key: str, val: str) -> None:
     if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
         stripped = val.strip()
         if len(stripped) >= 8:
-            _INITIAL_SECRET_ENV[key] = stripped
-            if stripped.startswith("{") and stripped.endswith("}"):
-                try:
-                    parsed = json.loads(stripped)
-                    if isinstance(parsed, dict):
-                        for sub_k, sub_v in parsed.items():
-                            if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
-                                if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
-                                    _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
-                except Exception:
-                    pass
+            with _SECRET_ENV_LOCK:
+                _INITIAL_SECRET_ENV[key] = stripped
+                if stripped.startswith("{") and stripped.endswith("}"):
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict):
+                            for sub_k, sub_v in parsed.items():
+                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
+                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                        _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
+                    except Exception:
+                        pass
 
 
 # Initial module-load snapshot
@@ -159,8 +162,10 @@ def redact_secrets(val: Any) -> Any:
     """Recursively redacts secret API keys, tokens, and sensitive env vars across values and dict keys."""
     if isinstance(val, str):
         res = val
-        # Check frozen environment snapshot (no dynamic os.environ scan during redaction)
-        for env_k, env_v in _INITIAL_SECRET_ENV.items():
+        # Check frozen environment snapshot under lock to prevent iteration mutation
+        with _SECRET_ENV_LOCK:
+            env_items = list(_INITIAL_SECRET_ENV.items())
+        for env_k, env_v in env_items:
             res = res.replace(env_v, f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
@@ -357,6 +362,9 @@ class HandoffPacket:
         if not self.handoff_hash:
             self.enforce_semantic_bounds()
         else:
+            actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
+            if actual_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
+                raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {actual_bytes} > {MAX_SEMANTIC_HANDOFF_BYTES}")
             if self.handoff_bytes > MAX_SEMANTIC_HANDOFF_BYTES:
                 raise ContextError(f"Handoff packet {self.handoff_id} structural payload exceeds limit: {self.handoff_bytes} > {MAX_SEMANTIC_HANDOFF_BYTES}")
 
@@ -1645,21 +1653,21 @@ class ContextCompiler:
         current_tail = redact_secrets(current_tail)
         current_bytes = len(current_tail.encode("utf-8"))
 
-        # Hard budget check
-        if current_bytes > hard_budget:
-            raise ContextBudgetExceededError(
-                f"CONTEXT_BUDGET_EXCEEDED: Task {task_id} context size ({current_bytes} bytes) exceeds hard budget ({hard_budget} bytes)"
-            )
-
         stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
         full_rendered_prompt = redact_secrets(stable_prefix + "\n" + current_tail)
         full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
 
-        # Gate: Calculate required anchor recall against full assembled prompt
+        # Gate: Calculate required anchor recall against full assembled prompt before budget check
         recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(
                 f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
+            )
+
+        # Hard budget check
+        if current_bytes > hard_budget:
+            raise ContextBudgetExceededError(
+                f"CONTEXT_BUDGET_EXCEEDED: Task {task_id} context size ({current_bytes} bytes) exceeds hard budget ({hard_budget} bytes)"
             )
 
         packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(full_rendered_prompt)[:8]}"
@@ -1806,9 +1814,6 @@ class ContextCompiler:
             tail = redact_secrets(tail)
             tail_bytes = len(tail.encode("utf-8"))
 
-        if tail_bytes > hard_budget:
-            raise ContextBudgetExceededError(f"Planner context exceeded hard budget: {tail_bytes} > {hard_budget}")
-
         stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
         full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
         full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
@@ -1816,6 +1821,9 @@ class ContextCompiler:
         recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Planner packet missing required anchors: {missing}")
+
+        if tail_bytes > hard_budget:
+            raise ContextBudgetExceededError(f"Planner context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
         packet_id = f"ctx-plan-{goal_id}-{sha256_text(full_rendered_prompt)[:8]}"
         packet_hash = sha256_text(full_rendered_prompt)
@@ -1963,9 +1971,6 @@ class ContextCompiler:
         tail = redact_secrets(tail)
         tail_bytes = len(tail.encode("utf-8"))
 
-        if tail_bytes > hard_budget:
-            raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
-
         stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(role)
         full_rendered_prompt = redact_secrets(stable_prefix + "\n" + tail)
         full_packet_bytes = len(full_rendered_prompt.encode("utf-8"))
@@ -1973,6 +1978,9 @@ class ContextCompiler:
         recall, missing = calculate_rendered_anchor_recall(anchors, full_rendered_prompt)
         if recall < 1.0:
             raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Plan review packet missing required anchors: {missing}")
+
+        if tail_bytes > hard_budget:
+            raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
         packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(full_rendered_prompt)[:8]}"
         packet_hash = sha256_text(full_rendered_prompt)
