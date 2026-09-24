@@ -157,7 +157,7 @@ def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
             is_sensitive = (sk_str in SECRET_SUBKEY_NAMES or ENV_SECRET_KEY_PATTERN.search(str(sub_k)) is not None)
             if isinstance(sub_v, str):
                 s = sub_v.strip()
-                if is_sensitive and len(s) >= 4:
+                if is_sensitive and len(s) >= 6:
                     extracted[combined] = s
             elif isinstance(sub_v, (dict, list)):
                 extracted.update(_extract_json_secrets(combined, sub_v))
@@ -170,7 +170,7 @@ def _extract_json_secrets(prefix: str, obj: Any) -> dict[str, str]:
 
 
 def snapshot_secret_env() -> dict[str, str]:
-    """Snapshots sensitive environment variables with length >= 4 into the frozen snapshot.
+    """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot.
 
     Idempotent and safe to invoke multiple times; always operates under _SECRET_ENV_LOCK.
     """
@@ -178,7 +178,7 @@ def snapshot_secret_env() -> dict[str, str]:
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
-                if stripped and len(stripped) >= 4:
+                if stripped and len(stripped) >= 6:
                     clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
                     _INITIAL_SECRET_ENV[_k] = clean_v
                     # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract all inner string values
@@ -195,7 +195,7 @@ def register_secret_env(key: str, val: str) -> None:
     """Registers a sensitive environment variable into the frozen snapshot for testing or runtime auth."""
     if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
         stripped = val.strip()
-        if len(stripped) >= 4:
+        if len(stripped) >= 6:
             clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
             with _SECRET_ENV_LOCK:
                 _INITIAL_SECRET_ENV[key] = clean_v
@@ -223,8 +223,6 @@ def redact_secrets(val: Any) -> Any:
     if isinstance(val, str):
         res = val
         with _SECRET_ENV_LOCK:
-            for pat in SECRET_PATTERNS:
-                res = pat.sub("[REDACTED_SECRET]", res)
             sorted_secrets = sorted(_INITIAL_SECRET_ENV.items(), key=lambda x: len(x[1]), reverse=True)
             for env_k, env_v in sorted_secrets:
                 if env_v:
