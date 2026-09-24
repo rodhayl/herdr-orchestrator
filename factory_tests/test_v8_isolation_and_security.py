@@ -24,6 +24,7 @@ from tools.context import (
     calculate_rendered_anchor_recall,
     snapshot_secret_env,
     register_secret_env,
+    _INITIAL_SECRET_ENV,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -169,6 +170,7 @@ class TestV8IsolationAndSecurity(unittest.TestCase):
     def test_task_prompt_herdr_token_redacted_in_rendered_tail(self):
         """Verifies that a secret in task_prompt (e.g. HERDR_TOKEN) is redacted in rendered_tail."""
         os.environ["HERDR_TOKEN"] = "mock_herdr_secret_token_12345"
+        register_secret_env("HERDR_TOKEN", "mock_herdr_secret_token_12345")
         try:
             task_def = {
                 "task_id": "task_secret_test",
@@ -203,6 +205,7 @@ class TestV8IsolationAndSecurity(unittest.TestCase):
             self.assertIn("[REDACTED_HERDR_TOKEN]", full_prompt)
         finally:
             del os.environ["HERDR_TOKEN"]
+            _INITIAL_SECRET_ENV.pop("HERDR_TOKEN", None)
 
     def test_environment_secret_variable_length_guard(self):
         """Verifies that environment secrets with length >= 8 are redacted and short values (<8) do not cause false positives."""
