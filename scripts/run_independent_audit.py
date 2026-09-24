@@ -97,14 +97,13 @@ Output ONLY a JSON object adhering to this schema:
 
     cmd = [
         "agy",
-        "-p", audit_prompt,
         "--model", "claude-sonnet-4-6",
         "--output-format", "json",
         "--dangerously-skip-permissions"
     ]
 
     print("Submitting audit request to claude-sonnet-4-6...")
-    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=360)
+    proc = subprocess.run(cmd, input=audit_prompt, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
         print(f"Error executing agy: {proc.stderr}")
         return 1
