@@ -485,6 +485,8 @@ class TestV8MalformedAndEdgeCases(unittest.TestCase):
             executor.effort = "high"
             executor.profile_id = "agy-spec-high"
             executor.review_only = False
+            executor.worker_id = "test_worker"
+            executor.routing_provenance = {}
             executor.timeout = 30
 
             res = TaskExecutor.execute_attempt(executor, 1, "HEAD")
