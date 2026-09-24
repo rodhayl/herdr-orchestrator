@@ -128,7 +128,7 @@ def snapshot_secret_env() -> dict[str, str]:
                             if isinstance(parsed, dict):
                                 for sub_k, sub_v in parsed.items():
                                     if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
-                                        if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                        if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                             _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
                         except Exception:
                             pass
@@ -148,7 +148,7 @@ def register_secret_env(key: str, val: str) -> None:
                         if isinstance(parsed, dict):
                             for sub_k, sub_v in parsed.items():
                                 if isinstance(sub_v, str) and len(sub_v.strip()) >= 8:
-                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "email", "id"]):
+                                    if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                         _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
                     except Exception:
                         pass
@@ -751,7 +751,7 @@ class FilesystemGitContextSource(ContextSource):
                     full_f = pathlib.Path(root) / f
                     if full_f.is_symlink():
                         continue
-                    if f.startswith(".") and f not in {".gitignore", ".treehashignore"}:
+                    if f.startswith("."):
                         continue
                     if f.endswith((".pyc", ".pyo", ".so", ".bin", ".tar", ".gz", ".zip")):
                         continue
@@ -1411,16 +1411,34 @@ class ContextCompiler:
                 f"- **Failed Status**: {retry_info.get('status', 'FAILED')}",
                 f"- **Error Category**: {retry_info.get('error_category', 'VALIDATION_FAILED')}",
             ]
+            def _sanitize_err_text(val: Any) -> str:
+                if not val:
+                    return ""
+                s = redact_secrets(str(val).strip())
+                inj_pat = re.compile(
+                    r"(?i)(ignore\s+all\s+prior\s+instructions"
+                    r"|disregard\s+(?:all\s+)?(?:prior|previous)\s+instructions"
+                    r"|forget\s+(?:all\s+)?(?:prior|previous|the\s+above)"
+                    r"|new\s+instructions:"
+                    r"|system\s+prompt"
+                    r"|developer\s+mode"
+                    r"|override\s+instructions"
+                    r"|<\|(?:im_start|im_end|system|user|assistant)\|>"
+                    r"|\[\s*(?:SYSTEM|INST|ASSISTANT)\s*\]"
+                    r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
+                )
+                return inj_pat.sub("[FILTERED]", s)
+
             if retry_info.get("failing_command"):
                 cmd_val = retry_info["failing_command"]
                 if isinstance(cmd_val, list):
                     cmd_str = shlex.join(str(x) for x in cmd_val)
                 else:
                     cmd_str = str(cmd_val)
-                ret_lines.append(f"- **Failing Command**: `{redact_secrets(cmd_str)}`")
+                ret_lines.append(f"- **Failing Command**: `{_sanitize_err_text(cmd_str)}`")
             err_text = retry_info.get("error_excerpt") or retry_info.get("error_summary") or retry_info.get("error")
             if err_text:
-                ret_lines.append(f"- **Error Output**:\n```\n{redact_secrets(str(err_text).strip())}\n```")
+                ret_lines.append(f"- **Error Output**:\n```\n{_sanitize_err_text(err_text)}\n```")
             sections.append("\n".join(ret_lines))
 
         # 7. Deterministic Validation Commands
@@ -1635,6 +1653,7 @@ class ContextCompiler:
             compact_handoffs = []
             for ho in handoffs:
                 h_copy = copy.deepcopy(ho)
+                h_copy.handoff_hash = ""
                 h_copy.enforce_semantic_bounds(max_bytes=1024)
                 compact_handoffs.append(h_copy)
             handoffs = compact_handoffs
@@ -2218,6 +2237,7 @@ class DerivedRequirementAuditor:
                 t_reqs = set(t.get("satisfies", []) + t.get("requirements", []))
                 if t_reqs and t_reqs.issubset(der_set):
                     tasks_caused += 1
+                    context_bytes_caused += len(canonical_json_dump(t).encode("utf-8"))
 
         return {
             "audit_status": "OK",
@@ -2252,7 +2272,10 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
     temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
 
     data_str = canonical_json_dump(packet.to_dict())
-    temp_path.write_text(data_str, encoding="utf-8")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        f.write(data_str)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temp_path, target_path)
     return target_path
 
@@ -2285,7 +2308,10 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
     temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
 
     data_str = canonical_json_dump(handoff.to_dict())
-    temp_path.write_text(data_str, encoding="utf-8")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        f.write(data_str)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(temp_path, target_path)
     return target_path
 

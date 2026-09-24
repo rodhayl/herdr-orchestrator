@@ -76,7 +76,6 @@ try:
         VALID_PROVENANCES,
     )
     import tools.context as context
-    sys.modules.setdefault("context", context)
 except ImportError:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     import context
@@ -633,7 +632,7 @@ def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".tmp.{path.name}.{os.getpid()}.{time.time()}")
     with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent, default=str)
+        json.dump(data, f, indent=indent)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
@@ -3601,8 +3600,10 @@ class TaskExecutor:
                  retry_info: dict = None, context_compiler: ContextCompiler = None):
         snapshot_secret_env()
         self.run_id = run_id
-        self.task = plan_task
-        self.task_id = plan_task["task_id"]
+        self.task = copy.deepcopy(plan_task)
+        self.task_id = str(plan_task.get("task_id", ""))
+        if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", self.task_id):
+            raise ValueError(f"Invalid task_id '{self.task_id}'. Must match ^[a-zA-Z0-9_\\-]{{1,64}}$")
         self.worker_id = plan_task.get("worker_id") or plan_task.get("worker")
         self.routing_provenance = plan_task.get("routing_provenance", {})
         self.run_dir = run_dir
@@ -3630,7 +3631,7 @@ class TaskExecutor:
         self.max_retries = plan_task.get("max_retries", 0)
 
         # Context Compiler integration (Factory v8.0.0)
-        self.goal_spec = goal_spec
+        self.goal_spec = copy.deepcopy(goal_spec)
         if not self.goal_spec:
             candidate_specs = [
                 run_dir / "goal-spec.json",
@@ -3645,7 +3646,8 @@ class TaskExecutor:
                     except Exception:
                         pass
         if not self.goal_spec:
-            raw_title = redact_secrets(str(plan_task.get("name", self.task_id))[:256])
+            raw_title = unicodedata.normalize("NFKC", str(plan_task.get("name", self.task_id))[:256])
+            raw_title = redact_secrets(raw_title)
             clean_title = redact_secrets(re.sub(r"[^\w\s\-_.:/]", "", raw_title).strip() or self.task_id)
             self.goal_spec = {
                 "goal_id": "goal-fallback",
@@ -3668,13 +3670,14 @@ class TaskExecutor:
                 raise OrphanDerivedRequirementError(f"Found {audit_metrics['orphan_count']} orphan derived requirements in fallback goal_spec")
             self.goal_spec["derived_requirement_metrics"] = audit_metrics
 
-        self.plan = plan or {"tasks": [self.task]}
-        self.handoffs = handoffs or []
-        self.retry_info = retry_info
+        self.plan = copy.deepcopy(plan or {"tasks": [self.task]})
+        self.handoffs = copy.deepcopy(handoffs or [])
+        self.retry_info = copy.deepcopy(retry_info)
         if context_compiler:
-            self.context_compiler = context_compiler
+            self.context_compiler = copy.deepcopy(context_compiler)
         else:
             self.context_compiler = ContextCompiler(ContextPolicy.load(), FilesystemGitContextSource(PROJECT_ROOT))
+        self._packet_lock = threading.Lock()
         self.current_context_packet = None
 
         self.task_root_dir = run_dir / "workers" / self.task_id
@@ -3819,51 +3822,63 @@ class TaskExecutor:
 
         prompt_file = attempt_dir / "prompt.md"
         prompt_content = ""
-        # Snapshot retry_info to attempt_dir for attempt-specific staleness checks
-        atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
 
         try:
-            is_rev = getattr(self, "review_only", False)
-            _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
-            if is_rev:
-                curr_hashes = {
-                    "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                    "plan": sha256_text(canonical_json_dump(snap_plan)),
-                    "stable_prefix": prefix_hash,
-                }
-            else:
-                curr_hashes = {
-                    "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                    "plan": sha256_text(canonical_json_dump(snap_plan)),
-                    "task_def": sha256_text(canonical_json_dump(snap_task)),
-                    "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
-                    "stable_prefix": prefix_hash,
-                }
-            if (not self.current_context_packet) or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
-                prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
-            else:
-                is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
-                if is_stale:
+            with self._packet_lock:
+                is_rev = getattr(self, "review_only", False)
+                _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
+                if is_rev:
+                    curr_hashes = {
+                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                        "plan": sha256_text(canonical_json_dump(snap_plan)),
+                        "stable_prefix": prefix_hash,
+                    }
+                else:
+                    curr_hashes = {
+                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
+                        "plan": sha256_text(canonical_json_dump(snap_plan)),
+                        "task_def": sha256_text(canonical_json_dump(snap_task)),
+                        "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
+                        "stable_prefix": prefix_hash,
+                    }
+                if (not self.current_context_packet) or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
                     prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
                 else:
-                    prompt_content = redact_secrets(self.current_context_packet.render_full_prompt())
+                    is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
+                    if is_stale:
+                        prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
+                    else:
+                        prompt_content = redact_secrets(self.current_context_packet.render_full_prompt())
 
-            # Sanitize prompt content and verify redaction before writing
-            clean_prompt = redact_secrets(prompt_content)
-            assert clean_prompt is not None and len(clean_prompt) > 0
-            assert redact_secrets(clean_prompt) == clean_prompt
-            prompt_content = clean_prompt
+                # Sanitize prompt content and verify redaction before writing
+                clean_prompt = redact_secrets(prompt_content)
+                assert clean_prompt is not None and len(clean_prompt) > 0
+                assert redact_secrets(clean_prompt) == clean_prompt
+                prompt_content = clean_prompt
 
-            # Capture local reference to packet immediately after compilation/validation
-            active_packet = self.current_context_packet
-            prompt_file.write_text(prompt_content, encoding="utf-8")
+                # Capture local reference to packet immediately after compilation/validation
+                active_packet = self.current_context_packet
 
-            # Save immutable ContextPacket for this attempt
-            if active_packet:
-                save_context_packet(active_packet, attempt_dir / "context_packet.json")
-                packets_dir = self.run_dir / "context" / "packets"
-                packets_dir.mkdir(parents=True, exist_ok=True)
-                save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
+                # Enforce anchor recall gate unconditionally on final post-redaction clean_prompt
+                if active_packet and active_packet.required_anchors:
+                    final_rec, final_missing = calculate_rendered_anchor_recall(active_packet.required_anchors, clean_prompt)
+                    self.last_anchor_recall = final_rec
+                    if final_rec < 1.0:
+                        raise ContextAnchorMissingError(
+                            f"CONTEXT_ANCHOR_MISSING: Prompt for task '{self.task_id}' (attempt #{attempt_id}) missing required anchors after redaction: {final_missing}"
+                        )
+
+                prompt_file.write_text(prompt_content, encoding="utf-8")
+
+                # Snapshot retry_info to attempt_dir after successful prompt compilation
+                atomic_write_json(attempt_dir / "retry_info.json", snap_retry_info if isinstance(snap_retry_info, dict) else {})
+
+                # Save immutable ContextPacket for this attempt
+                if active_packet:
+                    save_context_packet(active_packet, attempt_dir / "context_packet.json")
+                    packets_dir = self.run_dir / "context" / "packets"
+                    packets_dir.mkdir(parents=True, exist_ok=True)
+                    save_context_packet(active_packet, packets_dir / f"{active_packet.packet_id}.json")
         except (ContextAnchorMissingError, ContextError) as err:
             return {
                 "attempt_id": attempt_id,
@@ -4203,15 +4218,6 @@ class TaskExecutor:
                 return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0 else None
 
             valid_in_tokens = _valid_token_int(provider_input_tokens)
-            if valid_in_tokens is not None:
-                pkt.token_count = valid_in_tokens
-                pkt.token_count_source = "provider_usage"
-                attempt_pkt_file = self.task_root_dir / f"att-{attempt_record.get('attempt_id', 1)}" / "context_packet.json"
-                if attempt_pkt_file.exists():
-                    try:
-                        save_context_packet(pkt, attempt_pkt_file)
-                    except Exception:
-                        pass
 
             dynamic_bytes = len(pkt.rendered_tail.encode("utf-8"))
             factory_bytes = sp_bytes + dynamic_bytes
@@ -4566,6 +4572,10 @@ class FactoryOrchestrator:
                     if dep_tinfo.get("status") in ("SUCCESS", "INTEGRATED", "COMPLETED") or dep_tinfo.get("canonical_state") in ("SUCCESS", "INTEGRATED", "COMPLETED"):
                         self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
                         raise RuntimeError(f"Required dependency handoff {dep_id} missing on disk at {ho_file}")
+                    else:
+                        clean_err = f"Dependency {dep_id} is in non-terminal or unready state ({dep_tinfo.get('canonical_state') or dep_tinfo.get('status')}); missing handoff {ho_file}"
+                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
+                        raise RuntimeError(clean_err)
         return task_handoffs
 
     def _build_task_graph(self):
@@ -4577,6 +4587,8 @@ class FactoryOrchestrator:
                 wave_tasks = []
                 for task in wave.get("tasks", []):
                     tid = task["task_id"]
+                    if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(tid)):
+                        raise ValueError(f"Invalid task_id '{tid}' in plan wave. Must match ^[a-zA-Z0-9_\\-]{{1,64}}$")
                     # If task doesn't have explicit dependencies and wave > 0, default to prior wave tasks
                     deps = list(task.get("dependencies", []))
                     if not deps and prev_wave_tasks:
@@ -4589,7 +4601,10 @@ class FactoryOrchestrator:
                 prev_wave_tasks = wave_tasks
         elif "tasks" in self.plan:
             for task in self.plan["tasks"]:
-                self.tasks_def[task["task_id"]] = dict(task)
+                tid = task["task_id"]
+                if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(tid)):
+                    raise ValueError(f"Invalid task_id '{tid}' in plan tasks. Must match ^[a-zA-Z0-9_\\-]{{1,64}}$")
+                self.tasks_def[tid] = dict(task)
 
     def log_event(self, event_type: str, payload: dict):
         clean_payload = redact_secrets(payload)
@@ -5193,7 +5208,7 @@ class FactoryOrchestrator:
                 for att in tinfo.get("attempts", []):
                     att_id = att.get("attempt_id", 1)
                     p_file = self.run_dir / "workers" / tid / f"att-{att_id}" / "prompt.md"
-                    if p_file.exists():
+                    if p_file.exists() and p_file.stat().st_size <= 1024 * 1024:
                         rendered_prompts.append(p_file.read_text(encoding="utf-8"))
                     cm = att.get("context_metrics", {})
                     if "required_anchor_recall" in cm and cm["required_anchor_recall"] is not None:
@@ -5248,9 +5263,9 @@ class FactoryOrchestrator:
                         rec, _ = pkt.calculate_required_anchor_recall()
                         observed_recalls.append(rec)
                     except Exception as exc:
-                        self.log_event("WARNING_PACKET_RELOAD_FAILED", {"packet_file": str(pf), "error": str(exc)})
+                        self.log_event("WARNING_PACKET_RELOAD_FAILED", {"packet_file": str(pf), "error": redact_secrets(str(exc))})
 
-            min_recall = min(observed_recalls) if observed_recalls else 1.0
+            min_recall = min(observed_recalls) if observed_recalls else None
 
             if rendered_prompts:
                 redundancy_stats = calculate_context_redundancy(rendered_prompts)
@@ -5262,13 +5277,24 @@ class FactoryOrchestrator:
                     "repeated_content_bytes": redundancy_stats["repeated_content_bytes"],
                     "redundancy_ratio": redundancy_stats["redundancy_ratio"],
                     "prompt_count": len(rendered_prompts),
-                    "required_anchor_recall": round(min_recall, 4)
+                    "required_anchor_recall": round(min_recall, 4) if min_recall is not None else None
+                }
+            else:
+                self.manifest["context_summary"] = {
+                    "schema_version": "8.0.0",
+                    "total_factory_supplied_bytes": 0,
+                    "run_total_context_bytes": 0,
+                    "unique_content_bytes": 0,
+                    "repeated_content_bytes": 0,
+                    "redundancy_ratio": 0.0,
+                    "prompt_count": 0,
+                    "required_anchor_recall": round(min_recall, 4) if min_recall is not None else None
                 }
         except Exception as e:
-            self.log_event("WARNING_CONTEXT_SUMMARY_FAILED", {"error": str(e)})
+            self.log_event("WARNING_CONTEXT_SUMMARY_FAILED", {"error": redact_secrets(str(e))})
             self.manifest["context_summary"] = {
                 "schema_version": "8.0.0",
-                "error": str(e),
+                "error": redact_secrets(str(e)),
                 "required_anchor_recall": None
             }
 
