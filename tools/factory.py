@@ -4296,16 +4296,15 @@ class FactoryOrchestrator:
                 for tid, tinfo in self.manifest["tasks"].items():
                     c_state = tinfo.get("canonical_state", "PENDING")
 
-                    if c_state in ("PENDING", "READY", "BLOCKED"):
+                    if c_state in ("PENDING", "READY"):
                         deps = tinfo.get("dependencies", [])
                         deps_states = [self.manifest["tasks"][d].get("canonical_state") for d in deps if d in self.manifest["tasks"]]
 
                         # If any dependency failed or blocked, transition to BLOCKED
                         if any(s in ("FAILED", "TIMED_OUT", "BLOCKED", "CONFLICTED", "CANCELLED") for s in deps_states):
-                            if c_state != "BLOCKED":
-                                tinfo["canonical_state"] = "BLOCKED"
-                                tinfo["status"] = "BLOCKED"
-                                self.log_event("TASK_BLOCKED", {"task_id": tid, "failed_deps": deps})
+                            tinfo["canonical_state"] = "BLOCKED"
+                            tinfo["status"] = "BLOCKED"
+                            self.log_event("TASK_BLOCKED", {"task_id": tid, "failed_deps": deps})
                             continue
 
                         # If all dependencies integrated or completed, task is READY
@@ -4317,9 +4316,6 @@ class FactoryOrchestrator:
                             ready_tasks.append(tid)
                             all_terminal = False
                         else:
-                            if c_state == "BLOCKED":
-                                tinfo["canonical_state"] = "PENDING"
-                                tinfo["status"] = "PENDING"
                             all_terminal = False
 
                     elif c_state in ("DISPATCHING", "RUNNING", "RESULT_RECEIVED", "PATH_VALIDATING", "VALIDATING", "COMMITTING", "INTEGRATING"):
@@ -4352,10 +4348,11 @@ class FactoryOrchestrator:
                             sel_prof = route_meta.get("selected_profile_id")
                             profiles = load_harness_profiles()
                             prof_data = profiles.get(sel_prof, {})
-                            if prof_data.get("certification_status") != "REAL_PROVIDER_CERTIFIED":
+                            prof_cert = prof_data.get("certification", {}).get("status") or prof_data.get("certification_status")
+                            if prof_cert != "REAL_PROVIDER_CERTIFIED":
                                 tinfo["canonical_state"] = "BLOCKED"
                                 tinfo["status"] = "BLOCKED"
-                                tinfo["block_reason"] = f"real_only policy: profile '{sel_prof}' is not REAL_PROVIDER_CERTIFIED ({prof_data.get('certification_status')})"
+                                tinfo["block_reason"] = f"real_only policy: profile '{sel_prof}' is not REAL_PROVIDER_CERTIFIED ({prof_cert})"
                                 self.log_event("TASK_ROUTING_BLOCKED_REAL_ONLY", {"task_id": tid, "profile": sel_prof})
                                 continue
 
@@ -4419,7 +4416,7 @@ class FactoryOrchestrator:
 
                 # 3. If nothing is running and no ready tasks, we are done
                 if not active_executors:
-                    if all_terminal:
+                    if all_terminal or not ready_tasks:
                         break
                     time.sleep(0.5)
                     continue
