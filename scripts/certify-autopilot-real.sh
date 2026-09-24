@@ -61,7 +61,8 @@ cat <<'EOF' > factory.project.json
     "max_tasks": 10,
     "max_plan_revisions": 2,
     "max_remediation_rounds": 2,
-    "max_retries_per_task": 2
+    "max_retries_per_task": 2,
+    "max_task_duration_seconds": 600
   },
   "allowed_paths": [
     "**"

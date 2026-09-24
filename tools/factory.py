@@ -5344,6 +5344,8 @@ Requirements:
     elif (project_policy.project_root / "README.md").exists():
         context_files.append("README.md")
 
+    task_timeout = project_policy.limits.get("max_task_duration_seconds", 480)
+
     # Task 1: Core Engine
     t1_satisfies = list(core_ids)
     t1_criteria_text = format_criteria_list(t1_satisfies)
@@ -5352,9 +5354,10 @@ Requirements:
         "name": "Core Engine Implementation",
         "task_type": "backend",
         "description": f"Implement core logic satisfying: {', '.join(t1_satisfies)}",
-        "prompt": f"Implement the core algorithms, data structures, and Python library API for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t1_criteria_text}\n\nNote: Use Python 3 standard library only. Create clean, robust modules with full documentation.",
+        "prompt": f"Implement the core algorithms, data structures, and Python library API for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t1_criteria_text}\n\nNote: Use Python 3 standard library only. Create clean, robust modules with full documentation.\n\nDIRECT EXECUTION: Write all files directly into the workspace using write_to_file. Do NOT spawn or invoke subagents.",
         "satisfies": t1_satisfies,
         "context_files": list(context_files),
+        "timeout": task_timeout,
         "validations": [
             ["python3", "-c", "import sys; sys.exit(0)"]
         ],
@@ -5374,9 +5377,10 @@ Requirements:
             "name": "CLI and Interface Implementation",
             "task_type": "backend",
             "description": f"Implement CLI entrypoints and command parsing satisfying: {', '.join(t2_satisfies)}",
-            "prompt": f"Implement the command-line interface entrypoints, argument parsing, output formatters, and verification commands for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t2_criteria_text}\n\nNote: Use Python 3 standard library only. Ensure clean exit codes (0 on success, non-zero on error).",
+            "prompt": f"Implement the command-line interface entrypoints, argument parsing, output formatters, and verification commands for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t2_criteria_text}\n\nNote: Use Python 3 standard library only. Ensure clean exit codes (0 on success, non-zero on error).\n\nDIRECT EXECUTION: Write all files directly into the workspace using write_to_file. Do NOT spawn or invoke subagents.",
             "satisfies": t2_satisfies,
             "context_files": list(context_files),
+            "timeout": task_timeout,
             "validations": [
                 ["python3", "-c", "import sys; sys.exit(0)"]
             ],
@@ -5396,9 +5400,10 @@ Requirements:
         "name": "Comprehensive Unit and Verification Tests",
         "task_type": "tests",
         "description": f"Author deterministic unit test suite satisfying: {', '.join(t3_satisfies)} and verifying all criteria",
-        "prompt": f"Write comprehensive unit and integration tests in tests/ covering all features of {goal_spec.get('title')}.\n\nRequirements to Satisfy and Deterministically Verify:\n{all_criteria_text}\n\nNote: Tests must be executable with python3 -m unittest discover -s tests -v and achieve 100% pass rate. Test both positive cases and error/edge cases.",
+        "prompt": f"Write comprehensive unit and integration tests in tests/ covering all features of {goal_spec.get('title')}.\n\nRequirements to Satisfy and Deterministically Verify:\n{all_criteria_text}\n\nNote: Tests must be executable with python3 -m unittest discover -s tests -v and achieve 100% pass rate. Test both positive cases and error/edge cases.\n\nDIRECT EXECUTION: Write all files directly into the workspace using write_to_file. Do NOT spawn or invoke subagents.",
         "satisfies": t3_satisfies,
         "context_files": list(context_files),
+        "timeout": task_timeout,
         "validations": [
             ["python3", "-c", "import os, sys, subprocess; sys.exit(subprocess.run(['python3', '-m', 'unittest', 'discover', '-s', 'tests', '-v']).returncode if os.path.isdir('tests') else 0)"]
         ],

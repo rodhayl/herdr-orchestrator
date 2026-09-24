@@ -28,7 +28,8 @@
         "max_task_attempts": { "type": "integer", "minimum": 1, "default": 2 },
         "max_plan_revisions": { "type": "integer", "minimum": 0, "default": 2 },
         "max_remediation_rounds": { "type": "integer", "minimum": 0, "default": 2 },
-        "max_concurrency": { "type": "integer", "minimum": 1, "default": 4 }
+        "max_concurrency": { "type": "integer", "minimum": 1, "default": 4 },
+        "max_task_duration_seconds": { "type": "integer", "minimum": 10, "default": 480 }
       },
       "additionalProperties": false
     },
@@ -41,6 +42,7 @@
           "default": "real_only"
         },
         "planner_profile": { "type": "string", "default": "agy-spec-high" },
+        "planner_model": { "type": "string", "default": "gemini-3.8-flash-high" },
         "plan_reviewer_profile": { "type": "string", "default": "agy-audit-high" },
         "final_auditor_profile": { "type": "string", "default": "agy-audit-high" }
       },

@@ -16,6 +16,7 @@ Modifying any out-of-scope files will result in an immediate rejection of your w
    - When calling `write_to_file`, `TargetFile` MUST be the full absolute path: `{worktree_path}/<relative_path>`.
    - DO NOT call the `run_command` tool. Shell command execution is prohibited and will be denied automatically.
 7. **Implementation Quality**: Follow the committed specification and API contract strictly. Ensure standard library compliance only (Python 3 stdlib, SQLite, vanilla HTML/CSS/JS).
+8. **Direct Execution — DO NOT INVOKE SUBAGENTS**: Do NOT call `invoke_subagent` or delegate to subagents. Perform all implementation directly in this session using `write_to_file`.
 
 ## Task Description
 {task_description}
