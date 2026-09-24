@@ -115,22 +115,16 @@ python3 "$FACTORY_DIR/tools/factory.py" --project-root "$TARGET_PROJECT" goal ru
 
 echo -e "\n[4. Verifying Autopilot State and Certification Guard]"
 # Find goal ID
-GOAL_ID=$(python3 -c "import pathlib, json
-goals = list((pathlib.Path('$TARGET_PROJECT') / '.agy-factory' / 'goals').glob('goal-*'))
-if not goals:
-    print('')
-else:
-    print(goals[0].name)
-")
-
-if [[ -z "$GOAL_ID" ]]; then
+GOAL_DIR=$(ls -d "$TARGET_PROJECT/.agy-factory/goals"/goal-* 2>/dev/null | head -n 1)
+if [[ -z "$GOAL_DIR" || ! -d "$GOAL_DIR" ]]; then
     echo "  [FAIL] No goal state found in $TARGET_PROJECT/.agy-factory/goals" >&2
     exit 1
 fi
+GOAL_ID=$(basename "$GOAL_DIR")
 
 REPORT_JSON=$(python3 "$FACTORY_DIR/tools/factory.py" --project-root "$TARGET_PROJECT" goal report --goal-id "$GOAL_ID")
-FINAL_PHASE=$(echo "$REPORT_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('phase'))")
-RUN_ID=$(echo "$REPORT_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('run_id'))")
+FINAL_PHASE=$(python3 -c "import json, sys; print(json.loads(sys.argv[1]).get('phase'))" "$REPORT_JSON")
+RUN_ID=$(python3 -c "import json, sys; print(json.loads(sys.argv[1]).get('run_id'))" "$REPORT_JSON")
 
 echo "  Goal ID:     $GOAL_ID"
 echo "  Run ID:      $RUN_ID"
@@ -179,20 +173,21 @@ rm -rf "$TEST_DIR" "$MANIFEST_FILE"
 
 echo -e "\n[7. Exporting Autopilot Certification Bundle]"
 mkdir -p "$FACTORY_DIR/certification/v7"
-python3 -c "import pathlib, json
+python3 -c "import json, sys
+r = json.loads(sys.argv[1])
 evidence = {
     'certification_id': 'v7-autopilot-treehash-real',
-    'certified_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'target_project': '$TARGET_PROJECT',
-    'goal_id': '$GOAL_ID',
-    'run_id': '$RUN_ID',
+    'certified_at': sys.argv[2],
+    'target_project': sys.argv[3],
+    'goal_id': sys.argv[4],
+    'run_id': sys.argv[5],
     'status': 'REAL_PROVIDER_CERTIFIED',
-    'phase': '$FINAL_PHASE',
-    'report': json.loads('''$REPORT_JSON''')
+    'phase': sys.argv[6],
+    'report': r
 }
-with open('$FACTORY_DIR/certification/v7/autopilot-real-certification.json', 'w', encoding='utf-8') as f:
+with open(sys.argv[7], 'w', encoding='utf-8') as f:
     json.dump(evidence, f, indent=2)
-"
+" "$REPORT_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET_PROJECT" "$GOAL_ID" "$RUN_ID" "$FINAL_PHASE" "$FACTORY_DIR/certification/v7/autopilot-real-certification.json"
 
 echo "================================================================================"
 echo "CERTIFICATION SUCCESS: Project Autopilot completed end-to-end with genuine providers!"

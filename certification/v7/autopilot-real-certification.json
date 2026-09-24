@@ -1,0 +1,25 @@
+{
+  "certification_id": "v7-autopilot-treehash-real",
+  "certified_at": "2026-09-24T10:23:28Z",
+  "target_project": "/root/treehash-project",
+  "goal_id": "goal-20260924-100806",
+  "run_id": "run-20260924-100833",
+  "status": "REAL_PROVIDER_CERTIFIED",
+  "phase": "COMPLETE",
+  "report": {
+    "goal_id": "goal-20260924-100806",
+    "project_root": "/root/treehash-project",
+    "phase": "COMPLETE",
+    "plan_revisions": 0,
+    "remediation_rounds": 0,
+    "run_id": "run-20260924-100833",
+    "validations_summary": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "final_audit_verdict": "ACCEPTED",
+    "created_at": "2026-09-24T10:08:06.577495+00:00",
+    "updated_at": "2026-09-24T10:21:07.572768+00:00"
+  }
+}
