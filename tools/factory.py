@@ -3573,7 +3573,9 @@ class TaskExecutor:
             with open(template_path, "r", encoding="utf-8") as f:
                 template = f.read()
             patterns_str = "\n".join(f"- `{p}`" for p in self.allowed_paths)
-            task_desc = self.task.get("description", f"Implement task {self.task_id}")
+            prompt_body = self.task.get("prompt", "")
+            desc_body = self.task.get("description", f"Implement task {self.task_id}")
+            task_desc = f"{desc_body}\n\n### Task Instructions\n{prompt_body}" if prompt_body else desc_body
             return template.format(
                 worktree_path=str(worktree_path),
                 allowed_patterns=patterns_str,
@@ -5328,15 +5330,34 @@ Requirements:
     if not test_ids:
         test_ids = [all_criterion_ids[-1]]
 
+    criteria_map = {c["id"]: c for c in criteria}
+
+    def format_criteria_list(cids):
+        lines = []
+        for cid in cids:
+            c = criteria_map.get(cid, {})
+            title = c.get("title", cid)
+            desc = c.get("description", "")
+            lines.append(f"- **{cid}** ({title}): {desc}")
+        return "\n".join(lines)
+
+    context_files = []
+    if (project_policy.project_root / "GOAL.md").exists():
+        context_files.append("GOAL.md")
+    elif (project_policy.project_root / "README.md").exists():
+        context_files.append("README.md")
+
     # Task 1: Core Engine
     t1_satisfies = list(core_ids)
+    t1_criteria_text = format_criteria_list(t1_satisfies)
     t1 = {
         "task_id": "task_core_impl",
         "name": "Core Engine Implementation",
         "task_type": "backend",
         "description": f"Implement core logic satisfying: {', '.join(t1_satisfies)}",
-        "prompt": f"Implement the core algorithms and data structures for {goal_spec.get('title')}. Satisfies requirements: {', '.join(t1_satisfies)}.",
+        "prompt": f"Implement the core algorithms, data structures, and Python library API for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t1_criteria_text}\n\nNote: Use Python 3 standard library only. Create clean, robust modules with full documentation.",
         "satisfies": t1_satisfies,
+        "context_files": list(context_files),
         "validations": [
             ["python3", "-c", "import sys; sys.exit(0)"]
         ],
@@ -5350,13 +5371,15 @@ Requirements:
     # Task 2: CLI / Interface (if any)
     if cli_ids:
         t2_satisfies = list(cli_ids)
+        t2_criteria_text = format_criteria_list(t2_satisfies)
         t2 = {
             "task_id": "task_cli_impl",
             "name": "CLI and Interface Implementation",
             "task_type": "backend",
             "description": f"Implement CLI entrypoints and command parsing satisfying: {', '.join(t2_satisfies)}",
-            "prompt": f"Implement the CLI commands and formatters for {goal_spec.get('title')}. Satisfies requirements: {', '.join(t2_satisfies)}.",
+            "prompt": f"Implement the command-line interface entrypoints, argument parsing, output formatters, and verification commands for {goal_spec.get('title')}.\n\nRequirements to Satisfy:\n{t2_criteria_text}\n\nNote: Use Python 3 standard library only. Ensure clean exit codes (0 on success, non-zero on error).",
             "satisfies": t2_satisfies,
+            "context_files": list(context_files),
             "validations": [
                 ["python3", "-c", "import sys; sys.exit(0)"]
             ],
@@ -5370,13 +5393,15 @@ Requirements:
     # Task 3: Comprehensive Tests & Verification
     t3_deps = [t["task_id"] for t in tasks]
     t3_satisfies = list(test_ids)
+    all_criteria_text = format_criteria_list(all_criterion_ids)
     t3 = {
         "task_id": "task_unit_tests",
         "name": "Comprehensive Unit and Verification Tests",
         "task_type": "tests",
         "description": f"Author deterministic unit test suite satisfying: {', '.join(t3_satisfies)} and verifying all criteria",
-        "prompt": f"Write comprehensive unit and integration tests covering all features of {goal_spec.get('title')}. Ensure 100% pass rate under python3 -m unittest.",
+        "prompt": f"Write comprehensive unit and integration tests in tests/ covering all features of {goal_spec.get('title')}.\n\nRequirements to Satisfy and Deterministically Verify:\n{all_criteria_text}\n\nNote: Tests must be executable with python3 -m unittest discover -s tests -v and achieve 100% pass rate. Test both positive cases and error/edge cases.",
         "satisfies": t3_satisfies,
+        "context_files": list(context_files),
         "validations": [
             ["python3", "-c", "import os, sys, subprocess; sys.exit(subprocess.run(['python3', '-m', 'unittest', 'discover', '-s', 'tests', '-v']).returncode if os.path.isdir('tests') else 0)"]
         ],
