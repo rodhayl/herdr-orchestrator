@@ -122,18 +122,31 @@ INJECTION_PATTERN = re.compile(
     r"|<\s*/?\s*system(?:\s+prompt)?\s*>)"
 )
 
+_HOMOGLYPH_MAP = str.maketrans({
+    'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's',
+    'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X',
+    'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K', 'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+    'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ν': 'n', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
+})
+
+
+def normalize_homoglyphs(text: str) -> str:
+    """Normalizes Cyrillic and Greek lookalikes to Latin characters to prevent injection bypass."""
+    return text.translate(_HOMOGLYPH_MAP)
+
+
 # Freeze load-time environment secret snapshot (never re-read os.environ dynamically during redaction)
 _INITIAL_SECRET_ENV: dict[str, str] = {}
 _SECRET_ENV_LOCK = threading.RLock()
 
 
 def snapshot_secret_env() -> dict[str, str]:
-    """Snapshots sensitive environment variables with length >= 8 into the frozen snapshot."""
+    """Snapshots sensitive environment variables with length >= 6 into the frozen snapshot."""
     with _SECRET_ENV_LOCK:
         for _k, _v in os.environ.items():
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
-                if stripped and len(stripped) >= 8:
+                if stripped and len(stripped) >= 6:
                     _INITIAL_SECRET_ENV[_k] = stripped
                     # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract inner sensitive keys
                     if stripped.startswith("{") and stripped.endswith("}"):
@@ -141,7 +154,7 @@ def snapshot_secret_env() -> dict[str, str]:
                             parsed = json.loads(stripped)
                             if isinstance(parsed, dict):
                                 for sub_k, sub_v in parsed.items():
-                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 16:
+                                    if isinstance(sub_v, str) and len(sub_v.strip()) >= 6:
                                         if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                             _INITIAL_SECRET_ENV[f"{_k}_{sub_k.upper()}"] = sub_v.strip()
                         except Exception:
@@ -153,7 +166,7 @@ def register_secret_env(key: str, val: str) -> None:
     """Registers a sensitive environment variable into the frozen snapshot for testing or runtime auth."""
     if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
         stripped = val.strip()
-        if len(stripped) >= 8:
+        if len(stripped) >= 6:
             with _SECRET_ENV_LOCK:
                 _INITIAL_SECRET_ENV[key] = stripped
                 if stripped.startswith("{") and stripped.endswith("}"):
@@ -161,7 +174,7 @@ def register_secret_env(key: str, val: str) -> None:
                         parsed = json.loads(stripped)
                         if isinstance(parsed, dict):
                             for sub_k, sub_v in parsed.items():
-                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 16:
+                                if isinstance(sub_v, str) and len(sub_v.strip()) >= 6:
                                     if any(s in sub_k.lower() for s in ["key", "secret", "token", "password", "cert", "private"]):
                                         _INITIAL_SECRET_ENV[f"{key}_{sub_k.upper()}"] = sub_v.strip()
                     except Exception:
@@ -505,7 +518,7 @@ class HandoffPacket:
         # Ensure total serialized size is strictly within max_bytes before computing final handoff_bytes
         for _ in range(20):
             cur_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
-            if cur_raw_bytes <= max_bytes - 128:
+            if cur_raw_bytes <= max_bytes - 256:
                 break
             if isinstance(self.decisions, list) and len(self.decisions) > 1:
                 self.decisions = self.decisions[:1]
@@ -525,8 +538,8 @@ class HandoffPacket:
             break
 
         final_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
-        if final_raw_bytes > max_bytes:
-            raise ContextError(f"HandoffPacket exceeds max_bytes {max_bytes}: raw size is {final_raw_bytes}")
+        if final_raw_bytes > max_bytes - 128:
+            raise ContextError(f"HandoffPacket raw size exceeds headroom bound {max_bytes - 128}: raw size is {final_raw_bytes}")
 
         # Compute hash once at creation time if not already set
         if not self.handoff_hash:
@@ -1469,7 +1482,7 @@ class ContextCompiler:
                 # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
                 s = "".join(c for c in s if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
                 s = redact_secrets(s)
-                s = unicodedata.normalize("NFKC", s)
+                s = normalize_homoglyphs(unicodedata.normalize("NFKC", s))
                 s = INJECTION_PATTERN.sub("[FILTERED]", s)
                 encoded = s.encode("utf-8")[:max_bytes]
                 return encoded.decode("utf-8", errors="ignore")

@@ -45,6 +45,7 @@ try:
         STABLE_PREFIX_VERSION,
         MAX_SEMANTIC_HANDOFF_BYTES,
         INJECTION_PATTERN,
+        normalize_homoglyphs,
         Anchor,
         HandoffPacket,
         ContextPacket,
@@ -90,6 +91,7 @@ except ImportError:
         STABLE_PREFIX_VERSION,
         MAX_SEMANTIC_HANDOFF_BYTES,
         INJECTION_PATTERN,
+        normalize_homoglyphs,
         Anchor,
         HandoffPacket,
         ContextPacket,
@@ -3740,6 +3742,7 @@ class TaskExecutor:
                 project_policy_summary=self.factory_config.get("limits", {}),
                 revision_index=0
             )
+            packet.attempt_id = attempt_id
             raw_prompt = packet.render_full_prompt()
             prompt_content = redact_secrets(raw_prompt)
             recall, missing = calculate_rendered_anchor_recall(packet.required_anchors, prompt_content)
@@ -3844,33 +3847,7 @@ class TaskExecutor:
 
         try:
             with lock:
-                is_rev = getattr(self, "review_only", False)
-                _, prefix_hash, _ = StablePrefixManager.get_stable_prefix("reviewer" if is_rev else "task")
-                if is_rev:
-                    curr_hashes = {
-                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                        "plan": sha256_text(canonical_json_dump(snap_plan)),
-                        "stable_prefix": prefix_hash,
-                        "secret_env": get_secret_env_fingerprint(),
-                    }
-                else:
-                    curr_hashes = {
-                        "goal-spec": sha256_text(canonical_json_dump(snap_goal_spec)),
-                        "plan": sha256_text(canonical_json_dump(snap_plan)),
-                        "task_def": sha256_text(canonical_json_dump(snap_task)),
-                        "retry_info": sha256_text(canonical_json_dump(snap_retry_info)),
-                        "stable_prefix": prefix_hash,
-                        "secret_env": get_secret_env_fingerprint(),
-                    }
-                if (not self.current_context_packet) or getattr(self.current_context_packet, "attempt_id", None) != attempt_id:
-                    prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
-                else:
-                    is_stale, reasons = self.current_context_packet.verify_staleness(curr_hashes)
-                    if is_stale:
-                        prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
-                    else:
-                        prompt_content = redact_secrets(self.current_context_packet.render_full_prompt())
-
+                prompt_content = self.build_prompt(worktree_path, attempt_id=attempt_id)
                 if not prompt_content:
                     raise ContextError(f"Prompt content is empty or uninitialized for task '{self.task_id}' (attempt #{attempt_id})")
 
@@ -4256,7 +4233,9 @@ class TaskExecutor:
 
             valid_in_tokens = _valid_token_int(provider_input_tokens)
 
-            dynamic_bytes = len(pkt.rendered_tail.encode("utf-8"))
+            clean_tail = redact_secrets(pkt.rendered_tail)
+            dynamic_bytes = len(clean_tail.encode("utf-8"))
+            raw_tail_bytes = len(pkt.rendered_tail.encode("utf-8"))
             factory_bytes = sp_bytes + dynamic_bytes
             rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
@@ -4281,6 +4260,7 @@ class TaskExecutor:
                 "stable_prefix_hash": sp_hash,
                 "stable_prefix_bytes": sp_bytes,
                 "dynamic_packet_bytes": dynamic_bytes,
+                "raw_tail_bytes": raw_tail_bytes,
                 "referenced_file_count": len(pkt.referenced_files),
                 "inline_file_count": len(pkt.included_files),
                 "inline_file_bytes": sum(len(f.get("inline_content", "").encode("utf-8")) for f in pkt.included_files),
@@ -4555,8 +4535,8 @@ class FactoryOrchestrator:
             cleaned = cleaned.replace("```", "'''").replace("`", "'")
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Re-normalize with NFKC after all stripping steps
-            cleaned = unicodedata.normalize("NFKC", cleaned)
+            # Re-normalize with NFKC and homoglyphs after all stripping steps
+            cleaned = normalize_homoglyphs(unicodedata.normalize("NFKC", cleaned))
             # Filter adversarial prompt injection variants and role markers using canonical pattern
             cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
@@ -4570,24 +4550,34 @@ class FactoryOrchestrator:
         clean_summary = _sanitize_worker_text(raw_summary, 256) or f"Completed {task_id}"
         clean_notes = _sanitize_worker_text(raw_notes, 512)
 
+        # Cross-reference satisfied criteria with goal_spec acceptance_criteria
+        known_criteria_ids = {c.get("id") for c in self.goal_spec.get("acceptance_criteria", []) if isinstance(c, dict)}
+        valid_satisfied = [cid for cid in satisfied if cid in known_criteria_ids]
+        filtered_criteria = [cid for cid in satisfied if cid not in known_criteria_ids]
+        if filtered_criteria:
+            self.log_event("WARNING_UNKNOWN_CRITERIA_IN_HANDOFF", {"task_id": task_id, "unknown_criteria": filtered_criteria})
+
         is_passed = attempt_result.get("status") in ("SUCCESS", "COMPLETED") and attempt_result.get("exit_code", 0) == 0
         actual_exit_code = attempt_result.get("exit_code", 0 if is_passed else 1)
         contracts_text = _sanitize_worker_text(f"Interfaces exported by {task_id} in {', '.join(safe_changed_paths) if safe_changed_paths else 'target repository'}", 512)
         decisions_text = _sanitize_worker_text(f"Implemented {clean_summary}", 512)
         consumer_notes_text = _sanitize_worker_text(clean_notes or f"Changes integrated in commit {commit_hash[:8]}", 512)
         known_risks_text = _sanitize_worker_text("", 512)
+        val_result = {"passed": is_passed, "exit_code": actual_exit_code}
+        if filtered_criteria:
+            val_result["filtered_criteria"] = filtered_criteria
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
             producer_task_id=task_id,
             producer_attempt=attempt_id,
             changed_paths=safe_changed_paths,
-            satisfied_criteria=satisfied,
+            satisfied_criteria=valid_satisfied,
             commit=commit_hash,
             contracts=contracts_text,
             decisions=decisions_text,
             consumer_notes=consumer_notes_text,
             known_risks=known_risks_text,
-            validation_result={"passed": is_passed, "exit_code": actual_exit_code}
+            validation_result=val_result
         )
         save_handoff_packet(handoff, handoff_file)
         return handoff
@@ -4596,46 +4586,47 @@ class FactoryOrchestrator:
         """Collects verified predecessor HandoffPackets for a task definition, failing fast on missing or invalid handoffs."""
         task_deps = tdef.get("dependencies", [])
         task_handoffs = []
-        for dep_id in task_deps:
-            if not isinstance(dep_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", dep_id):
-                raise ValueError(f"Invalid dep_id for handoff: {dep_id}")
-            ho_file = (self.handoffs_dir / f"{dep_id}.json").resolve()
-            if ho_file.parent != self.handoffs_dir.resolve():
-                raise ValueError(f"Path traversal detected for dep_id: {dep_id}")
-            ho = None
-            if dep_id in self.active_handoffs:
-                ho = self.active_handoffs[dep_id]
-            else:
-                if ho_file.exists():
-                    try:
-                        ho = load_handoff_packet(ho_file)
-                    except Exception as exc:
-                        clean_err = redact_secrets(f"Failed to load dependency handoff {dep_id}: {exc}")
-                        self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
-                        raise RuntimeError(clean_err)
+        with self._manifest_lock:
+            for dep_id in task_deps:
+                if not isinstance(dep_id, str) or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", dep_id):
+                    raise ValueError(f"Invalid dep_id for handoff: {dep_id}")
+                ho_file = (self.handoffs_dir / f"{dep_id}.json").resolve()
+                if ho_file.parent != self.handoffs_dir.resolve():
+                    raise ValueError(f"Path traversal detected for dep_id: {dep_id}")
+                ho = None
+                if dep_id in self.active_handoffs:
+                    ho = self.active_handoffs[dep_id]
                 else:
-                    dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
-                    if dep_tinfo.get("status") in ("SUCCESS", "INTEGRATED", "COMPLETED") or dep_tinfo.get("canonical_state") in ("SUCCESS", "INTEGRATED", "COMPLETED"):
-                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
-                        raise RuntimeError(f"Required dependency handoff {dep_id} missing on disk at {ho_file}")
+                    if ho_file.exists():
+                        try:
+                            ho = load_handoff_packet(ho_file)
+                        except Exception as exc:
+                            clean_err = redact_secrets(f"Failed to load dependency handoff {dep_id}: {exc}")
+                            self.log_event("CRITICAL_HANDOFF_LOAD_FAILED", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
+                            raise RuntimeError(clean_err)
                     else:
-                        clean_err = f"Dependency {dep_id} is in non-terminal or unready state ({dep_tinfo.get('canonical_state') or dep_tinfo.get('status')}); missing handoff {ho_file}"
-                        self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
-                        raise RuntimeError(clean_err)
+                        dep_tinfo = self.manifest.get("tasks", {}).get(dep_id, {})
+                        if dep_tinfo.get("status") in ("SUCCESS", "INTEGRATED", "COMPLETED") or dep_tinfo.get("canonical_state") in ("SUCCESS", "INTEGRATED", "COMPLETED"):
+                            self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file)})
+                            raise RuntimeError(f"Required dependency handoff {dep_id} missing on disk at {ho_file}")
+                        else:
+                            clean_err = f"Dependency {dep_id} is in non-terminal or unready state ({dep_tinfo.get('canonical_state') or dep_tinfo.get('status')}); missing handoff {ho_file}"
+                            self.log_event("CRITICAL_HANDOFF_MISSING", {"dep_id": dep_id, "file": str(ho_file), "error": clean_err})
+                            raise RuntimeError(clean_err)
 
-            if ho is not None:
-                # If git repository and real commit hex, verify commit is reachable in repository history
-                if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
-                    verify_res = subprocess.run(
-                        ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
-                        cwd=str(PROJECT_ROOT),
-                        capture_output=True
-                    )
-                    if verify_res.returncode != 0:
-                        clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
-                        self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
-                        raise RuntimeError(clean_err)
-                task_handoffs.append(ho)
+                if ho is not None:
+                    # If git repository and real commit hex, verify commit is reachable in repository history
+                    if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
+                        verify_res = subprocess.run(
+                            ["git", "cat-file", "-e", f"{ho.commit}^{{commit}}"],
+                            cwd=str(PROJECT_ROOT),
+                            capture_output=True
+                        )
+                        if verify_res.returncode != 0:
+                            clean_err = f"Stale handoff {dep_id}: referenced commit {ho.commit} is missing from git history"
+                            self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
+                            raise RuntimeError(clean_err)
+                    task_handoffs.append(ho)
         return task_handoffs
 
     def _build_task_graph(self):
@@ -5344,6 +5335,9 @@ class FactoryOrchestrator:
             min_recall = min(observed_recalls) if observed_recalls else None
 
             if rendered_prompts:
+                if len(rendered_prompts) > 50:
+                    self.log_event("WARNING_CONTEXT_REDUNDANCY_PROMPTS_CAPPED", {"total_prompts": len(rendered_prompts), "capped_to": 50})
+                    rendered_prompts = rendered_prompts[:50]
                 redundancy_stats = calculate_context_redundancy(rendered_prompts)
                 self.manifest["context_summary"] = {
                     "schema_version": "8.0.0",
