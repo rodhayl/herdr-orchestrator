@@ -75,5 +75,16 @@ class TestV61SecretSafety(unittest.TestCase):
         cleaned = redact_secrets(safe_payload)
         self.assertEqual(cleaned, safe_payload)
 
+    def test_late_set_secret_snapshot_and_redaction(self):
+        """Verifies that secrets set in os.environ after module import are captured by snapshot_secret_env and redacted."""
+        late_secret_key = "DATABASE_URL_SECRET"
+        late_secret_val = "postgres://admin:super_secret_pw_9999@localhost:5432/db"
+        os.environ[late_secret_key] = late_secret_val
+        snapshot_secret_env()
+        raw_msg = f"Connecting to database using {late_secret_val} now"
+        cleaned = redact_secrets(raw_msg)
+        self.assertNotIn(late_secret_val, cleaned)
+        self.assertIn("[REDACTED_DATABASE_URL_SECRET]", cleaned)
+
 if __name__ == "__main__":
     unittest.main()
