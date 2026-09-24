@@ -193,6 +193,61 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Deterministic Suites**: All 5 test suites (121 unit tests in `factory_tests`, MiniBoard unit tests, MiniBoard smoke test, MiniLinks unit tests, MiniLinks smoke test) passed with 0 failures, 0 errors.
 - **Provider Verification**: `./scripts/verify-real.sh` confirmed live AGY and OpenCode execution, and accurate `AUTH_BLOCKED` reporting for Droid, Codex, and Claude.
 - **Clean-Room Portability**: `./scripts/portable-smoke.sh` executed all 6 steps in an isolated clean checkout sandbox without leaked directories, machine-specific paths, or prior state.
-- **Toolchain Lock & Governance**: Updated `factory.json`, `harness_profiles.json`, `toolchain.lock.json`, `scripts/update-package.sh`, `scripts/doctor.sh`, and schemas to `v6.1.0`. Preserved Herdr 0.9.1 `BLOCKED_EXTERNAL_COMPATIBILITY` for `herdr-board` without patching upstream gates.
+---
+
+## [2026-09-24T12:00:00Z] v7.0.0 Project Autopilot Full Implementation & Real Certification
+
+### 1. Context & Objectives
+- **Trigger**: Factory v7.0.0 Project Autopilot Architecture Upgrade.
+- **Operator**: Antigravity Orchestrator (Gemini 3.8 Flash High).
+- **Core Mission**: Elevate Factory from manual plan authoring to natural language Goal Specification with full lifecycle autonomy:
+  `Goal -> Discovery Packet -> Structured GoalSpec (Explicit vs Derived) -> Traceable Plan v2 DAG -> Independent Plan Review -> Bounded Revision -> Deterministic Routing / Real-Only Execution -> Post-Execution Validation -> Independent Final Audit -> Bounded Delta Remediation -> Finished Project`.
+- **Target Project Support**: Enable full external project execution outside `factory_root` with isolated `<project_root>/.agy-factory` runtime directories and versioned per-project policy (`factory.project.json`).
+
+### 2. Verified Implementation & Architectural Capabilities
+- **Per-Project Policy & Discovery**:
+  - Implemented `ProjectPolicy` and `ProjectContext` binding isolated target directories, dirty git guards, and permission scopes.
+  - Implemented `generate_discovery_packet` providing bounded workspace analysis.
+  - Created `schemas/factory-project.schema.json`.
+- **Goal Specification & Traceability Compiler**:
+  - Implemented `compile_goal_spec` with canonical provenance classification (`USER_EXPLICIT` vs `DERIVED`).
+  - Implemented `compile_plan_from_goal` compiling full criteria into DAG tasks with deterministic validations.
+  - Implemented `validate_plan_traceability` verifying criteria coverage, cycle-free topology, safe command tokens, and task limits.
+  - Created `schemas/goal-spec.schema.json` and updated `schemas/plan.schema.json`.
+- **Independent Plan Reviewer & Bounded Revision**:
+  - Implemented `review_plan` invoking independent reviewer (`agy-audit-high`, `claude-sonnet-4-6`) and `revise_plan` with bounded revision loops up to `max_plan_revisions`.
+- **Autonomous Goal Controller**:
+  - Implemented `GoalController` with durable state transitions (`RECEIVED` -> `DISCOVERING` -> `STRUCTURING` -> `PLANNING` -> `PLAN_VALIDATING` -> `PLAN_REVIEWING` -> `READY` -> `EXECUTING` -> `POST_VALIDATING` -> `AUDITING` -> `REMEDIATING` -> `COMPLETE`).
+  - Atomic state writes, failpoint injection support, and durable restart/resume without duplicate task execution.
+  - Created `schemas/goal-controller.schema.json`.
+- **Post-Execution Validation & Independent Final Audit**:
+  - Deterministic execution of task validations across the repository with stdout/stderr recording.
+  - Implemented `audit_project` invoking independent auditor for full implementation critique, coupled with bounded delta remediation planning.
+- **Feasibility & Upstream Compatibility Gates**:
+  - Evaluated Freebuff CLI v0.0.141: classified as `FREEBUFF_HEADLESS_BLOCKED` (lacks non-interactive headless prompt execution mode; interactive TUI only).
+  - Maintained `herdr-board` v0.17.0 gate as `BLOCKED_EXTERNAL_COMPATIBILITY` without host mutation.
+
+### 3. Genuine Real-Provider External Project Certification ("TreeHash")
+- **Target Project**: `/root/treehash-project` (completely isolated external Git repository).
+- **Goal**: Full implementation of TreeHash Merkle directory hashing library and CLI satisfying 14 requirements (R1–R12 explicit, R13–R14 derived).
+- **Execution Run (`run-20260924-100833`)**:
+  - Goal ID: `goal-20260924-100806`
+  - Final Phase: `COMPLETE`
+  - Revisions: 0, Remediation rounds: 0
+  - Tasks Executed:
+    - `task_core_impl`: Mode `REAL`, worker `agy3`, profile `agy-backend-high` (`gemini-3.8-flash`), commit `53f9fcb`.
+    - `task_cli_impl`: Mode `REAL`, worker `agy3`, profile `agy-backend-high` (`gemini-3.8-flash`), commit `7beaf10`.
+    - `task_unit_tests`: Mode `REAL`, worker `agy5`, profile `agy-tests-medium` (`gemini-3.8-flash`), commit `ad91531`.
+  - Validations: 3/3 passed (100%).
+  - Independent Final Audit: `ACCEPTED`.
+  - Certification Guard: `REAL_PROVIDER_CERTIFIED: All tasks executed genuine provider-backed processes with verifiable evidence` (`PASSED`).
+  - Target Project Test Suite: 96 unit and integration tests passing 100% in 0.36s.
+  - Functional Smoke: CLI compute, JSON manifest, verification match (RC 0), and tamper detection (RC 1) all verified.
+  - Bundle: Saved to `certification/v7/autopilot-real-certification.json`.
+
+### 4. Verification & Clean-Room Portability
+- **Deterministic Test Suites**: 159 tests in `factory_tests` passed with zero failures or errors in under 40s.
+- **Portability**: Verified clean-room execution via `./scripts/portable-smoke.sh` and zero host mutation.
+
 
 

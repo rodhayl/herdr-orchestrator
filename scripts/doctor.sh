@@ -13,7 +13,7 @@ lock_file = project_root / "toolchain.lock.json"
 profiles_file = project_root / "harness_profiles.json"
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v6.1.0) — Environment Diagnostics (doctor)")
+print("AGY-Herdr Software Factory (v7.0.0) — Environment Diagnostics (doctor)")
 print("=" * 80)
 
 structural_ok = True

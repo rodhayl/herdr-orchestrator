@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "6.1.0",
-    "schema_version": "6.1.0"
+    "version": "7.0.0",
+    "schema_version": "7.0.0"
   },
   "certified_environment": {
     "os": "Linux",
@@ -24,7 +24,7 @@
     "compatibility_notes": "herdr-board v0.17.0 requires Herdr 0.9.0 (protocol 22); host has Herdr 0.9.1 (protocol 22)."
   },
   "agy": {
-    "cli_version": "1.2.9",
+    "cli_version": "1.2.10",
     "worker_profiles": [
       "agy",
       "agy2",
@@ -101,5 +101,10 @@
     "version": null,
     "installed": false
   },
-  "certified_at": "2026-09-23T15:46:42.086766+00:00"
+  "freebuff": {
+    "cli_version": "0.0.141",
+    "feasibility_status": "FREEBUFF_HEADLESS_BLOCKED",
+    "notes": "Freebuff v0.0.141 provides interactive TUI only; non-interactive headless prompt execution is unsupported."
+  },
+  "certified_at": "2026-09-24T12:00:00.000000+00:00"
 }

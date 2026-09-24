@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "project_name": "AGY-Herdr Software Factory",
-  "version": "6.1.0",
+  "version": "7.0.0",
   "default_model": "gemini-3.8-flash-high",
   "worker_registry": {
     "agy": {
