@@ -654,6 +654,8 @@ def atomic_write_json(path: pathlib.Path, data: dict, indent: int = 2):
         dir_fd = os.open(str(path.parent), os.O_RDONLY)
         os.fsync(dir_fd)
         os.close(dir_fd)
+    except OSError as exc:
+        logging.getLogger("factory").warning("WARNING_DIRECTORY_FSYNC_FAILED: failed to fsync parent directory of %s: %s", path, exc)
     except Exception:
         pass
 
@@ -4076,6 +4078,9 @@ class TaskExecutor:
             # Invariant: If is_test_harness or bin_identity is_fixture, it MUST be MOCK
             if is_test_harness or bin_identity.get("is_fixture"):
                 execution_mode = "MOCK"
+            self.execution_mode = execution_mode
+            if execution_mode == "MOCK" and isinstance(self.routing_provenance, dict):
+                self.routing_provenance["mode"] = "MOCK" 
 
             git_diff_hash = ""
             try:
@@ -4371,7 +4376,7 @@ class TaskExecutor:
 
             clean_tail = redact_secrets(pkt.rendered_tail)
             dynamic_bytes = len(clean_tail.encode("utf-8"))
-            raw_tail_bytes = len(pkt.rendered_tail.encode("utf-8"))
+            raw_tail_bytes = dynamic_bytes
             factory_bytes = len((sp_prefix + "\n" + clean_tail).encode("utf-8"))
             rendered_prompt = clean_prompt
             red_stats = calculate_context_redundancy([rendered_prompt])
@@ -4934,6 +4939,9 @@ class FactoryOrchestrator:
                 f.write(json.dumps(event) + "\n")
 
     def save_manifest(self):
+        """Persists current manifest to disk with secret redaction and syncs board projector."""
+        if self._manifest_lock._is_owned():
+            raise RuntimeError("Reentrant deadlock risk: _manifest_lock must not be held when calling save_manifest()")
         with self._manifest_lock:
             # Update display states and wave projection
             for tid, tinfo in self.manifest["tasks"].items():
@@ -5421,11 +5429,12 @@ class FactoryOrchestrator:
 
                     # Authoritative provenance is set from orchestrator's route_meta; never blindly trust worker-reported provenance
                     if tid not in self.routing_provenance or not self.routing_provenance[tid]:
-                        self.routing_provenance[tid] = route_meta
-                    # Cross-check: If worker actually executed in MOCK mode, force mode to MOCK in routing_provenance
+                        self.routing_provenance[tid] = copy.deepcopy(route_meta)
+                    # Cross-check: If worker or attempt executed in MOCK mode, force mode to MOCK in routing_provenance
                     worker_mode = res.get("execution_mode")
-                    if worker_mode == "MOCK" or getattr(executor, "execution_mode", None) == "MOCK":
-                        self.routing_provenance[tid]["mode"] = "MOCK" 
+                    if worker_mode != "REAL" or getattr(executor, "execution_mode", None) != "REAL" or not res.get("is_real_execution"):
+                        self.routing_provenance[tid]["mode"] = "MOCK"
+                    tinfo["routing_provenance"] = self.routing_provenance[tid]
 
                     tinfo["attempts"].append(res)
                     tinfo["latest_result"] = res
@@ -5498,13 +5507,20 @@ class FactoryOrchestrator:
                                 clean_cmd = str(raw_cmd)
                             else:
                                 clean_cmd = ""
-                            tinfo["retry_info"] = {
+                            rinfo = {
                                 "previous_attempt_id": att_id,
                                 "status": res.get("status", "FAILED"),
                                 "error_category": res.get("state", "FAILED"),
-                                "failing_command": redact_secrets(clean_cmd).encode("utf-8")[:2048].decode("utf-8", errors="ignore"),
+                                "failing_command": redact_secrets(clean_cmd).encode("utf-8")[:1024].decode("utf-8", errors="ignore"),
                                 "error_excerpt": redact_secrets(res.get("error", "")).encode("utf-8")[:2048].decode("utf-8", errors="ignore")
                             }
+                            # Enforce hard aggregate budget <= 4096 bytes for retry_info dict serialization
+                            dumped = json.dumps(rinfo).encode("utf-8")
+                            if len(dumped) > 4096:
+                                excess = len(dumped) - 4096
+                                cur_err = rinfo["error_excerpt"].encode("utf-8")
+                                rinfo["error_excerpt"] = cur_err[:-excess].decode("utf-8", errors="ignore")
+                            tinfo["retry_info"] = rinfo
                             self.log_event("TASK_RETRYING", {"task_id": tid, "previous_attempt": att_id, "retry_info": tinfo["retry_info"]})
                         else:
                             tinfo["canonical_state"] = "FAILED"

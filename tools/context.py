@@ -1957,12 +1957,24 @@ class ContextCompiler:
 
             # Re-synchronize surviving handoff path anchors after compaction to prevent false anchor recall misses
             surviving_paths = set()
+            # Top-5 changed paths from each predecessor handoff are guaranteed hard anchors
+            guaranteed_paths = set()
             for ho in handoffs:
-                surviving_paths.update([p for p in ho.changed_paths[:200] if not str(p).startswith("[+")])
+                valid_paths = [p for p in ho.changed_paths if not str(p).startswith("[+")]
+                guaranteed_paths.update(valid_paths[:5])
+                surviving_paths.update(valid_paths[:200])
+            surviving_paths.update(guaranteed_paths)
+
+            demoted_paths = []
             for a in anchors:
                 if a.anchor_type == "file_reference" and a.source == "predecessor_handoff":
-                    if a.content not in surviving_paths:
+                    if a.content in guaranteed_paths:
+                        a.required = True
+                    elif a.content not in surviving_paths:
                         a.required = False
+                        demoted_paths.append(a.content)
+            if demoted_paths:
+                logging.getLogger("factory").warning("WARNING_HANDOFF_PATH_ANCHOR_DEMOTED: Demoted %d predecessor handoff paths under budget pressure: %s", len(demoted_paths), demoted_paths)
             existing_ho_paths = {a.content for a in anchors if a.anchor_type == "file_reference" and a.source == "predecessor_handoff"}
             for ho_path in sorted(surviving_paths):
                 if ho_path not in existing_ho_paths:
@@ -2606,6 +2618,8 @@ def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.
         dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
         os.fsync(dir_fd)
         os.close(dir_fd)
+    except OSError as exc:
+        logging.getLogger("factory").warning("WARNING_DIRECTORY_FSYNC_FAILED: failed to fsync parent directory of %s: %s", target_path, exc)
     except Exception:
         pass
     return target_path
@@ -2663,6 +2677,8 @@ def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib
         dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
         os.fsync(dir_fd)
         os.close(dir_fd)
+    except OSError as exc:
+        logging.getLogger("factory").warning("WARNING_DIRECTORY_FSYNC_FAILED: failed to fsync parent directory of %s: %s", target_path, exc)
     except Exception:
         pass
     return target_path
