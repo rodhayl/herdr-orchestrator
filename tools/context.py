@@ -1419,11 +1419,20 @@ class DerivedRequirementAuditor:
 # 10. PACKET PERSISTENCE & CRASH SAFETY
 # ==============================================================================
 
-def save_context_packet(packet: ContextPacket, storage_dir: pathlib.Path) -> pathlib.Path:
-    """Atomically saves ContextPacket to disk using temp file + rename."""
+def save_context_packet(packet: ContextPacket, target: pathlib.Path) -> pathlib.Path:
+    """Atomically saves ContextPacket to disk using temp file + rename.
+
+    Supports passing either a target directory or a direct .json file path.
+    """
+    if target.suffix == ".json":
+        storage_dir = target.parent
+        target_path = target
+    else:
+        storage_dir = target
+        target_path = storage_dir / f"{packet.packet_id}.json"
+
     storage_dir.mkdir(parents=True, exist_ok=True)
-    target_path = storage_dir / f"{packet.packet_id}.json"
-    temp_path = storage_dir / f"{packet.packet_id}.tmp.{os.getpid()}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}"
 
     data_str = canonical_json_dump(packet.to_dict())
     temp_path.write_text(data_str, encoding="utf-8")
@@ -1437,11 +1446,25 @@ def load_context_packet(packet_file: pathlib.Path) -> ContextPacket:
     return ContextPacket.from_dict(data)
 
 
-def save_handoff_packet(handoff: HandoffPacket, storage_dir: pathlib.Path) -> pathlib.Path:
-    """Atomically saves HandoffPacket to disk using temp file + rename."""
+def save_handoff_packet(handoff: HandoffPacket, target: pathlib.Path) -> pathlib.Path:
+    """Atomically saves HandoffPacket to disk using temp file + rename.
+
+    Supports passing either a target directory or a direct .json file path.
+    """
+    if target.suffix == ".json":
+        storage_dir = target.parent
+        target_path = target
+    else:
+        storage_dir = target
+        target_path = storage_dir / f"{handoff.handoff_id}.json"
+
     storage_dir.mkdir(parents=True, exist_ok=True)
-    target_path = storage_dir / f"{handoff.handoff_id}.json"
-    temp_path = storage_dir / f"{handoff.handoff_id}.tmp.{os.getpid()}"
+    temp_path = storage_dir / f"{target_path.stem}.tmp.{os.getpid()}"
+
+    data_str = canonical_json_dump(handoff.to_dict())
+    temp_path.write_text(data_str, encoding="utf-8")
+    os.replace(temp_path, target_path)
+    return target_path
 
     data_str = canonical_json_dump(handoff.to_dict())
     temp_path.write_text(data_str, encoding="utf-8")
