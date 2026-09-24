@@ -137,10 +137,9 @@ def redact_secrets(val: Any) -> Any:
             res = res.replace(env_v, f"[REDACTED_{env_k}]")
         # Check known secret env vars (minimum 8 characters to prevent false positives)
         for env_k in KNOWN_SECRET_ENV_VARS:
-            if env_k not in _INITIAL_SECRET_ENV:
-                env_v = os.environ.get(env_k)
-                if env_v and len(env_v.strip()) >= 8:
-                    res = res.replace(env_v.strip(), f"[REDACTED_{env_k}]")
+            curr_v = os.environ.get(env_k)
+            if curr_v and len(curr_v.strip()) >= 8:
+                res = res.replace(curr_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
         return res
