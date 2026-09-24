@@ -33,9 +33,9 @@ def main():
     diff_cmd = ["git", "diff", "aa27ecc..HEAD", "--", "tools/context.py", "tools/factory.py"]
     diff_text = subprocess.check_output(diff_cmd, cwd=str(REPO_ROOT)).decode("utf-8", errors="replace")
 
-    # Sonnet 4.6 has a 200k token context window, so include full diff (up to 250k chars)
-    if len(diff_text) > 250000:
-        diff_summary = diff_text[:240000] + "\n\n... [truncated for prompt limits] ...\n"
+    # Stay safely within Linux MAX_ARG_STRLEN limit (128 KB per argument)
+    if len(diff_text) > 100000:
+        diff_summary = diff_text[:75000] + "\n\n... [diff truncated for ARG_MAX limit] ...\n\n" + diff_text[-25000:]
     else:
         diff_summary = diff_text
 
