@@ -1390,7 +1390,7 @@ class DerivedRequirementAuditor:
     }
 
     @classmethod
-    def audit_requirements(cls, goal_spec: dict) -> Dict[str, Any]:
+    def audit_requirements(cls, goal_spec: dict, plan: Optional[dict] = None) -> Dict[str, Any]:
         """Classifies each criterion, validates derivation traceability, and computes metrics.
 
         Raises:
@@ -1410,9 +1410,10 @@ class DerivedRequirementAuditor:
             if prov == "USER_EXPLICIT":
                 explicit_criteria.append(c)
             elif prov == "DERIVED":
-                # Validate derivation
+                # Validate derivation: requires non-empty derived_from and rationale
                 parents = c.get("derived_from", [])
-                if not parents:
+                rationale = c.get("rationale", "")
+                if not parents or not rationale:
                     orphan_criteria.append(cid)
                     continue
 
@@ -1427,7 +1428,7 @@ class DerivedRequirementAuditor:
 
         if orphan_criteria:
             raise OrphanDerivedRequirementError(
-                f"ORPHAN_DERIVED_REQUIREMENTS: Found derived criteria without valid parent trace: {orphan_criteria}"
+                f"ORPHAN_DERIVED_REQUIREMENTS: Found derived criteria without valid parent trace or rationale: {orphan_criteria}"
             )
 
         total_count = len(criteria)
@@ -1435,11 +1436,22 @@ class DerivedRequirementAuditor:
         der_count = len(derived_criteria)
         ratio = (der_count / total_count) if total_count > 0 else 0.0
 
+        tasks_caused = 0
+        context_bytes_caused = 0
+        if plan and isinstance(plan, dict) and "tasks" in plan:
+            der_set = {c["id"] for c in derived_criteria}
+            for t in plan.get("tasks", []):
+                t_reqs = set(t.get("satisfies", []) + t.get("requirements", []))
+                if t_reqs and t_reqs.issubset(der_set):
+                    tasks_caused += 1
+
         return {
             "explicit_requirement_count": exp_count,
             "derived_requirement_count": der_count,
             "derived_requirement_ratio": round(ratio, 4),
             "orphan_count": len(orphan_criteria),
+            "tasks_caused_by_derived_requirements": tasks_caused,
+            "context_bytes_caused_by_derived_requirements": context_bytes_caused,
             "explicit_ids": sorted(explicit_ids),
             "derived_ids": [c["id"] for c in derived_criteria],
         }
