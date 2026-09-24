@@ -314,11 +314,11 @@ def calculate_rendered_anchor_recall(
         if getattr(req, "anchor_type", "") == "validation":
             val_pattern = r"(?:`|\n-\s*`)" + re.escape(content) + r"`"
             found = bool(re.search(val_pattern, rendered_text) or (f"`{content}`" in rendered_text))
-        elif getattr(req, "anchor_type", "") == "file_reference":
-            file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_./\-])"
+        elif getattr(req, "anchor_type", "") in ("file_reference", "allowed_path", "protected_path"):
+            file_pattern = r"(?<![a-zA-Z0-9_./\-])" + re.escape(content) + r"(?![a-zA-Z0-9_/\-]|\.[a-zA-Z0-9])"
             found = bool(re.search(file_pattern, rendered_text))
         else:
-            pattern = r"(?<![a-zA-Z0-9_])" + re.escape(content) + r"(?![a-zA-Z0-9_./\-])"
+            pattern = r"(?<![a-zA-Z0-9_])" + re.escape(content) + r"(?![a-zA-Z0-9_]|/[a-zA-Z0-9_]|\.[a-zA-Z0-9])"
             found = bool(re.search(pattern, rendered_text))
         if found:
             included_count += 1
