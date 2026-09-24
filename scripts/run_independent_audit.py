@@ -48,21 +48,22 @@ def main():
     ctx_lines = (REPO_ROOT / "tools" / "context.py").read_text(encoding="utf-8").splitlines()
     ctx_sections = [
         "### Secret Redaction & Frozen Snapshot:",
-        "\n".join(ctx_lines[80:205]),
+        "\n".join(ctx_lines[140:235]),
         "\n### Anchor Data Model & Boundary-Safe Recall Calculation:",
-        "\n".join(ctx_lines[235:370]),
+        "\n".join(ctx_lines[267:386]),
         "\n### HandoffPacket (Bounded Free-Text, Pre-Instantiation Hash Verify, Canonical Dump):",
-        "\n".join(ctx_lines[375:500]),
+        "\n".join(ctx_lines[392:726]),
         "\n### ContextSource & Sensitive File Pattern Matcher:",
-        "\n".join(ctx_lines[675:770]),
+        "\n".join(ctx_lines[731:825]),
         "\n### ContextPacket & Cryptographic Staleness Verification:",
-        "\n".join(ctx_lines[1258:1320]),
-        "\n### ContextCompiler (compile_task_packet & compile_planner_packet with Pruning):",
-        "\n".join(ctx_lines[1540:1750]),
+        "\n".join(ctx_lines[1314:1435]),
+        "\n### ContextCompiler (compile_task_packet & compile_plan_review_packet with Pruning):",
+        "\n".join(ctx_lines[1572:1845]),
+        "\n".join(ctx_lines[1998:2160]),
         "\n### DerivedRequirementAuditor (Strict Lineage Traceability & Closed Enums):",
-        "\n".join(ctx_lines[2235:2295]),
+        "\n".join(ctx_lines[2294:2375]),
         "\n### Atomic Persistence (Temp File + Flush + Fsync + os.replace):",
-        "\n".join(ctx_lines[2322:2380]),
+        "\n".join(ctx_lines[2380:2460]),
     ]
     context_core_code = "\n".join(ctx_sections)
 
@@ -104,14 +105,13 @@ Output ONLY a JSON object adhering to this schema:
 
     cmd = [
         "agy",
-        "-p", audit_prompt,
         "--model", "claude-sonnet-4-6",
         "--output-format", "json",
         "--dangerously-skip-permissions"
     ]
 
     print("Submitting audit request to claude-sonnet-4-6...")
-    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=360)
+    proc = subprocess.run(cmd, input=audit_prompt, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=360)
     if proc.returncode != 0:
         print(f"Error executing agy: {proc.stderr}")
         return 1
