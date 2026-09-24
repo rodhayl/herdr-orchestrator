@@ -1,6 +1,7 @@
 import os
 import unittest
-from tools.factory import redact_secrets, KNOWN_SECRET_ENV_VARS
+from tools.factory import redact_secrets, KNOWN_SECRET_ENV_VARS, snapshot_secret_env
+from tools.context import _INITIAL_SECRET_ENV
 
 class TestV61SecretSafety(unittest.TestCase):
     def setUp(self):
@@ -14,10 +15,13 @@ class TestV61SecretSafety(unittest.TestCase):
         self.orig_env = os.environ.copy()
         for k, v in self.sentinel_secrets.items():
             os.environ[k] = v
+        snapshot_secret_env()
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.orig_env)
+        _INITIAL_SECRET_ENV.clear()
+        snapshot_secret_env()
 
     def test_redact_secrets_in_string(self):
         raw_text = f"Worker launched with key {self.sentinel_secrets['OPENROUTER_API_KEY']} and secret {self.sentinel_secrets['FACTORY_API_KEY']}"

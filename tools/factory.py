@@ -4947,7 +4947,20 @@ class FactoryOrchestrator:
                     try:
                         p_data = json.loads(pf.read_text(encoding="utf-8"))
                         pkt = ContextPacket.from_dict(p_data)
-                        curr_hashes = {f: ctx_src.get_file_hash(f) for f in pkt.source_hashes.keys()}
+                        curr_hashes = {}
+                        for k in pkt.source_hashes.keys():
+                            if k == "goal-spec":
+                                curr_hashes[k] = sha256_text(canonical_json_dump(self.goal_spec))
+                            elif k == "plan":
+                                curr_hashes[k] = sha256_text(canonical_json_dump(self.plan))
+                            elif k == "task_def":
+                                tid = getattr(pkt, "task_id", "")
+                                tdef = self.tasks.get(tid, {}) if hasattr(self, "tasks") else {}
+                                curr_hashes[k] = sha256_text(canonical_json_dump(tdef))
+                            elif k == "raw_goal":
+                                curr_hashes[k] = sha256_text(getattr(self, "goal_text", ""))
+                            else:
+                                curr_hashes[k] = ctx_src.get_file_hash(k)
                         is_stale, stale_reasons = pkt.verify_staleness(curr_hashes)
                         if is_stale:
                             self.log_event("WARNING_STALE_PACKET_SKIPPED", {"packet_file": str(pf), "reasons": stale_reasons})

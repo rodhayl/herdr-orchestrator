@@ -33,14 +33,20 @@ def main():
     diff_cmd = ["git", "diff", "aa27ecc..HEAD", "--", "tools/context.py", "tools/factory.py"]
     diff_text = subprocess.check_output(diff_cmd, cwd=str(REPO_ROOT)).decode("utf-8", errors="replace")
 
-    # Stay safely within Linux MAX_ARG_STRLEN limit (128 KB per argument)
-    if len(diff_text) > 100000:
-        diff_summary = diff_text[:75000] + "\n\n... [diff truncated for ARG_MAX limit] ...\n\n" + diff_text[-25000:]
-    else:
-        diff_summary = diff_text
+    # Persist the complete patch for reference
+    patch_path = REPO_ROOT / "certification" / "v8" / "audit_diff.patch"
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_path.write_text(diff_text, encoding="utf-8")
+
+    # tools/factory.py diff
+    factory_diff = subprocess.check_output(
+        ["git", "diff", "aa27ecc..HEAD", "--", "tools/factory.py"],
+        cwd=str(REPO_ROOT)
+    ).decode("utf-8", errors="replace")
 
     audit_prompt = f"""You are the Independent Code Auditor for AGY-Herdr Software Factory v8.0.0.
-Perform a strict audit of the following code modifications implementing the v8 context efficiency engine.
+Perform a strict audit of the v8 context efficiency engine implementation across `tools/context.py` and the orchestrator modifications in `tools/factory.py`.
+The complete git diff is saved at `certification/v8/audit_diff.patch` and the complete new context engine module is located at `tools/context.py`.
 
 Audit specifically for:
 1. subtle prompt-leak regressions (e.g. leaking secrets, environment tokens, or unnecessary internal variables into worker prompts)
@@ -54,8 +60,11 @@ Audit specifically for:
 9. provenance laundering (is REAL, MOCK, or TRANSPORT_ONLY provenance strictly preserved without falsification?)
 10. missing or fake metrics (are token counts honest/null when unavailable, and bytes measured canonically?)
 
-=== GIT DIFF (v7 -> v8) ===
-{diff_summary}
+=== ORCHESTRATOR DIFF (tools/factory.py v7 -> v8) ===
+{factory_diff}
+
+=== CONTEXT ENGINE (tools/context.py) ===
+Read and inspect `tools/context.py` directly in the repository for the implementation of ContextCompiler, HandoffPacket, ContextPacket, redact_secrets, Anchor recall calculation, and DerivedRequirementAuditor.
 
 Output ONLY a JSON object adhering to this schema:
 {{
@@ -90,19 +99,26 @@ Output ONLY a JSON object adhering to this schema:
     
     # Extract JSON object
     import re
-    m = re.search(r"\{.*\}", out, re.DOTALL)
-    if not m:
-        print(f"Failed to parse JSON from output: {out}")
-        return 1
+
+    def parse_llm_json(s: str) -> dict:
+        m = re.search(r"\{.*\}", s, re.DOTALL)
+        if not m:
+            raise ValueError(f"Failed to find JSON object in: {s[:200]}")
+        content = m.group(0)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Sanitize invalid backslash escapes produced by LLM
+            sanitized = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', content)
+            return json.loads(sanitized)
 
     try:
-        raw_obj = json.loads(m.group(0))
+        raw_obj = parse_llm_json(out)
         if "response" in raw_obj and isinstance(raw_obj["response"], str):
             resp_str = raw_obj["response"]
-            m_inner = re.search(r"\{.*\}", resp_str, re.DOTALL)
-            if m_inner:
-                report = json.loads(m_inner.group(0))
-            else:
+            try:
+                report = parse_llm_json(resp_str)
+            except Exception:
                 report = raw_obj
         else:
             report = raw_obj

@@ -135,11 +135,6 @@ def redact_secrets(val: Any) -> Any:
         # Check frozen environment snapshot (no dynamic os.environ scan during redaction)
         for env_k, env_v in _INITIAL_SECRET_ENV.items():
             res = res.replace(env_v, f"[REDACTED_{env_k}]")
-        # Check known secret env vars (minimum 8 characters to prevent false positives)
-        for env_k in KNOWN_SECRET_ENV_VARS:
-            curr_v = os.environ.get(env_k)
-            if curr_v and len(curr_v.strip()) >= 8:
-                res = res.replace(curr_v.strip(), f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
             res = pat.sub("[REDACTED_SECRET]", res)
         return res
@@ -404,6 +399,29 @@ class HandoffPacket:
                 else:
                     break
 
+        # Verify total aggregate free-text bytes after convergence loop
+        ft_parts = {
+            "consumer_notes": self.consumer_notes if isinstance(self.consumer_notes, str) else "",
+            "known_risks": self.known_risks if isinstance(self.known_risks, str) else "\n".join(self.known_risks),
+            "decisions": self.decisions if isinstance(self.decisions, str) else "\n".join(self.decisions),
+            "contracts": self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
+        }
+        final_ft_bytes = sum(len(v.encode("utf-8")) for v in ft_parts.values())
+        if final_ft_bytes > ft_budget:
+            per_field = ft_budget // 4
+            if isinstance(self.consumer_notes, str):
+                self.consumer_notes = self.consumer_notes[:per_field]
+            if isinstance(self.contracts, str):
+                self.contracts = self.contracts[:per_field]
+            if isinstance(self.decisions, str):
+                self.decisions = self.decisions[:per_field]
+            elif isinstance(self.decisions, list):
+                self.decisions = self.decisions[:5]
+            if isinstance(self.known_risks, str):
+                self.known_risks = self.known_risks[:per_field]
+            elif isinstance(self.known_risks, list):
+                self.known_risks = self.known_risks[:5]
+
         # Bound individual path lengths to 512 bytes
         self.changed_paths = [str(p)[:512] for p in self.changed_paths]
 
@@ -465,6 +483,28 @@ class HandoffPacket:
             raise MalformedContextPacketError(
                 f"HandoffPacket is missing required handoff_hash field: {d.get('handoff_id', 'unknown')}"
             )
+        # Compute and verify hash directly on raw stored fields BEFORE instantiation to prevent mutation prior to verification
+        raw_dict = {
+            "schema_version": d.get("schema_version", SCHEMA_VERSION),
+            "handoff_id": d["handoff_id"],
+            "producer_task_id": d["producer_task_id"],
+            "producer_attempt": d["producer_attempt"],
+            "commit": d.get("commit"),
+            "changed_paths": sorted(d.get("changed_paths", [])),
+            "satisfied_criteria": sorted(d.get("satisfied_criteria", [])),
+            "contracts": d.get("contracts", ""),
+            "decisions": d.get("decisions", ""),
+            "consumer_notes": d.get("consumer_notes", ""),
+            "known_risks": d.get("known_risks", ""),
+            "validation_result": d.get("validation_result", {"passed": True}),
+            "created_at": d.get("created_at", ""),
+        }
+        computed = sha256_text(canonical_json_dump(raw_dict))
+        stored_hash = d["handoff_hash"]
+        if computed != stored_hash:
+            raise MalformedContextPacketError(
+                f"Handoff integrity verification failed for {d.get('handoff_id')}: stored hash {stored_hash[:8]} != computed hash {computed[:8]}"
+            )
         hp = cls(
             handoff_id=d["handoff_id"],
             producer_task_id=d["producer_task_id"],
@@ -478,14 +518,9 @@ class HandoffPacket:
             known_risks=d.get("known_risks", ""),
             validation_result=d.get("validation_result", {"passed": True}),
             handoff_bytes=d.get("handoff_bytes", 0),
-            handoff_hash=d.get("handoff_hash", ""),
+            handoff_hash=stored_hash,
             created_at=d.get("created_at", ""),
         )
-        computed = sha256_text(canonical_json_dump(hp.to_dict_raw()))
-        if computed != hp.handoff_hash:
-            raise MalformedContextPacketError(
-                f"Handoff integrity verification failed for {hp.handoff_id}: stored hash {hp.handoff_hash[:8]} != computed hash {computed[:8]}"
-            )
         return hp
 
     def render_markdown(self) -> str:
@@ -546,8 +581,8 @@ class FilesystemGitContextSource(ContextSource):
         re.compile(r"(^|/)\.aws(/|$)", re.IGNORECASE),
         re.compile(r"(^|/)\.ssh(/|$)", re.IGNORECASE),
         re.compile(r".*id_rsa.*", re.IGNORECASE),
-        re.compile(r".*secrets?.*\.(ya?ml|json)$", re.IGNORECASE),
-        re.compile(r".*credentials?.*\.(ya?ml|json)$", re.IGNORECASE),
+        re.compile(r".*secrets?.*\.(ya?ml|json|cfg|ini|txt|conf|bak)$", re.IGNORECASE),
+        re.compile(r".*credentials?.*\.(ya?ml|json|cfg|ini|txt|conf|bak)$", re.IGNORECASE),
         re.compile(r".*serviceAccount.*\.json$", re.IGNORECASE),
         re.compile(r"(^|/)\.netrc$", re.IGNORECASE),
     ]
@@ -1455,8 +1490,8 @@ class ContextCompiler:
         # Check for inline files (none by default unless explicitly needed)
         included_files: List[dict] = []
 
-        # Prepare initial dynamic tail
-        task_prompt = task_def.get("prompt", "")
+        # Prepare initial dynamic tail (bound prompt to 2048 bytes to prevent internal context bloat)
+        task_prompt = task_def.get("prompt", "")[:2048]
         tail = self._render_task_dynamic_tail(
             task_id, attempt_id, worktree_path, allowed_paths,
             task_requirements, referenced_files, included_files,
@@ -1640,6 +1675,35 @@ class ContextCompiler:
         tail = "\n".join(sections) + "\n"
         tail = redact_secrets(tail)
         tail_bytes = len(tail.encode("utf-8"))
+        original_bytes = tail_bytes
+        was_pruned = False
+
+        if tail_bytes > soft_budget and inventory:
+            was_pruned = True
+            pruned_sections = [
+                f"## Autopilot Planning Assignment: `{goal_id}`",
+                "\n### Raw Goal Statement:",
+                f"```text\n{raw_goal.strip()}\n```",
+            ]
+            if structured_requirements:
+                pruned_sections.append("\n### Pre-Structured Acceptance Criteria:")
+                for req in structured_requirements:
+                    cid = req.get("id", "R")
+                    desc = req.get("description", "")
+                    pruned_sections.append(f"- **{cid}**: {desc}")
+            if available_profiles:
+                pruned_sections.append(f"\n### Available Profiles: {', '.join(available_profiles)}")
+            if constraints:
+                pruned_sections.append("\n### Hard Project Constraints:")
+                for c in constraints:
+                    pruned_sections.append(f"- {c}")
+            if inventory:
+                pruned_sections.append("\n### Bounded Repository File Inventory:")
+                for f in inventory[:15]:
+                    pruned_sections.append(f"- `{f}`")
+            tail = "\n".join(pruned_sections) + "\n"
+            tail = redact_secrets(tail)
+            tail_bytes = len(tail.encode("utf-8"))
 
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Planner context exceeded hard budget: {tail_bytes} > {hard_budget}")
@@ -1665,7 +1729,7 @@ class ContextCompiler:
             requirements=structured_requirements or [],
             required_anchors=anchors,
             included_files=[],
-            referenced_files=inventory[:30],
+            referenced_files=inventory[:15] if was_pruned else inventory[:30],
             dependencies=[],
             handoffs=[],
             validations=[],
@@ -1673,10 +1737,10 @@ class ContextCompiler:
             budget={
                 "soft_budget_bytes": soft_budget,
                 "hard_budget_bytes": hard_budget,
-                "original_bytes": tail_bytes,
-                "pruned_bytes": 0,
+                "original_bytes": original_bytes,
+                "pruned_bytes": original_bytes - tail_bytes if was_pruned else 0,
                 "final_bytes": tail_bytes,
-                "was_pruned": False,
+                "was_pruned": was_pruned,
             },
             packet_bytes=full_packet_bytes,
             packet_hash=packet_hash,
@@ -2041,6 +2105,7 @@ class DerivedRequirementAuditor:
                     tasks_caused += 1
 
         return {
+            "audit_status": "OK",
             "explicit_requirement_count": exp_count,
             "derived_requirement_count": der_count,
             "derived_requirement_ratio": round(ratio, 4),

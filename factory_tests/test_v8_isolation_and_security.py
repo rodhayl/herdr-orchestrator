@@ -23,6 +23,7 @@ from tools.context import (
     FilesystemGitContextSource,
     calculate_rendered_anchor_recall,
     snapshot_secret_env,
+    register_secret_env,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -90,6 +91,7 @@ class TestV8IsolationAndSecurity(unittest.TestCase):
         """Verifies that redact_secrets recursively redacts OpenAI/Anthropic/Bearer keys and env vars."""
         # Set a test env secret
         os.environ["FACTORY_API_KEY"] = "factory-test-secret-key-999"
+        register_secret_env("FACTORY_API_KEY", "factory-test-secret-key-999")
 
         sample_data = {
             "prompt": "Here is the OpenAI key: sk-abcdef1234567890abcdef1234567890 and Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
