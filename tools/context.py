@@ -179,7 +179,8 @@ def snapshot_secret_env() -> dict[str, str]:
             if _k in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(_k):
                 stripped = _v.strip()
                 if stripped and len(stripped) >= 6:
-                    _INITIAL_SECRET_ENV[_k] = stripped
+                    clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
+                    _INITIAL_SECRET_ENV[_k] = clean_v
                     # If value is a JSON blob (e.g. GCP_SERVICE_ACCOUNT_KEY), extract all inner string values
                     if stripped.startswith("{") and stripped.endswith("}"):
                         try:
@@ -195,8 +196,9 @@ def register_secret_env(key: str, val: str) -> None:
     if (key in KNOWN_SECRET_ENV_VARS or ENV_SECRET_KEY_PATTERN.search(key)) and val:
         stripped = val.strip()
         if len(stripped) >= 6:
+            clean_v = normalize_homoglyphs(unicodedata.normalize("NFKC", stripped))
             with _SECRET_ENV_LOCK:
-                _INITIAL_SECRET_ENV[key] = stripped
+                _INITIAL_SECRET_ENV[key] = clean_v
                 if stripped.startswith("{") and stripped.endswith("}"):
                     try:
                         parsed = json.loads(stripped)
@@ -222,7 +224,8 @@ def redact_secrets(val: Any) -> Any:
         res = val
         # Check frozen environment snapshot under lock to prevent iteration mutation and race conditions
         with _SECRET_ENV_LOCK:
-            for env_k, env_v in _INITIAL_SECRET_ENV.items():
+            sorted_secrets = sorted(_INITIAL_SECRET_ENV.items(), key=lambda x: len(x[1]), reverse=True)
+            for env_k, env_v in sorted_secrets:
                 if env_v:
                     res = res.replace(env_v, f"[REDACTED_{env_k}]")
         for pat in SECRET_PATTERNS:
@@ -498,7 +501,7 @@ class HandoffPacket:
             "contracts": self.contracts if isinstance(self.contracts, str) else canonical_json_dump(self.contracts),
         }
         init_ft_bytes = sum(len(v.encode("utf-8")) for v in init_parts.values())
-        if init_ft_bytes > ft_budget * 2:
+        if init_ft_bytes > ft_budget:
             scale = ft_budget / float(init_ft_bytes)
             for f_name, v_str in init_parts.items():
                 cur = getattr(self, f_name)
@@ -1447,6 +1450,12 @@ class ContextPacket:
                 raise MalformedContextPacketError(
                     f"ContextPacket {d.get('packet_id')} invalid due to stable prefix drift: compiled with {orig_prefix_hash[:8]}, current is {current_prefix_hash[:8]}"
                 )
+            stored_fp = d.get("source_hashes", {}).get("secret_env")
+            current_fp = get_secret_env_fingerprint()
+            if stored_fp and stored_fp != current_fp:
+                raise StaleContextPacketError(
+                    f"ContextPacket {d.get('packet_id')} invalid due to secret environment drift: compiled with fingerprint {stored_fp[:8]}, current is {current_fp[:8]}"
+                )
             raise MalformedContextPacketError(
                 f"ContextPacket structural corruption detected for {d.get('packet_id')}: stored hash {stored_hash[:8]} != computed hash {computed_hash[:8]}"
             )
@@ -1853,7 +1862,6 @@ class ContextCompiler:
             for ho in handoffs:
                 surviving_paths.update([p for p in ho.changed_paths[:200] if not str(p).startswith("[+")])
             anchors = [a for a in anchors if not (a.anchor_type == "file_reference" and a.source == "predecessor_handoff")]
-            rendered_ho_text = "\n".join(h.render_markdown() for h in handoffs)
             for ho_path in sorted(surviving_paths):
                 anchors.append(
                     Anchor(
@@ -1862,7 +1870,7 @@ class ContextCompiler:
                         source="predecessor_handoff",
                         source_hash=sha256_text(ho_path),
                         content=ho_path,
-                        required=(ho_path in rendered_ho_text),
+                        required=True,
                     )
                 )
 
@@ -2569,8 +2577,11 @@ def load_handoff_packet(handoff_file: pathlib.Path) -> HandoffPacket:
 # 11. CONTEXT TELEMETRY & CLI COMMANDS
 # ==============================================================================
 
+_TELEMETRY_LOCK = threading.Lock()
+
+
 def record_context_telemetry(run_dir: pathlib.Path, record: dict) -> None:
-    """Appends context telemetry record to .agy-factory/evidence/context-telemetry.jsonl."""
+    """Appends context telemetry record to .agy-factory/evidence/context-telemetry.jsonl with thread-safe locking."""
     evidence_dir = run_dir.parent.parent / "evidence" if run_dir.parent.name == "runs" else run_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     telemetry_file = evidence_dir / "context-telemetry.jsonl"
@@ -2583,8 +2594,10 @@ def record_context_telemetry(run_dir: pathlib.Path, record: dict) -> None:
     bounded_record["timestamp"] = bounded_record.get("timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
     bounded_record["schema_version"] = SCHEMA_VERSION
     line = json.dumps(bounded_record, sort_keys=True) + "\n"
-    with open(telemetry_file, "a", encoding="utf-8") as f:
-        f.write(line)
+    with _TELEMETRY_LOCK:
+        with open(telemetry_file, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
 
 
 def cmd_context_inspect(run_id: str, task_id: Optional[str] = None, project_root: Optional[pathlib.Path] = None) -> int:

@@ -3671,7 +3671,7 @@ class TaskExecutor:
                         "description": f"Synthesized fallback requirement for task {clean_task_id} satisfying {cid}",
                         "provenance": "DERIVED",
                         "derived_from": ["INVARIANT:DETERMINISTIC_TESTING"],
-                        "rationale": f"Synthesized fallback requirement for task {clean_task_id}",
+                        "rationale": f"Synthesized fallback requirement for task {clean_task_id} ({clean_title}) satisfying {cid}",
                     }
                     validate_criterion_provenance(crit)
                     synthesized_criteria.append(crit)
@@ -4089,7 +4089,7 @@ class TaskExecutor:
                 "error": raw_res.get("error", "Worker timed out")
             }
             attempt_record = redact_secrets(attempt_record)
-            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source, prompt_content=prompt_content)
+            self._record_telemetry(attempt_record, raw_res, base_commit, worktree_path, start_time, end_time, -1, auth_source=auth_source, prompt_content=prompt_content, context_packet=active_packet)
             self.attempts.append(attempt_record)
             self.latest_result = attempt_record
             atomic_write_json(attempt_dir / "attempt_record.json", attempt_record)
@@ -4332,6 +4332,8 @@ class TaskExecutor:
             session_reused = bool(prov.get("session_reused", False))
             native_compaction_used = bool(prov.get("native_compaction_used", False))
 
+            pkt_recall, _ = pkt.calculate_required_anchor_recall() if pkt else (getattr(self, "last_anchor_recall", 1.0), [])
+
             ctx_metrics = {
                 "schema_version": "8.0.0",
                 "run_id": self.run_id,
@@ -4353,7 +4355,7 @@ class TaskExecutor:
                 "handoff_bytes": sum(h.get("handoff_bytes", 0) for h in pkt.handoffs),
                 "requirement_count": len(pkt.requirements),
                 "required_anchor_count": len([a for a in pkt.required_anchors if a.required]),
-                "required_anchor_recall": getattr(self, "last_anchor_recall", 1.0),
+                "required_anchor_recall": pkt_recall,
                 "factory_supplied_bytes": factory_bytes,
                 "attempt_context_bytes": factory_bytes,
                 "repeated_bytes": red_stats["repeated_content_bytes"],
@@ -4505,6 +4507,7 @@ class FactoryOrchestrator:
 
         # Context Compiler & Handoff Integration (Factory v8.0.0)
         self.active_handoffs = {}
+        self.routing_provenance = {}
         self.context_compiler = ContextCompiler(ContextPolicy.load(), FilesystemGitContextSource(PROJECT_ROOT))
 
         spec_path = self.plan_path.parent / "goal-spec.json"
@@ -4634,8 +4637,9 @@ class FactoryOrchestrator:
             # Strip unicode format (Cf) and control (Cc) characters except \n, \r, \t
             val = "".join(c for c in val if (unicodedata.category(c) not in ('Cf', 'Cc') or c in ('\n', '\r', '\t')))
             val = redact_secrets(val)
-            # Pass 1: Homoglyph normalization and injection filtering before HTML stripping
+            # Pass 1: Homoglyph normalization, Unicode whitespace normalization, and injection filtering before HTML stripping
             val = normalize_homoglyphs(unicodedata.normalize("NFKC", val))
+            val = re.sub(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+', ' ', val)
             val = INJECTION_PATTERN.sub("[FILTERED]", val)
             # HTML entity decode and ANSI escape sequence stripping
             cleaned = html.unescape(val)
@@ -4648,8 +4652,9 @@ class FactoryOrchestrator:
             cleaned = re.sub(r"<!\[CDATA\[[\s\S]*?\]\]>", "", cleaned)
             # Strip HTML tags (including space variations)
             cleaned = re.sub(r"<\s*/?[^>]+>", "", cleaned)
-            # Pass 2: Re-normalize with NFKC and homoglyphs after HTML stripping to catch reassembled tokens
+            # Pass 2: Re-normalize with NFKC, homoglyphs, and Unicode whitespace after HTML stripping to catch reassembled tokens
             cleaned = normalize_homoglyphs(unicodedata.normalize("NFKC", cleaned))
+            cleaned = re.sub(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+', ' ', cleaned)
             cleaned = INJECTION_PATTERN.sub("[FILTERED]", cleaned)
             return cleaned.strip()[:max_chars]
 
@@ -4696,10 +4701,8 @@ class FactoryOrchestrator:
             executor_prov = getattr(self, "routing_provenance", {}).get(task_id, {}).get("mode")
             if executor_prov in {"REAL", "MOCK", "TRANSPORT_ONLY"}:
                 synthesis_source = executor_prov
-            elif getattr(self, "real_only", False):
-                raise ContextError(f"real_only policy violation: task {task_id} attempt {attempt_id} has indeterminate provenance")
             else:
-                synthesis_source = "MOCK"
+                raise ContextError(f"CRITICAL: Indeterminate execution provenance for task {task_id}; cannot construct handoff packet with unknown mode.")
 
         handoff = HandoffPacket(
             handoff_id=f"handoff-{self.run_id}-{task_id}",
@@ -4755,6 +4758,15 @@ class FactoryOrchestrator:
                     candidates.append((dep_id, copy.deepcopy(ho)))
 
         # Perform git history reachability checks outside manifest lock to prevent blocking or priority inversion
+        target_head = "HEAD"
+        if (PROJECT_ROOT / ".git").exists():
+            try:
+                head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+                if head_proc.returncode == 0 and head_proc.stdout.strip():
+                    target_head = head_proc.stdout.strip()
+            except Exception:
+                pass
+
         for dep_id, ho in candidates:
             if (PROJECT_ROOT / ".git").exists() and ho.commit and len(ho.commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", ho.commit):
                 verify_res = subprocess.run(
@@ -4767,7 +4779,7 @@ class FactoryOrchestrator:
                     self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": ho.commit})
                     raise RuntimeError(clean_err)
                 anc_res = subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", ho.commit, "HEAD"],
+                    ["git", "merge-base", "--is-ancestor", ho.commit, target_head],
                     cwd=str(PROJECT_ROOT),
                     capture_output=True
                 )
@@ -5275,6 +5287,8 @@ class FactoryOrchestrator:
                             "error": str(exc)
                         }
 
+                    self.routing_provenance[tid] = getattr(executor, "routing_provenance", None) or res.get("provenance", {"mode": "REAL"})
+
                     tinfo["attempts"].append(res)
                     tinfo["latest_result"] = res
                     status = res.get("status")
@@ -5539,6 +5553,7 @@ class FactoryOrchestrator:
                     "prompt_count_total": total_prompts,
                     "prompt_count_sampled": len(sampled_prompts),
                     "prompt_count_capped": is_capped,
+                    "redundancy_extrapolated": is_capped,
                     "required_anchor_recall": round(min_recall, 4) if min_recall is not None else None
                 }
             else:
