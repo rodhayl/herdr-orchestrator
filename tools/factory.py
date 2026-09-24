@@ -4070,8 +4070,10 @@ class TaskExecutor:
                 execution_mode = "MOCK"
             elif raw_res.get("execution_mode") == "MOCK":
                 execution_mode = "MOCK"
+            elif raw_res.get("execution_mode") == "REAL":
+                execution_mode = "REAL"
             else:
-                execution_mode = raw_res.get("execution_mode", "REAL")
+                execution_mode = "MOCK" 
 
             # Invariant: If is_test_harness or bin_identity is_fixture, it MUST be MOCK
             if is_test_harness or bin_identity.get("is_fixture"):
@@ -4215,7 +4217,7 @@ class TaskExecutor:
                 "raw_result_hash": raw_res.get("raw_result_hash", ""),
                 "branch": attempt_branch,
                 "worktree": str(worktree_path),
-                "env_info": env_info,
+                "env_info": {k: env_info[k] for k in ("workspace_id", "pane_id", "worktree", "label", "profile_home", "status") if isinstance(env_info, dict) and k in env_info and isinstance(env_info[k], (str, int, bool))},
                 "start_time": start_time,
                 "end_time": end_time,
                 "exit_code": exit_code,
@@ -4837,54 +4839,52 @@ class FactoryOrchestrator:
                     ho_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns) if ho_file.exists() else None
                     candidates.append((dep_id, copy.deepcopy(ho), ho_stat))
 
-        # Perform git history reachability checks outside manifest lock to prevent blocking or priority inversion
-        target_head = "HEAD"
-        if (PROJECT_ROOT / ".git").exists():
-            try:
-                head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
-                if head_proc.returncode == 0 and head_proc.stdout.strip():
-                    target_head = head_proc.stdout.strip()
-            except Exception:
-                pass
+            # Git reachability checks under lock
+            target_head = "HEAD"
+            if (PROJECT_ROOT / ".git").exists():
+                try:
+                    head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+                    if head_proc.returncode == 0 and head_proc.stdout.strip():
+                        target_head = head_proc.stdout.strip()
+                except Exception:
+                    pass
 
-        for dep_id, ho, _ in candidates:
-            validated_commit = ho.commit
-            if (PROJECT_ROOT / ".git").exists() and validated_commit and len(validated_commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", validated_commit):
-                verify_res = subprocess.run(
-                    ["git", "cat-file", "-e", f"{validated_commit}^{{commit}}"],
-                    cwd=str(PROJECT_ROOT),
-                    capture_output=True
-                )
-                if verify_res.returncode != 0:
-                    clean_err = f"Stale handoff {dep_id}: referenced commit {validated_commit} is missing from git history"
-                    self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
-                    raise RuntimeError(clean_err)
-                anc_res = subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", validated_commit, target_head],
-                    cwd=str(PROJECT_ROOT),
-                    capture_output=True
-                )
-                if anc_res.returncode != 0:
-                    base_c = getattr(self, "base_commit", None)
-                    is_anc = False
-                    if base_c:
-                        base_anc = subprocess.run(
-                            ["git", "merge-base", "--is-ancestor", validated_commit, base_c],
-                            cwd=str(PROJECT_ROOT),
-                            capture_output=True
-                        )
-                        if base_anc.returncode == 0:
-                            is_anc = True
-                    if not is_anc:
-                        clean_err = f"Disjoint handoff {dep_id}: referenced commit {validated_commit} is not reachable from current HEAD or base commit"
-                        self.log_event("CRITICAL_HANDOFF_DISJOINT_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
-                        raise RuntimeError(clean_err)
-                if ho.commit != validated_commit:
-                    raise RuntimeError(f"Handoff {dep_id} commit altered during validation")
-
-        # Post-check under manifest lock: ensure on-disk handoff file has not been replaced, modified, or tampered with
-        with self._manifest_lock:
             for dep_id, ho, orig_stat in candidates:
+                validated_commit = ho.commit
+                if (PROJECT_ROOT / ".git").exists() and validated_commit and len(validated_commit) in (40, 64) and re.match(r"^[0-9a-fA-F]+$", validated_commit):
+                    verify_res = subprocess.run(
+                        ["git", "cat-file", "-e", f"{validated_commit}^{{commit}}"],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True
+                    )
+                    if verify_res.returncode != 0:
+                        clean_err = f"Stale handoff {dep_id}: referenced commit {validated_commit} is missing from git history"
+                        self.log_event("CRITICAL_HANDOFF_STALE_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
+                        raise RuntimeError(clean_err)
+                    anc_res = subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", validated_commit, target_head],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True
+                    )
+                    if anc_res.returncode != 0:
+                        base_c = getattr(self, "base_commit", None)
+                        is_anc = False
+                        if base_c:
+                            base_anc = subprocess.run(
+                                ["git", "merge-base", "--is-ancestor", validated_commit, base_c],
+                                cwd=str(PROJECT_ROOT),
+                                capture_output=True
+                            )
+                            if base_anc.returncode == 0:
+                                is_anc = True
+                        if not is_anc:
+                            clean_err = f"Disjoint handoff {dep_id}: referenced commit {validated_commit} is not reachable from current HEAD or base commit"
+                            self.log_event("CRITICAL_HANDOFF_DISJOINT_COMMIT", {"dep_id": dep_id, "commit": validated_commit})
+                            raise RuntimeError(clean_err)
+                    if ho.commit != validated_commit:
+                        raise RuntimeError(f"Handoff {dep_id} commit altered during validation")
+
+                # Verify file on disk has not drifted
                 ho_file = self.handoffs_dir / f"{dep_id}.json"
                 if ho_file.exists():
                     curr_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns)
@@ -5046,6 +5046,21 @@ class FactoryOrchestrator:
         """Reconciles durable state across cases A through F when resuming an interrupted run."""
         snapshot_secret_env()
         self.log_event("RECONCILIATION_STARTED", {"run_id": self.run_id})
+
+        # Re-read plan and goal-spec from disk to prevent stale in-memory state during reconciliation
+        if self.plan_path.exists():
+            try:
+                with open(self.plan_path, "r", encoding="utf-8") as f:
+                    self.plan = json.load(f)
+                self._build_task_graph()
+            except Exception:
+                pass
+        spec_path = self.plan_path.parent / "goal-spec.json"
+        if spec_path.exists():
+            try:
+                self.goal_spec = redact_secrets(json.loads(spec_path.read_text(encoding="utf-8")))
+            except Exception:
+                pass
 
         for tid, tinfo in self.manifest["tasks"].items():
             if tinfo.get("worker_id"):
@@ -5584,6 +5599,9 @@ class FactoryOrchestrator:
                                     pkt_tid = getattr(pkt, "task_id", "")
                                     if not pkt_tid or not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", str(pkt_tid)):
                                         self.log_event("WARNING_INVALID_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
+                                        continue
+                                    if pkt_tid not in self.tasks_def:
+                                        self.log_event("WARNING_UNKNOWN_PACKET_TASK_ID", {"packet_file": str(pf), "task_id": str(pkt_tid)})
                                         continue
                                     tdef = self.tasks_def.get(pkt_tid, {})
                                     curr_hashes[k] = sha256_text(canonical_json_dump(tdef))

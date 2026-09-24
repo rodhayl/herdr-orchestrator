@@ -63,6 +63,8 @@ def main():
 Perform a strict audit of the v8 context efficiency engine implementation across `tools/context.py` and the orchestrator modifications in `tools/factory.py`.
 All relevant implementation code and git diffs are provided directly in this prompt below. Do not invoke external tools or browse the filesystem; evaluate the provided code directly.
 
+CRITICAL: DO NOT CALL ANY TOOLS. DO NOT CALL write_to_file or any other tool. Return ONLY the structured audit evaluation.
+
 Audit specifically for:
 1. subtle prompt-leak regressions (e.g. leaking secrets, environment tokens, or unnecessary internal variables into worker prompts)
 2. anchor recall bypasses (can any required anchor be dropped or bypassed before worker dispatch?)
@@ -95,10 +97,41 @@ Output ONLY a JSON object adhering to this schema:
 }}
 """
 
+    audit_schema = {
+        "type": "object",
+        "properties": {
+            "verdict": {
+                "type": "string",
+                "enum": ["ACCEPTED", "REMEDIATION_REQUIRED"]
+            },
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {
+                            "type": "string",
+                            "enum": ["CRITICAL", "MAJOR", "MINOR", "INFO"]
+                        },
+                        "area": {
+                            "type": "string",
+                            "enum": ["implementation", "tests", "security", "traceability"]
+                        },
+                        "evidence": {"type": "string"},
+                        "recommendation": {"type": "string"}
+                    },
+                    "required": ["severity", "area", "evidence", "recommendation"]
+                }
+            }
+        },
+        "required": ["verdict", "findings"]
+    }
+
     cmd = [
         "agy",
         "--model", "claude-sonnet-4-6",
         "--output-format", "json",
+        "--json-schema", json.dumps(audit_schema),
         "--dangerously-skip-permissions"
     ]
 
@@ -171,7 +204,9 @@ Output ONLY a JSON object adhering to this schema:
 
     try:
         raw_obj = parse_llm_json(out)
-        if "response" in raw_obj and isinstance(raw_obj["response"], str):
+        if "structured_output" in raw_obj and isinstance(raw_obj["structured_output"], dict):
+            report = raw_obj["structured_output"]
+        elif "response" in raw_obj and isinstance(raw_obj["response"], str):
             resp_str = raw_obj["response"]
             try:
                 report = parse_llm_json(resp_str)
