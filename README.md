@@ -1,4 +1,4 @@
-# AGY-Herdr Software Factory (v3.0.0)
+# AGY-Herdr Software Factory (v8.0.0 — Context Efficiency + Deep Hardening)
 
 A project-local, orchestrator-agnostic autonomous software factory proving that an arbitrary brain/orchestrator can delegate the end-to-end specification, parallel implementation, deterministic verification, and independent audit of complete applications and features across multiple isolated worker identities through Herdr.
 
@@ -6,16 +6,16 @@ A project-local, orchestrator-agnostic autonomous software factory proving that 
 
 ## 1. What This Factory Proves
 
-1. **Orchestrator Independence**: Any brain (AGY, Codex, Claude, Droid, human) can orchestrate development by issuing declarative DAG plans and executing a standard-library driver.
-2. **Generic WorkerAdapter Architecture**: A clean adapter boundary separates factory core orchestration from worker execution. `AgyAdapter` is the certified production implementation; future adapters (such as `DroidAdapter` in v4) plug in without rewriting scheduler, state, or Git logic.
-3. **Arbitrary DAG Scheduling**: Tasks execute based purely on declared dependencies—supporting linear flows, parallel fan-out, fan-in synchronization gates, and dynamic unblocking up to configured concurrency limits.
-4. **Durable State Machine & First-Class Attempts**: Explicit canonical states (`PENDING`, `READY`, `DISPATCHING`, `RUNNING`, `RESULT_RECEIVED`, `PATH_VALIDATING`, `VALIDATING`, `COMMITTING`, `COMMITTED`, `INTEGRATING`, `INTEGRATED`, `COMPLETED`, `BLOCKED`, `TIMED_OUT`, `FAILED`, `CONFLICTED`, `CANCELLED`), atomic JSON writes (`atomic_write_json`), append-only event logging (`events.jsonl`), and monotonic attempt isolation (`att-{attempt_id}`).
-5. **Reconciliation-Based Resume**: Resuming an interrupted or crashed run (`factory.py resume <run_id>`) inspects reality (Git commits, branches, status files) across Cases A through F, preventing duplicate work, duplicate commits, or duplicate merges.
-6. **Deterministic Failure Injection & Conflict Handling**: Inert-in-production failpoints (`FACTORY_TEST_FAILPOINT`) verify crash recovery; explicit merge conflict detection records unmerged diffs and safely executes `git merge --abort`.
-7. **Concurrent Run Isolation**: Multiple factory runs operate simultaneously without cross-run ownership contamination or accidental cleanup interference.
-8. **Stable v4 Kanban Status Contract**: Machine-readable JSON projection (`status --json [--run <run_id>]`) provides deterministic column mapping (`BACKLOG`, `READY`, `RUNNING`, `BLOCKED`, `REVIEW`, `DONE`, `FAILED`) ready for one-way synchronization into `nelsonPires5/herdr-board`.
+1. **Context Efficiency Engine (v8.0.0)**: Delivers 75.1% prompt/context byte reduction with 100.0% required anchor recall, zero orphan requirements, and bounded semantic handoffs ($\le 4,096$ bytes) via the deterministic `ContextCompiler`.
+2. **Orchestrator Independence**: Any brain (AGY, Codex, Claude, Droid, human) can orchestrate development by issuing declarative DAG plans or natural-language Goal Specs and executing a standard-library driver.
+3. **Generic WorkerAdapter Architecture**: A clean adapter boundary separates factory core orchestration from worker execution. `AgyAdapter`, `DroidAdapter`, `CodexAdapter`, `ClaudeAdapter`, and `OpenCodeAdapter` plug in without rewriting scheduler, state, or Git logic.
+4. **Autonomous Goal Controller (Project Autopilot)**: End-to-end autonomous lifecycle (`Goal -> Discovery -> GoalSpec -> Traceable Plan v2 DAG -> Independent Plan Review -> Bounded Revision -> Routing / Execution -> Post-Validation -> Independent Final Audit -> Bounded Remediation -> Complete`).
+5. **Durable State Machine & First-Class Attempts**: Explicit canonical states, atomic JSON writes (`atomic_write_json`), append-only event logging (`events.jsonl`), and monotonic attempt isolation (`att-{attempt_id}`).
+6. **Reconciliation-Based Resume**: Resuming an interrupted or crashed run (`factory.py resume <run_id>`) inspects reality (Git commits, branches, status files) across Cases A through F, preventing duplicate work, duplicate commits, or duplicate merges.
+7. **Deterministic Failure Injection & Conflict Handling**: Inert-in-production failpoints (`FACTORY_TEST_FAILPOINT`) verify crash recovery; explicit merge conflict detection records unmerged diffs and safely executes `git merge --abort`.
+8. **Concurrent Run Isolation**: Multiple factory runs operate simultaneously without cross-run ownership contamination or accidental cleanup interference.
 9. **Zero Host Pollution**: Strict Python 3 standard library operation—zero external pip packages, no `.venv`, no `sudo`, and zero modification to host configuration.
-10. **Multi-Application Reusability**: Successfully built and verified **MiniBoard**, **MiniLinks**, and certified the **MiniLinks Favorite/Star** feature DAG end-to-end.
+10. **Certified Multi-Application Reusability**: Successfully built and verified **MiniBoard**, **MiniLinks**, **MiniLinks Favorite/Star**, and genuine real-provider **TreeHash v8** Merkle directory hashing.
 
 ---
 

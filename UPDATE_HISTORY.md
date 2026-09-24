@@ -249,5 +249,57 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Deterministic Test Suites**: 159 tests in `factory_tests` passed with zero failures or errors in under 40s.
 - **Portability**: Verified clean-room execution via `./scripts/portable-smoke.sh` and zero host mutation.
 
+---
+
+## [2026-09-25T00:50:00Z] Factory v8.0.0 Context Efficiency & Deep Hardening Certification
+
+### 1. Context & Objectives
+- **Trigger**: Factory v8.0.0 Context Efficiency + Deep Hardening Architecture Upgrade.
+- **Operator**: Antigravity Orchestrator (Claude Sonnet 4.6 & Gemini 3.8 Flash High).
+- **Core Mission**: Drastically optimize context consumption across autonomous workflows while hardening all deterministic invariants:
+  - Deliver $\ge 40\%$ reduction in factory-supplied context/prompt bytes.
+  - Enforce 100% required anchor recall (`CONTEXT_ANCHOR_MISSING` fail-closed gate).
+  - Guarantee zero orphan derived requirements (`OrphanDerivedRequirementError`).
+  - Implement bounded immutable semantic handoffs (`HandoffPacket` $\le 4,096$ bytes).
+  - Eliminate multi-path string templating with unified, role-specialized `ContextCompiler`.
+  - Establish stable prefix architecture for maximal KV-cache reuse.
+  - Secure independent code audit verdict `ACCEPTED` with 0 Critical / 0 Major findings.
+  - Pass 3-pass deterministic test verification across random seeds (`PYTHONHASHSEED=0, 1, 42`).
+
+### 2. Verified Architectural Capabilities
+- **Deterministic ContextCompiler (`tools/context.py`)**:
+  - Implemented role-specialized packets: `PlanReviewContextPacket`, `TaskContextPacket`, `AuditContextPacket`.
+  - Replaced raw file inlining with scoped file references and boundary-checked excerpts.
+  - Implemented boundary-aware anchor recall and secondary exact-substring validation gates.
+  - Implemented `DerivedRequirementAuditor` enforcing parent requirement tracing and closed enum categories.
+  - Implemented content-hashed secret environment fingerprinting (`get_secret_env_fingerprint`).
+  - Added portable `NonReentrantLock` for manifest deadlock prevention.
+- **Independent Code Audit (`scripts/run_independent_audit.py`)**:
+  - Independent auditor model: `claude-sonnet-4-6`.
+  - Final Audit Verdict: **`ACCEPTED`** (0 Critical, 0 Major findings).
+  - Complete report recorded in `certification/v8/independent-audit-report.json`.
+
+### 3. Genuine Real-Provider External Project Certification ("TreeHash v8")
+- **Target Project**: `/root/treehash-v8-project` (isolated external Git repository).
+- **Goal**: Full implementation of TreeHash Merkle directory hashing library and CLI satisfying all 14 requirements.
+- **Execution Run (`run-20260924-184518`)**:
+  - Goal ID: `goal-20260924-184501`
+  - Final Phase: `COMPLETE`
+  - Context Metrics:
+    - Baseline v7 Workflow Bytes: `51,170 B`
+    - Compiled v8 Workflow Bytes: `12,723 B`
+    - **Context Reduction**: **`75.1%`** (comfortably exceeding the $\ge 40\%$ target).
+    - Required Anchor Recall: **`100.0%`** across all attempts.
+  - Certification Bundle: Saved to `certification/v8/autopilot-real-certification.json`.
+
+### 4. Verification & Clean-Room Portability
+- **Test Suite**: 225 unit, integration, stress, and security tests passing 100%.
+- **3-Pass Deterministic Verification**:
+  - `PYTHONHASHSEED=0 ./scripts/verify.sh` -> PASS (225/225 tests, exit code 0).
+  - `PYTHONHASHSEED=1 ./scripts/verify.sh` -> PASS (225/225 tests, exit code 0).
+  - `PYTHONHASHSEED=42 ./scripts/verify.sh` -> PASS (225/225 tests, exit code 0).
+- **Zero Host Mutation**: Workspaces 1–13 protected; zero external pip packages; standard-library Python only.
+
+
 
 

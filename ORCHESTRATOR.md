@@ -1,10 +1,10 @@
-# Orchestrator Integration Guide (v7.0.0 — Project Autopilot)
+# Orchestrator Integration Guide (v8.0.0 — Context Efficiency + Deep Hardening)
 
 ## Overview
 
 The AGY-Herdr Software Factory is an orchestrator-agnostic framework for delegating arbitrary software development workflows across multiple isolated worker identities through Herdr.
 
-In **v7.0.0 (Project Autopilot)**, manual plan authoring is completely replaced by autonomous, deterministic lifecycle orchestration:
+In **v8.0.0 (Context Efficiency + Deep Hardening)**, the orchestration pipeline is supercharged with a deterministic `ContextCompiler`, achieving 75.1% context byte reduction, 100% required anchor recall, zero orphan requirements, and bounded semantic handoffs:
 
 ```
                USER / EXTERNAL BRAIN

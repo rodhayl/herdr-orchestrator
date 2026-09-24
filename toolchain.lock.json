@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "7.0.0",
-    "schema_version": "7.0.0"
+    "version": "8.0.0",
+    "schema_version": "8.0.0"
   },
   "certified_environment": {
     "os": "Linux",
@@ -38,11 +38,11 @@
     "certified_effort": "high"
   },
   "droid": {
-    "cli_version": "0.225.1",
+    "cli_version": "0.226.2",
     "certified_model": "qwen3.8-max",
     "certified_effort": "xhigh",
     "certified_autonomy": "low",
-    "catalog_status": "Installed droid CLI v0.225.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
+    "catalog_status": "Installed droid CLI v0.226.2 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
   },
   "codex": {
     "cli_version": "0.155.1",
@@ -102,9 +102,9 @@
     "installed": false
   },
   "freebuff": {
-    "cli_version": "0.0.141",
+    "cli_version": "0.0.195",
     "feasibility_status": "FREEBUFF_HEADLESS_BLOCKED",
-    "notes": "Freebuff v0.0.141 provides interactive TUI only; non-interactive headless prompt execution is unsupported."
+    "notes": "Freebuff v0.0.195 provides interactive TUI only; non-interactive headless prompt execution is unsupported."
   },
-  "certified_at": "2026-09-24T12:00:00.000000+00:00"
+  "certified_at": "2026-09-25T00:50:00.000000+00:00"
 }

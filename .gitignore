@@ -9,3 +9,4 @@ __pycache__/
 .agy-factory/cache/
 .agy-factory/board/
 .agy-factory/runs/
+.agy-factory/evidence/
