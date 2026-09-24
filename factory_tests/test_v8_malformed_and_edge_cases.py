@@ -22,6 +22,11 @@ from tools.context import (
     ContextCompiler,
     ContextPolicy,
     DEFAULT_CONTEXT_POLICY,
+    StablePrefixManager,
+    calculate_context_redundancy,
+    calculate_rendered_anchor_recall,
+    HandoffPacket,
+    canonical_json_dump,
     sha256_text,
 )
 
@@ -166,6 +171,122 @@ class TestV8MalformedAndEdgeCases(unittest.TestCase):
             self.assertTrue(truncated)
             self.assertEqual(len(text.encode("utf-8")), 1000)
             self.assertEqual(len(fhash), 64)
+
+    def test_context_policy_corrupted_file_raises(self):
+        """Verifies that an unreadable or corrupt policy file raises ContextError rather than falling back."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bad_policy = pathlib.Path(tmpdir) / "corrupt_policy.json"
+            bad_policy.write_text("{invalid json", encoding="utf-8")
+            with self.assertRaises(ContextError) as ctx:
+                ContextPolicy.load(bad_policy)
+            self.assertIn("Failed to load context policy", str(ctx.exception))
+
+    def test_context_policy_invalid_budget_override_raises(self):
+        """Verifies that overriding hard budget below soft budget raises ContextError."""
+        invalid_overrides = {
+            "roles": {
+                "task": {
+                    "hard_budget_bytes": 1000,
+                    "soft_budget_bytes": 2000,
+                }
+            }
+        }
+        with self.assertRaises(ContextError) as ctx:
+            ContextPolicy(DEFAULT_CONTEXT_POLICY, project_overrides=invalid_overrides)
+        self.assertIn("hard_budget_bytes (1000) < soft_budget_bytes (2000)", str(ctx.exception))
+
+    def test_stable_prefix_unknown_role_raises(self):
+        """Verifies that StablePrefixManager raises ContextError on unsupported or unknown role."""
+        with self.assertRaises(ContextError) as ctx:
+            StablePrefixManager.get_stable_prefix("nonexistent_role")
+        self.assertIn("Unknown or unsupported role", str(ctx.exception))
+
+    def test_stable_prefix_remediation_role(self):
+        """Verifies that remediation role returns dedicated remediation contract prefix."""
+        text, h, b = StablePrefixManager.get_stable_prefix("remediation")
+        self.assertIn("Factory Remediation Worker Contract", text)
+        self.assertEqual(len(h), 64)
+        self.assertGreater(b, 0)
+
+    def test_filesystem_git_sensitive_patterns_blocked(self):
+        """Verifies that access to sensitive files (.env, .aws, .pem, id_rsa) raises ContextError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            t_root = pathlib.Path(tmpdir)
+            env_file = t_root / ".env"
+            env_file.write_text("SECRET=12345", encoding="utf-8")
+            rsa_file = t_root / "id_rsa"
+            rsa_file.write_text("PRIVATE KEY", encoding="utf-8")
+
+            source = FilesystemGitContextSource(t_root)
+            with self.assertRaises(ContextError):
+                source.read_file_excerpt(".env")
+            with self.assertRaises(ContextError):
+                source.read_file_excerpt("id_rsa")
+
+            inv = source.get_bounded_file_inventory()
+            self.assertNotIn(".env", inv)
+            self.assertNotIn("id_rsa", inv)
+
+    def test_filesystem_git_diff_ref_injection_blocked(self):
+        """Verifies that invalid or injected git refs raise ContextError."""
+        with self.assertRaises(ContextError) as ctx:
+            self.source.get_git_diff("--upload-pack=evil")
+        self.assertIn("Invalid git base_commit ref", str(ctx.exception))
+
+        with self.assertRaises(ContextError) as ctx:
+            self.source.get_git_diff("HEAD; rm -rf /")
+        self.assertIn("Invalid git base_commit ref", str(ctx.exception))
+
+    def test_handoff_packet_exact_convergent_byte_count(self):
+        """Verifies that handoff_bytes equals len(canonical_json_dump(hp.to_dict()).encode('utf-8')) exactly."""
+        hp = HandoffPacket(
+            handoff_id="ho-test-converge",
+            producer_task_id="task_1",
+            producer_attempt=1,
+            changed_paths=["src/module.py"],
+            satisfied_criteria=["R1"],
+            decisions=["Decided to implement architecture X", "Selected approach Y"],
+            known_risks=["Potential edge case Z"],
+            consumer_notes="Downstream tasks should use module.py",
+        )
+        actual_bytes = len(canonical_json_dump(hp.to_dict()).encode("utf-8"))
+        self.assertEqual(hp.handoff_bytes, actual_bytes)
+
+    def test_calculate_context_redundancy_exact_sum(self):
+        """Verifies that total_bytes == unique_bytes + repeated_bytes exactly."""
+        texts = [
+            "line alpha\nline beta\nline gamma\n",
+            "line alpha\nline delta\nline beta\n",
+            "line epsilon\nline zeta\n",
+        ]
+        res = calculate_context_redundancy(texts, chunk_size=16)
+        self.assertEqual(
+            res["total_factory_supplied_bytes"],
+            res["unique_content_bytes"] + res["repeated_content_bytes"],
+        )
+        self.assertGreater(res["redundancy_ratio"], 0.0)
+
+    def test_word_boundary_anchor_recall_prevents_false_substring_match(self):
+        """Verifies word-boundary matching prevents false substring matches (e.g. 'pass' in 'compass')."""
+        req_anchor = Anchor(
+            anchor_id="crit:pass",
+            anchor_type="requirement",
+            source="spec",
+            source_hash=sha256_text("pass"),
+            content="pass",
+            required=True,
+        )
+        # 'compass' contains 'pass' as a substring, but NOT as a word
+        rendered_with_compass = "We will calibrate the compass for navigation."
+        recall, missing = calculate_rendered_anchor_recall([req_anchor], rendered_with_compass)
+        self.assertEqual(recall, 0.0)
+        self.assertIn("crit:pass", missing)
+
+        # Prompt with actual 'pass' word
+        rendered_with_pass = "All validation tests must pass before dispatch."
+        recall, missing = calculate_rendered_anchor_recall([req_anchor], rendered_with_pass)
+        self.assertEqual(recall, 1.0)
+        self.assertEqual(len(missing), 0)
 
 
 if __name__ == "__main__":

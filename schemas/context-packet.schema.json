@@ -147,6 +147,14 @@
       "type": "string",
       "description": "SHA-256 hash of the rendered context packet content"
     },
+    "token_count": {
+      "type": ["integer", "null"],
+      "description": "Provider-reported or exact tokenizer token count, null when not available"
+    },
+    "rendered_tail": {
+      "type": "string",
+      "description": "The rendered dynamic tail prompt content"
+    },
     "compiler_version": {
       "type": "string",
       "description": "Version of ContextCompiler that produced this packet"

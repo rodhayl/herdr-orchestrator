@@ -114,8 +114,14 @@ class Anchor:
             raise MalformedContextPacketError("Anchor anchor_id cannot be empty")
         if not self.source:
             raise MalformedContextPacketError("Anchor source cannot be empty")
+        # source_hash represents caller-authoritative cryptographic provenance of the anchor origin.
+        # It must be a valid 64-character SHA-256 hex string, or auto-derived from content if empty.
         if not self.source_hash:
             self.source_hash = sha256_text(self.content)
+        elif not (isinstance(self.source_hash, str) and len(self.source_hash) == 64 and all(c in "0123456789abcdefABCDEF" for c in self.source_hash)):
+            raise MalformedContextPacketError(
+                f"Anchor source_hash must be a valid 64-character hex SHA-256 string (got {self.source_hash})"
+            )
 
     def to_dict(self) -> dict:
         return {
@@ -176,6 +182,7 @@ def calculate_rendered_anchor_recall(
     """Calculates recall ratio for required anchors in rendered prompt text: included / total_required.
 
     Fails closed if any required anchor is omitted from the rendered text.
+    Uses word-boundary-aware matching to avoid false substring collisions.
     Returns:
         (recall_ratio, missing_anchor_ids)
     """
@@ -187,9 +194,14 @@ def calculate_rendered_anchor_recall(
     included_count = 0
     for req in total_req:
         content = req.content.strip()
-        if content and content in rendered_text:
-            included_count += 1
-        elif not content and req.anchor_id in rendered_text:
+        if content:
+            # Word-boundary matching to prevent false substring collisions (e.g. 'pass' in 'compass')
+            pattern = r"(?<!\w)" + re.escape(content) + r"(?!\w)"
+            if re.search(pattern, rendered_text) or (not content.isalnum() and content in rendered_text):
+                included_count += 1
+            else:
+                missing.append(req.anchor_id)
+        elif req.anchor_id in rendered_text:
             included_count += 1
         else:
             missing.append(req.anchor_id)
@@ -237,10 +249,54 @@ class HandoffPacket:
             encoded = self.contracts.encode("utf-8")[:max_bytes - 32]
             self.contracts = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
 
-        # Recalculate bytes and hash
+        # Bound decisions
+        if isinstance(self.decisions, str) and len(self.decisions.encode("utf-8")) > max_bytes:
+            encoded = self.decisions.encode("utf-8")[:max_bytes - 32]
+            self.decisions = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+        elif isinstance(self.decisions, list):
+            bounded_decisions = []
+            cur_b = 0
+            for item in self.decisions:
+                item_str = str(item)
+                item_len = len(item_str.encode("utf-8"))
+                if cur_b + item_len > max_bytes:
+                    bounded_decisions.append("[TRUNCATED:BOUND]")
+                    break
+                bounded_decisions.append(item_str)
+                cur_b += item_len
+            self.decisions = bounded_decisions
+
+        # Bound known_risks
+        if isinstance(self.known_risks, str) and len(self.known_risks.encode("utf-8")) > max_bytes:
+            encoded = self.known_risks.encode("utf-8")[:max_bytes - 32]
+            self.known_risks = encoded.decode("utf-8", errors="ignore") + "\n[TRUNCATED:BOUND]"
+        elif isinstance(self.known_risks, list):
+            bounded_risks = []
+            cur_b = 0
+            for item in self.known_risks:
+                item_str = str(item)
+                item_len = len(item_str.encode("utf-8"))
+                if cur_b + item_len > max_bytes:
+                    bounded_risks.append("[TRUNCATED:BOUND]")
+                    break
+                bounded_risks.append(item_str)
+                cur_b += item_len
+            self.known_risks = bounded_risks
+
+        # Recalculate bytes and hash on full canonical structure
         raw_repr = canonical_json_dump(self.to_dict_raw())
-        self.handoff_bytes = len(raw_repr.encode("utf-8"))
         self.handoff_hash = sha256_text(raw_repr)
+        full_d = self.to_dict_raw()
+        full_d["handoff_hash"] = self.handoff_hash
+        full_d["handoff_bytes"] = 0
+        b = len(canonical_json_dump(full_d).encode("utf-8"))
+        for _ in range(3):
+            full_d["handoff_bytes"] = b
+            b_new = len(canonical_json_dump(full_d).encode("utf-8"))
+            if b_new == b:
+                break
+            b = b_new
+        self.handoff_bytes = b
 
     def to_dict_raw(self) -> dict:
         return {
@@ -335,10 +391,27 @@ class ContextSource:
 class FilesystemGitContextSource(ContextSource):
     """Default deterministic context source reading directly from the project Git repository."""
 
+    SENSITIVE_PATTERNS = [
+        re.compile(r"(^|/)\.env(\..*)?$"),
+        re.compile(r"(^|/)\.envrc$"),
+        re.compile(r".*\.(pem|key|secret)$", re.IGNORECASE),
+        re.compile(r"(^|/)\.aws(/|$)"),
+        re.compile(r"(^|/)\.ssh(/|$)"),
+        re.compile(r".*id_rsa.*", re.IGNORECASE),
+    ]
+
+    VALID_REF_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_./~^@-]*$")
+
     def __init__(self, project_root: pathlib.Path):
         self.project_root = project_root.resolve()
 
+    def _is_sensitive_path(self, rel_path: str) -> bool:
+        norm = rel_path.replace("\\", "/")
+        return any(pat.search(norm) for pat in self.SENSITIVE_PATTERNS)
+
     def _resolve_safe_path(self, rel_path: str) -> pathlib.Path:
+        if self._is_sensitive_path(rel_path):
+            raise ContextError(f"Access to sensitive file path '{rel_path}' is forbidden")
         target = (self.project_root / rel_path).resolve()
         # Path traversal guard
         try:
@@ -404,11 +477,13 @@ class FilesystemGitContextSource(ContextSource):
                         continue
 
                     rel_file = str(rel_root / f) if rel_root.parts else f
+                    if self._is_sensitive_path(rel_file):
+                        continue
                     found.append(rel_file)
                     if len(found) >= max_files:
                         return sorted(found)
-        except Exception:
-            pass
+        except (OSError, PermissionError) as e:
+            raise ContextError(f"Failed to scan file inventory in {self.project_root}: {e}")
 
         return sorted(found)
 
@@ -429,7 +504,11 @@ class FilesystemGitContextSource(ContextSource):
 
     def get_git_diff(self, base_commit: str, target_commit: Optional[str] = None, max_bytes: int = 8192) -> Tuple[str, bool]:
         target = target_commit or "HEAD"
-        cmd = ["git", "diff", f"{base_commit}..{target}"] if base_commit != target else ["git", "diff", "HEAD~1"]
+        if not self.VALID_REF_PATTERN.match(base_commit) or base_commit.startswith("-"):
+            raise ContextError(f"Invalid git base_commit ref: '{base_commit}'")
+        if not self.VALID_REF_PATTERN.match(target) or target.startswith("-"):
+            raise ContextError(f"Invalid git target_commit ref: '{target}'")
+        cmd = ["git", "diff", f"{base_commit}..{target}", "--"] if base_commit != target else ["git", "diff", "HEAD~1", "--"]
         try:
             proc = subprocess.run(
                 cmd,
@@ -557,11 +636,19 @@ class ContextPolicy:
         for role, odata in role_overrides.items():
             if role in self.roles and isinstance(odata, dict):
                 cur = self.roles[role]
+                new_soft = cur["soft_budget_bytes"]
+                new_hard = cur["hard_budget_bytes"]
                 # Can only narrow (lower) budgets
                 if "soft_budget_bytes" in odata:
-                    cur["soft_budget_bytes"] = min(cur["soft_budget_bytes"], int(odata["soft_budget_bytes"]))
+                    new_soft = min(cur["soft_budget_bytes"], int(odata["soft_budget_bytes"]))
                 if "hard_budget_bytes" in odata:
-                    cur["hard_budget_bytes"] = min(cur["hard_budget_bytes"], int(odata["hard_budget_bytes"]))
+                    new_hard = min(cur["hard_budget_bytes"], int(odata["hard_budget_bytes"]))
+                if new_hard < new_soft:
+                    raise ContextError(
+                        f"Override for role '{role}' results in hard_budget_bytes ({new_hard}) < soft_budget_bytes ({new_soft})"
+                    )
+                cur["soft_budget_bytes"] = new_soft
+                cur["hard_budget_bytes"] = new_hard
                 # Cannot change allow_zero_required_anchors to True
 
         self.validate()
@@ -584,7 +671,7 @@ class ContextPolicy:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return cls(data, project_overrides=project_overrides)
             except Exception as e:
-                pass
+                raise ContextError(f"Failed to load context policy from {path}: {e}")
         return cls(DEFAULT_CONTEXT_POLICY, project_overrides=project_overrides)
 
 
@@ -683,19 +770,44 @@ You are the Plan Compiler structuring high-level goals into an executable DAG or
 4. stdlib Only: Adhere strictly to the target project language standard library unless policy permits.
 """
 
+    _REMEDIATION_PREFIX = """# Factory Remediation Worker Contract
+You are an automated software engineering remediation worker resolving defects identified during audit.
+
+## Strict Operational Guardrails
+1. Minimal Scope: Focus strictly on repairing the identified audit findings and failing validations.
+2. Assigned Workspace: Operate exclusively within your assigned worktree directory.
+3. Allowed Paths: Only modify paths matching the declared allowed patterns.
+4. No Package Installation: DO NOT install external packages via pip, npm, apt, or any package manager.
+5. Verification: Verify all fixes against the provided validation commands before completing.
+
+## Remediation Output Schema
+Return a valid JSON object matching the worker result schema:
+```json
+{
+  "task_id": "<task_id>",
+  "status": "COMPLETED" | "FAILED",
+  "summary": "<clear summary of fixes implemented>",
+  "changed_files": ["<list of relative paths modified>"],
+  "notes": "<remediation notes>"
+}
+```
+"""
+
     @classmethod
     def get_stable_prefix(cls, role: str) -> Tuple[str, str, int]:
         """Returns (prefix_text, prefix_hash, prefix_bytes) for the given role."""
-        if role == "worker" or role == "task":
+        if role in ("worker", "task"):
             text = cls._WORKER_PREFIX
-        elif role == "reviewer" or role == "plan_reviewer":
+        elif role in ("reviewer", "plan_reviewer"):
             text = cls._REVIEWER_PREFIX
-        elif role == "auditor" or role == "final_auditor":
+        elif role in ("auditor", "final_auditor"):
             text = cls._AUDITOR_PREFIX
         elif role == "planner":
             text = cls._PLANNER_PREFIX
+        elif role in ("remediation", "remediation_worker"):
+            text = cls._REMEDIATION_PREFIX
         else:
-            text = cls._WORKER_PREFIX
+            raise ContextError(f"Unknown or unsupported role '{role}' for stable prefix")
 
         # Canonical normalization
         normalized = text.strip() + "\n"
@@ -715,7 +827,6 @@ def calculate_context_redundancy(texts: List[str], chunk_size: int = 64) -> Dict
     Returns:
         total_factory_supplied_bytes, unique_content_bytes, repeated_content_bytes, redundancy_ratio
     """
-    total_bytes = 0
     all_chunks = []
     chunk_counts: Dict[str, int] = {}
     chunk_lengths: Dict[str, int] = {}
@@ -725,7 +836,6 @@ def calculate_context_redundancy(texts: List[str], chunk_size: int = 64) -> Dict
         for line in lines:
             line_bytes = line.encode("utf-8")
             lb_len = len(line_bytes)
-            total_bytes += lb_len
 
             # For fine-grained accounting, chunk lines if large
             if lb_len > chunk_size:
@@ -741,13 +851,9 @@ def calculate_context_redundancy(texts: List[str], chunk_size: int = 64) -> Dict
                 chunk_lengths[h] = lb_len
                 all_chunks.append(h)
 
-    repeated_bytes = 0
-    unique_bytes = 0
-    for h in all_chunks:
-        if chunk_counts[h] > 1:
-            repeated_bytes += chunk_lengths[h]
-        else:
-            unique_bytes += chunk_lengths[h]
+    total_bytes = sum(chunk_lengths[h] for h in all_chunks)
+    repeated_bytes = sum(chunk_lengths[h] for h in all_chunks if chunk_counts[h] > 1)
+    unique_bytes = sum(chunk_lengths[h] for h in all_chunks if chunk_counts[h] == 1)
 
     ratio = (repeated_bytes / total_bytes) if total_bytes > 0 else 0.0
     return {
@@ -788,22 +894,24 @@ class ContextPacket:
     handoffs: List[dict] = dataclasses.field(default_factory=list)
     constraints: List[str] = dataclasses.field(default_factory=list)
     rendered_tail: str = ""
+    token_count: Optional[int] = None
 
     def calculate_required_anchor_recall(self) -> Tuple[float, List[str]]:
-        return calculate_anchor_recall(self.required_anchors, self.required_anchors)
+        rendered = self.render_full_prompt()
+        return calculate_rendered_anchor_recall(self.required_anchors, rendered)
 
     def render_full_prompt(self) -> str:
         """Returns the full rendered prompt combining the stable prefix and rendered tail."""
+        if not self.rendered_tail:
+            raise ContextError(f"ContextPacket {self.packet_id} has empty rendered_tail; cannot render full prompt")
         stable_prefix, _, _ = StablePrefixManager.get_stable_prefix(self.packet_role)
         return stable_prefix + "\n" + self.rendered_tail
 
     def verify_staleness(self, current_source_hashes: Dict[str, str]) -> Tuple[bool, List[str]]:
         """Checks if any source artifact has changed since packet compilation."""
         stale_reasons = []
-        normalized_curr = {k.replace("_", "-"): v for k, v in current_source_hashes.items()}
         for path, orig_hash in self.source_hashes.items():
-            norm_key = path.replace("_", "-")
-            curr = normalized_curr.get(norm_key, current_source_hashes.get(path))
+            curr = current_source_hashes.get(path)
             if curr != orig_hash:
                 stale_reasons.append(f"{path} changed ({orig_hash[:8]} -> {curr[:8] if curr else 'MISSING'})")
         return len(stale_reasons) > 0, stale_reasons
@@ -830,14 +938,25 @@ class ContextPacket:
             "budget": self.budget,
             "packet_bytes": self.packet_bytes,
             "packet_hash": self.packet_hash,
+            "token_count": self.token_count,
             "compiler_version": self.compiler_version,
             "created_at": self.created_at,
+            "rendered_tail": self.rendered_tail,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> ContextPacket:
         anchors = [Anchor.from_dict(a) for a in d.get("required_anchors", [])]
-        return cls(
+        role = d.get("packet_role", "")
+        cls_map = {
+            "planner": PlannerContextPacket,
+            "reviewer": PlanReviewContextPacket,
+            "task": TaskContextPacket,
+            "auditor": AuditContextPacket,
+            "remediation": RemediationContextPacket,
+        }
+        target_cls = cls_map.get(role, cls)
+        return target_cls(
             schema_version=d.get("schema_version", SCHEMA_VERSION),
             packet_id=d["packet_id"],
             packet_role=d["packet_role"],
@@ -861,7 +980,33 @@ class ContextPacket:
             compiler_version=d.get("compiler_version", COMPILER_VERSION),
             created_at=d.get("created_at", ""),
             rendered_tail=d.get("rendered_tail", ""),
+            token_count=d.get("token_count"),
         )
+
+
+class PlannerContextPacket(ContextPacket):
+    """Immutable context packet compiled specifically for the Planner."""
+    pass
+
+
+class PlanReviewContextPacket(ContextPacket):
+    """Immutable context packet compiled specifically for the Plan Reviewer."""
+    pass
+
+
+class TaskContextPacket(ContextPacket):
+    """Immutable context packet compiled specifically for Task Workers."""
+    pass
+
+
+class AuditContextPacket(ContextPacket):
+    """Immutable context packet compiled specifically for the Final Auditor."""
+    pass
+
+
+class RemediationContextPacket(ContextPacket):
+    """Immutable context packet compiled specifically for Remediation Workers."""
+    pass
 
 
 # ==============================================================================
@@ -1116,7 +1261,7 @@ class ContextCompiler:
             )
 
         # Gate: Calculate required anchor recall
-        recall, missing = calculate_anchor_recall(anchors, anchors)
+        recall, missing = calculate_rendered_anchor_recall(anchors, current_tail)
         if recall < 1.0:
             raise ContextAnchorMissingError(
                 f"CONTEXT_ANCHOR_MISSING: Task {task_id} missing required anchors: {missing}"
@@ -1125,7 +1270,7 @@ class ContextCompiler:
         packet_id = f"ctx-task-{task_id}-att{attempt_id}-{sha256_text(current_tail)[:8]}"
         packet_hash = sha256_text(current_tail)
 
-        return ContextPacket(
+        return TaskContextPacket(
             schema_version=SCHEMA_VERSION,
             packet_id=packet_id,
             packet_role=role,
@@ -1158,13 +1303,125 @@ class ContextCompiler:
             rendered_tail=current_tail,
         )
 
+    def compile_planner_packet(
+        self,
+        raw_goal: str,
+        goal_id: str,
+        project_policy_summary: dict,
+        structured_requirements: Optional[List[dict]] = None,
+        available_profiles: Optional[List[str]] = None,
+        constraints: Optional[List[str]] = None,
+    ) -> PlannerContextPacket:
+        """Compiles a PlannerContextPacket for the planning agent."""
+        role = "planner"
+        role_policy = self.policy.get_role_policy(role)
+        soft_budget = role_policy["soft_budget_bytes"]
+        hard_budget = role_policy["hard_budget_bytes"]
+
+        source_artifacts = ["GOAL.md"] if (self.source.project_root / "GOAL.md").exists() else []
+        source_hashes = {
+            "raw_goal": sha256_text(raw_goal),
+        }
+
+        anchors = [
+            Anchor(
+                anchor_id="goal:raw",
+                anchor_type="requirement",
+                source="goal:raw",
+                source_hash=sha256_text(raw_goal.strip()),
+                content=raw_goal.strip(),
+                required=True,
+            )
+        ]
+
+        inventory = self.source.get_bounded_file_inventory(max_files=50, max_depth=3)
+
+        sections = [
+            f"## Autopilot Planning Assignment: `{goal_id}`",
+            "\n### Raw Goal Statement:",
+            f"```text\n{raw_goal.strip()}\n```",
+        ]
+
+        if structured_requirements:
+            sections.append("\n### Pre-Structured Acceptance Criteria:")
+            for req in structured_requirements:
+                cid = req.get("id", "R")
+                desc = req.get("description", "")
+                sections.append(f"- **{cid}**: {desc}")
+                anchors.append(
+                    Anchor(
+                        anchor_id=f"req:{cid}",
+                        anchor_type="requirement",
+                        source=f"structured:{cid}",
+                        source_hash=sha256_text(desc),
+                        content=desc,
+                        required=True,
+                    )
+                )
+
+        if available_profiles:
+            sections.append(f"\n### Available Profiles: {', '.join(available_profiles)}")
+
+        if constraints:
+            sections.append("\n### Hard Project Constraints:")
+            for c in constraints:
+                sections.append(f"- {c}")
+
+        if inventory:
+            sections.append("\n### Bounded Repository File Inventory:")
+            for f in inventory[:30]:
+                sections.append(f"- `{f}`")
+
+        tail = "\n".join(sections) + "\n"
+        tail_bytes = len(tail.encode("utf-8"))
+
+        if tail_bytes > hard_budget:
+            raise ContextBudgetExceededError(f"Planner context exceeded hard budget: {tail_bytes} > {hard_budget}")
+
+        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        if recall < 1.0:
+            raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Planner packet missing required anchors: {missing}")
+
+        packet_id = f"ctx-plan-{goal_id}-{sha256_text(tail)[:8]}"
+        packet_hash = sha256_text(tail)
+
+        return PlannerContextPacket(
+            schema_version=SCHEMA_VERSION,
+            packet_id=packet_id,
+            packet_role=role,
+            goal_id=goal_id,
+            source_artifacts=source_artifacts,
+            source_hashes=source_hashes,
+            requirements=structured_requirements or [],
+            required_anchors=anchors,
+            included_files=[],
+            referenced_files=inventory[:30],
+            dependencies=[],
+            handoffs=[],
+            validations=[],
+            constraints=constraints or [],
+            budget={
+                "soft_budget_bytes": soft_budget,
+                "hard_budget_bytes": hard_budget,
+                "original_bytes": tail_bytes,
+                "pruned_bytes": 0,
+                "final_bytes": tail_bytes,
+                "was_pruned": False,
+            },
+            packet_bytes=tail_bytes,
+            packet_hash=packet_hash,
+            compiler_version=COMPILER_VERSION,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            rendered_tail=tail,
+        )
+
     def compile_plan_review_packet(
         self,
         goal_spec: dict,
         plan: dict,
         project_policy_summary: dict,
         revision_index: int = 0,
-    ) -> ContextPacket:
+    ) -> PlanReviewContextPacket:
         """Compiles a PlanReviewContextPacket for the independent plan reviewer."""
         role = "reviewer"
         role_policy = self.policy.get_role_policy(role)
@@ -1231,10 +1488,14 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Plan review context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
+        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        if recall < 1.0:
+            raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Plan review packet missing required anchors: {missing}")
+
         packet_id = f"ctx-rev-{goal_spec.get('goal_id')}-r{revision_index}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
 
-        return ContextPacket(
+        return PlanReviewContextPacket(
             schema_version=SCHEMA_VERSION,
             packet_id=packet_id,
             packet_role=role,
@@ -1271,7 +1532,7 @@ class ContextCompiler:
         validation_results: List[dict],
         base_commit: str,
         round_num: int = 0,
-    ) -> ContextPacket:
+    ) -> AuditContextPacket:
         """Compiles an AuditContextPacket for the independent final auditor."""
         role = "auditor"
         role_policy = self.policy.get_role_policy(role)
@@ -1341,10 +1602,14 @@ class ContextCompiler:
         if tail_bytes > hard_budget:
             raise ContextBudgetExceededError(f"Audit context exceeded hard budget: {tail_bytes} > {hard_budget}")
 
+        recall, missing = calculate_rendered_anchor_recall(anchors, tail)
+        if recall < 1.0:
+            raise ContextAnchorMissingError(f"CONTEXT_ANCHOR_MISSING: Audit packet missing required anchors: {missing}")
+
         packet_id = f"ctx-aud-{goal_spec.get('goal_id')}-r{round_num}-{sha256_text(tail)[:8]}"
         packet_hash = sha256_text(tail)
 
-        return ContextPacket(
+        return AuditContextPacket(
             schema_version=SCHEMA_VERSION,
             packet_id=packet_id,
             packet_role=role,
