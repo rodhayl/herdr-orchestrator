@@ -133,6 +133,41 @@ except ImportError:
         VALID_PROVENANCES,
     )
 
+# Reasoning Efficiency System (Factory v9.0.0)
+try:
+    from tools.reasoning import (
+        ReasoningPolicy,
+        ReasoningResolution,
+        ReasoningPolicyConflictError,
+        StaleReasoningPolicyError,
+        MalformedReasoningPolicyError,
+        calculate_policy_provenance_hashes,
+        verify_policy_provenance,
+        summarize_usage_by_dimensions,
+        CERTIFIED_MODEL_LADDERS,
+        ELIGIBLE_FAILURE_CATEGORIES,
+        NON_ELIGIBLE_FAILURE_CATEGORIES,
+        VALID_EXECUTION_PURPOSES,
+    )
+    import tools.reasoning as reasoning
+except ImportError:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import reasoning
+    from reasoning import (
+        ReasoningPolicy,
+        ReasoningResolution,
+        ReasoningPolicyConflictError,
+        StaleReasoningPolicyError,
+        MalformedReasoningPolicyError,
+        calculate_policy_provenance_hashes,
+        verify_policy_provenance,
+        summarize_usage_by_dimensions,
+        CERTIFIED_MODEL_LADDERS,
+        ELIGIBLE_FAILURE_CATEGORIES,
+        NON_ELIGIBLE_FAILURE_CATEGORIES,
+        VALID_EXECUTION_PURPOSES,
+    )
+
 # Base paths
 FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROJECT_ROOT = FACTORY_ROOT
@@ -2825,7 +2860,8 @@ def validate_all_profiles(profiles_path: pathlib.Path = None) -> dict:
 def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
                         busy_workers: set = None, busy_profiles: set = None,
                         profiles_path: pathlib.Path = None,
-                        routing_overrides: dict = None) -> tuple:
+                        routing_overrides: dict = None,
+                        project_policy: Any = None) -> tuple:
     """
     Deterministically routes a task to an eligible worker based on execution profiles and capabilities.
     Section 20 priority order:
@@ -2853,16 +2889,65 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             adapter = w_cfg.get("adapter", "agy")
             concurrency_allowed = w_cfg.get("concurrency_eligibility", False)
             is_busy = (explicit_wid in busy_workers) and (not concurrency_allowed)
+
+            task_type = task_def.get("task_type", "implementation")
+            explicit_class = task_def.get("execution_class")
+            execution_class = derive_execution_class(task_type, explicit_class)
+            candidate_model = w_cfg.get("default_model", "gemini-3.8-flash")
+            clean_model = candidate_model.split("-high")[0].split("-medium")[0].split("-low")[0]
+
+            reasoning_res = None
+            try:
+                r_pol = ReasoningPolicy.load()
+                reasoning_res = r_pol.resolve_initial_effort(
+                    role="worker",
+                    task_type=task_type,
+                    execution_class=execution_class,
+                    model_family=clean_model,
+                    project_policy=project_policy
+                )
+            except ReasoningPolicyConflictError:
+                raise
+            except Exception:
+                pass
+
+            if task_def.get("effort"):
+                effort = task_def["effort"]
+                effort_source = task_def.get("effort_source", "explicit_plan")
+                effort_attempt_index = task_def.get("effort_attempt_index", 1)
+                escalated_from_profile = task_def.get("escalated_from_profile")
+                escalation_reason = task_def.get("escalation_reason")
+            elif reasoning_res:
+                effort = reasoning_res.selected_effort
+                effort_source = reasoning_res.effort_source
+                effort_attempt_index = reasoning_res.effort_attempt_index
+                escalated_from_profile = None
+                escalation_reason = None
+            else:
+                effort = "low" if execution_class == "routine" else ("high" if execution_class == "deep" else "medium")
+                effort_source = "legacy"
+                effort_attempt_index = 1
+                escalated_from_profile = None
+                escalation_reason = None
+
             metadata = {
                 "routing_mode": "explicit",
-                "task_type": task_def.get("task_type", "explicit"),
+                "task_type": task_type,
+                "execution_class": execution_class,
                 "required_capabilities": task_def.get("requires", []),
                 "requirements": task_def.get("requires", []),
                 "eligible_candidates": [explicit_wid],
                 "busy_candidates": [explicit_wid] if is_busy else [],
                 "selected_worker": explicit_wid,
                 "selected_adapter": adapter,
-                "selection_reason": f"Explicit worker assignment to '{explicit_wid}'"
+                "harness": adapter,
+                "model": clean_model,
+                "effort": effort,
+                "effort_source": effort_source,
+                "effort_attempt_index": effort_attempt_index,
+                "escalated_from_profile": escalated_from_profile,
+                "escalation_reason": escalation_reason,
+                "selection_reason": f"Explicit worker assignment to '{explicit_wid}' with effort '{effort}' (source: {effort_source})"
             }
             if is_busy:
                 return explicit_wid, metadata, "BUSY"
@@ -3015,12 +3100,59 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             }
             return None, metadata, "BUSY"
 
-        selected_pid = available_profiles[0]
+        # Resolve reasoning effort via policy
+        candidate_model = profiles[available_profiles[0]].get("model", "gemini-3.8-flash")
+        clean_model = candidate_model.split("-high")[0].split("-medium")[0].split("-low")[0]
+        reasoning_res = None
+        try:
+            r_pol = ReasoningPolicy.load()
+            reasoning_res = r_pol.resolve_initial_effort(
+                role="worker",
+                task_type=task_type,
+                execution_class=execution_class,
+                model_family=clean_model,
+                project_policy=project_policy
+            )
+        except ReasoningPolicyConflictError:
+            raise
+        except Exception:
+            pass
+
+        if task_def.get("effort"):
+            effort = task_def["effort"]
+            effort_source = task_def.get("effort_source", "explicit_plan")
+            effort_attempt_index = task_def.get("effort_attempt_index", 1)
+            escalated_from_profile = task_def.get("escalated_from_profile")
+            escalation_reason = task_def.get("escalation_reason")
+        elif reasoning_res:
+            effort = reasoning_res.selected_effort
+            effort_source = reasoning_res.effort_source
+            effort_attempt_index = reasoning_res.effort_attempt_index
+            escalated_from_profile = None
+            escalation_reason = None
+        else:
+            effort = "low" if execution_class == "routine" else ("high" if execution_class == "deep" else "medium")
+            effort_source = "legacy"
+            effort_attempt_index = 1
+            escalated_from_profile = None
+            escalation_reason = None
+
+        if not override_pid:
+            if reasoning_res and reasoning_res.preferred_profile and reasoning_res.preferred_profile in available_profiles:
+                selected_pid = reasoning_res.preferred_profile
+            else:
+                matching_effort = [p for p in available_profiles if profiles[p].get("effort") == effort]
+                if matching_effort:
+                    selected_pid = matching_effort[0]
+                else:
+                    selected_pid = available_profiles[0]
+        else:
+            selected_pid = available_profiles[0]
+
         sp = profiles[selected_pid]
         wid = sp.get("worker_identity", selected_pid)
         adapter = sp.get("adapter", "agy")
         model = sp.get("model")
-        effort = sp.get("effort")
 
         metadata = {
             "routing_mode": "execution_profile",
@@ -3041,8 +3173,12 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             "harness": sp.get("harness", adapter),
             "model": model,
             "effort": effort,
+            "effort_source": effort_source,
+            "effort_attempt_index": effort_attempt_index,
+            "escalated_from_profile": escalated_from_profile,
+            "escalation_reason": escalation_reason,
             "native": sp.get("native", {}),
-            "selection_reason": f"Selected preferred available profile '{selected_pid}' from eligible pool {eligible_profiles}"
+            "selection_reason": f"Selected preferred available profile '{selected_pid}' with effort '{effort}' (source: {effort_source}) from eligible pool {eligible_profiles}"
         }
         return wid, metadata, "ROUTED"
 
@@ -3130,6 +3266,15 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
         if t.get("task_id") == task_id:
             target_task = t
             break
+
+    if not target_task and "waves" in plan_data:
+        for w in plan_data.get("waves", []):
+            for t in w.get("tasks", []):
+                if t.get("task_id") == task_id:
+                    target_task = t
+                    break
+            if target_task:
+                break
 
     if not target_task:
         raise ValueError(f"Task '{task_id}' not found in plan")
@@ -3257,8 +3402,25 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
         "selected_profile": meta.get("selected_profile_id"),
         "selected_worker": wid,
         "selected_adapter": meta.get("selected_adapter"),
+        "selected_effort": meta.get("effort"),
+        "effort_source": meta.get("effort_source"),
+        "effort_attempt_index": meta.get("effort_attempt_index"),
+        "escalated_from_profile": meta.get("escalated_from_profile"),
+        "escalation_reason": meta.get("escalation_reason"),
         "reason": meta.get("selection_reason", "")
     }
+
+    reasoning_explanation = None
+    try:
+        r_pol = ReasoningPolicy.load()
+        reasoning_explanation = r_pol.explain(
+            role="worker",
+            task_type=task_type,
+            execution_class=execution_class,
+            model_family=meta.get("model", "gemini-3.8-flash")
+        )
+    except Exception:
+        reasoning_explanation = None
 
     return {
         "task_id": task_id,
@@ -3266,7 +3428,8 @@ def explain_task_routing(plan_file_or_data, task_id: str, profiles_path: pathlib
         "execution_class": execution_class,
         "required_capabilities": requires,
         "profiles": profile_evaluations,
-        "final_decision": final_decision
+        "final_decision": final_decision,
+        "reasoning_policy": reasoning_explanation
     }
 
 
@@ -4337,6 +4500,45 @@ class TaskExecutor:
         is_succ = attempt_record.get("status") == "SUCCESS"
         cert_level = "REAL_PROVIDER_CERTIFIED" if (exec_mode == "REAL" and is_succ) else ("DETERMINISTIC_CERTIFIED" if is_succ else "FAILED")
 
+        # Determine execution_purpose
+        exec_purpose = (
+            self.task.get("execution_purpose")
+            or os.environ.get("FACTORY_EXECUTION_PURPOSE")
+        )
+        if not exec_purpose:
+            if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+                exec_purpose = "DETERMINISTIC_TEST"
+            else:
+                exec_purpose = "PRODUCTION"
+        if exec_purpose not in VALID_EXECUTION_PURPOSES:
+            exec_purpose = "PRODUCTION"
+
+        # Extract provider token metrics if reported by provider
+        agy_data = raw_res.get("data", {}) if isinstance(raw_res.get("data"), dict) else {}
+        usage = agy_data.get("usage", {}) if isinstance(agy_data.get("usage"), dict) else {}
+        prov_in = usage.get("input_tokens") if usage.get("input_tokens") is not None else usage.get("prompt_tokens")
+        prov_cached = usage.get("cached_input_tokens") if usage.get("cached_input_tokens") is not None else usage.get("cache_read_tokens")
+        prov_out = usage.get("output_tokens") if usage.get("output_tokens") is not None else usage.get("completion_tokens")
+        prov_reasoning = usage.get("reasoning_tokens") if usage.get("reasoning_tokens") is not None else usage.get("thinking_tokens")
+        prov_credits = usage.get("credits") or usage.get("units")
+
+        def _valid_token_int(val):
+            return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0 else None
+
+        valid_in_tokens = _valid_token_int(prov_in)
+        valid_cached_tokens = _valid_token_int(prov_cached)
+        valid_out_tokens = _valid_token_int(prov_out)
+        valid_reasoning_tokens = _valid_token_int(prov_reasoning)
+        valid_credits = float(prov_credits) if isinstance(prov_credits, (int, float)) and not isinstance(prov_credits, bool) and math.isfinite(prov_credits) and prov_credits >= 0 else None
+
+        rp = self.routing_provenance or {}
+        requested_effort = self.task.get("effort") or rp.get("effort") or self.effort
+        resolved_effort = self.effort
+        effort_source = self.task.get("effort_source") or rp.get("effort_source") or ("explicit_plan" if self.task.get("effort") else "reasoning_policy")
+        effort_attempt_idx = self.task.get("effort_attempt_index") or rp.get("effort_attempt_index") or attempt_record.get("attempt_id", 1)
+        escalated_from_prof = self.task.get("escalated_from_profile") or rp.get("escalated_from_profile")
+        escalation_rsn = self.task.get("escalation_reason") or rp.get("escalation_reason")
+
         telemetry = {
             "run_id": self.run_id,
             "task_id": self.task_id,
@@ -4347,6 +4549,21 @@ class TaskExecutor:
             "model": self.model,
             "effort": self.effort,
             "execution_mode": exec_mode,
+            "execution_purpose": exec_purpose,
+            "requested_effort": requested_effort,
+            "resolved_effort": resolved_effort,
+            "effort_policy_version": "9.0.0",
+            "effort_source": effort_source,
+            "effort_attempt_index": effort_attempt_idx,
+            "escalated_from_profile": escalated_from_prof,
+            "escalation_reason": escalation_rsn,
+            "provider_input_tokens": valid_in_tokens,
+            "provider_cached_input_tokens": valid_cached_tokens,
+            "provider_output_tokens": valid_out_tokens,
+            "provider_reasoning_tokens": valid_reasoning_tokens,
+            "provider_credits_or_units": valid_credits,
+            "provider_usage_source": usage.get("source") or ("provider_reported" if valid_in_tokens is not None else None),
+            "total_model_duration_ms": duration_ms,
             "auth_source": auth_source,
             "certification_level": cert_level,
             "execution_class": exec_class,
@@ -4392,19 +4609,6 @@ class TaskExecutor:
             sp_prefix, sp_hash, sp_bytes = StablePrefixManager.get_stable_prefix("reviewer" if self.review_only else "task")
             sp_prefix = redact_secrets(sp_prefix)
 
-            # Extract provider token metrics if reported by provider (preserving valid 0 counts)
-            agy_data = raw_res.get("data", {}) if isinstance(raw_res.get("data"), dict) else {}
-            usage = agy_data.get("usage", {}) if isinstance(agy_data.get("usage"), dict) else {}
-            provider_input_tokens = usage.get("input_tokens") if usage.get("input_tokens") is not None else usage.get("prompt_tokens")
-            provider_cached_tokens = usage.get("cached_input_tokens") if usage.get("cached_input_tokens") is not None else usage.get("cache_read_tokens")
-            provider_output_tokens = usage.get("output_tokens") if usage.get("output_tokens") is not None else usage.get("completion_tokens")
-            provider_reasoning_tokens = usage.get("reasoning_tokens") if usage.get("reasoning_tokens") is not None else usage.get("thinking_tokens")
-
-            def _valid_token_int(val):
-                return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val) and val >= 0 else None
-
-            valid_in_tokens = _valid_token_int(provider_input_tokens)
-            valid_cached_tokens = _valid_token_int(provider_cached_tokens)
             cache_data_avail = valid_cached_tokens is not None
             total_toks_inc_cache = (
                 (valid_in_tokens + valid_cached_tokens)
@@ -4461,8 +4665,8 @@ class TaskExecutor:
                 "provider_cached_input_tokens": valid_cached_tokens,
                 "provider_total_tokens_including_cache": total_toks_inc_cache,
                 "provider_cache_data_available": cache_data_avail,
-                "provider_output_tokens": _valid_token_int(provider_output_tokens),
-                "provider_reasoning_tokens": _valid_token_int(provider_reasoning_tokens),
+                "provider_output_tokens": valid_out_tokens,
+                "provider_reasoning_tokens": valid_reasoning_tokens,
                 "session_mode": session_mode,
                 "session_reused": session_reused,
                 "native_compaction_used": native_compaction_used,
@@ -5419,6 +5623,10 @@ class FactoryOrchestrator:
                         tinfo["harness"] = route_meta.get("harness")
                         tinfo["model"] = route_meta.get("model")
                         tinfo["effort"] = route_meta.get("effort")
+                        tinfo["effort_source"] = route_meta.get("effort_source")
+                        tinfo["effort_attempt_index"] = route_meta.get("effort_attempt_index")
+                        tinfo["escalated_from_profile"] = route_meta.get("escalated_from_profile")
+                        tinfo["escalation_reason"] = route_meta.get("escalation_reason")
                         tinfo["adapter"] = route_meta.get("selected_adapter")
                         tinfo["routing_provenance"] = route_meta
                         self.routing_provenance[tid] = route_meta
@@ -5429,6 +5637,10 @@ class FactoryOrchestrator:
                         tdef["harness"] = route_meta.get("harness")
                         tdef["model"] = route_meta.get("model")
                         tdef["effort"] = route_meta.get("effort")
+                        tdef["effort_source"] = route_meta.get("effort_source")
+                        tdef["effort_attempt_index"] = route_meta.get("effort_attempt_index")
+                        tdef["escalated_from_profile"] = route_meta.get("escalated_from_profile")
+                        tdef["escalation_reason"] = route_meta.get("escalation_reason")
                         tdef["routing_provenance"] = route_meta
 
                         check_failpoint("after_effort_selected", self.run_dir, {"task_id": tid, "effort": tinfo["effort"]})
@@ -5444,6 +5656,9 @@ class FactoryOrchestrator:
 
                         # Collect predecessor handoffs (Factory v8.0.0)
                         task_handoffs = self._collect_task_handoffs(tdef)
+
+                        if tinfo.get("effort_source") == "escalation":
+                            check_failpoint("before_escalated_dispatch", self.run_dir, {"task_id": tid, "effort": tinfo["effort"]})
 
                         executor = TaskExecutor(
                             self.run_id,
@@ -5513,6 +5728,9 @@ class FactoryOrchestrator:
 
                     tinfo["attempts"].append(res)
                     tinfo["latest_result"] = res
+                    if tinfo.get("effort_source") == "escalation":
+                        check_failpoint("after_escalated_result", self.run_dir, {"task_id": tid, "effort": tinfo["effort"], "status": res.get("status")})
+
                     status = res.get("status")
                     if self.real_only and status == "SUCCESS" and res.get("execution_mode") != "REAL":
                         status = "FAILED"
@@ -5527,6 +5745,9 @@ class FactoryOrchestrator:
                             self.manifest["final_audit"] = res.get("structured_output", {})
                             self.log_event("REVIEW_TASK_COMPLETED", {"task_id": tid, "audit": self.manifest["final_audit"]})
                         else:
+                            if tinfo.get("effort_source") == "escalation":
+                                check_failpoint("before_escalated_commit", self.run_dir, {"task_id": tid, "effort": tinfo["effort"]})
+
                             # Commit verified changes
                             commit_hash = executor.commit_work(att_id, context_packet=getattr(executor, "current_context_packet", None))
                             res["commit_hash"] = commit_hash
@@ -5571,6 +5792,61 @@ class FactoryOrchestrator:
                         tinfo["status"] = "TIMEOUT"
                         self.log_event("TASK_TIMED_OUT", {"task_id": tid, "attempt_id": att_id})
                     else:
+                        curr_effort = tinfo.get("effort") or "medium"
+                        if curr_effort == "low":
+                            check_failpoint("after_low_attempt_failed", self.run_dir, {"task_id": tid, "attempt_id": att_id, "effort": curr_effort})
+
+                        # Evaluate deterministic reasoning effort escalation
+                        escalated_effort = None
+                        escalation_reason = None
+                        curr_model = tinfo.get("model") or "gemini-3.8-flash"
+                        fail_category = res.get("state") or res.get("status") or "FAILED"
+                        if res.get("timed_out"):
+                            fail_category = "TIMED_OUT"
+
+                        try:
+                            r_pol = ReasoningPolicy.load()
+                            escalated_effort, escalation_reason = r_pol.evaluate_escalation(
+                                current_effort=curr_effort,
+                                model_family=curr_model,
+                                failure_category=fail_category,
+                                attempt_id=att_id,
+                                execution_class=tinfo.get("execution_class") or derive_execution_class(tdef.get("task_type", "implementation")),
+                                project_policy=self.project_policy
+                            )
+                        except Exception as e:
+                            escalated_effort = None
+                            escalation_reason = f"Escalation evaluation error: {e}"
+
+                        if escalated_effort:
+                            old_profile = tinfo.get("profile_id")
+                            old_effort = curr_effort
+                            tinfo["effort"] = escalated_effort
+                            tinfo["effort_source"] = "escalation"
+                            tinfo["effort_attempt_index"] = att_id + 1
+                            tinfo["escalated_from_profile"] = old_profile
+                            tinfo["escalation_reason"] = escalation_reason
+
+                            tdef["effort"] = escalated_effort
+                            tdef["effort_source"] = "escalation"
+                            tdef["effort_attempt_index"] = att_id + 1
+                            tdef["escalated_from_profile"] = old_profile
+                            tdef["escalation_reason"] = escalation_reason
+                            tdef.pop("worker_id", None)
+                            tdef.pop("profile_id", None)
+                            tdef.pop("profile", None)
+
+                            self.log_event("TASK_EFFORT_ESCALATED", {
+                                "task_id": tid,
+                                "attempt_id": att_id,
+                                "from_effort": old_effort,
+                                "to_effort": escalated_effort,
+                                "reason": escalation_reason
+                            })
+
+                            if tdef.get("max_retries", 0) < att_id:
+                                tdef["max_retries"] = att_id
+
                         retries_allowed = tdef.get("max_retries", 0)
                         if tinfo.get("attempts_count", 1) <= retries_allowed:
                             tinfo["canonical_state"] = "READY"
@@ -5589,6 +5865,12 @@ class FactoryOrchestrator:
                                 "failing_command": redact_secrets(clean_cmd).encode("utf-8")[:1024].decode("utf-8", errors="ignore"),
                                 "error_excerpt": redact_secrets(res.get("error", "")).encode("utf-8")[:2048].decode("utf-8", errors="ignore")
                             }
+                            if escalated_effort:
+                                rinfo["escalation"] = {
+                                    "from_effort": old_effort,
+                                    "to_effort": escalated_effort,
+                                    "reason": escalation_reason
+                                }
                             # Enforce hard aggregate budget <= 4096 bytes for retry_info dict serialization
                             dumped = json.dumps(rinfo).encode("utf-8")
                             if len(dumped) > 4096:
@@ -5912,9 +6194,11 @@ def generate_status_projection(run_id: str = None) -> dict:
     return projection
 
 
-def summarize_execution_metrics(run_id: str = None, profile_id: str = None, execution_mode: str = None, telemetry_file: pathlib.Path = None) -> dict:
+def summarize_execution_metrics(run_id: str = None, profile_id: str = None,
+                                execution_mode: str = None, execution_purpose: str = None,
+                                telemetry_file: pathlib.Path = None) -> dict:
     """
-    Summarizes execution telemetry across runs or for a specific run/profile/mode.
+    Summarizes execution telemetry across runs or for a specific run/profile/mode/purpose.
     Strictly observational: metrics do not influence routing decisions.
     Separates mock simulation telemetry from real provider-backed telemetry.
     """
@@ -5962,6 +6246,9 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, exec
 
     if execution_mode:
         records = [r for r in records if r.get("execution_mode") == execution_mode]
+
+    if execution_purpose:
+        records = [r for r in records if r.get("execution_purpose") == execution_purpose]
 
     total_attempts = len(records)
     successful = sum(1 for r in records if r.get("status") in ("COMPLETED", "COMMITTED", "PATH_VALIDATED", "INTEGRATED"))
@@ -6033,10 +6320,17 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, exec
             edata["avg_duration_ms"] = round(edata["duration_ms"] / edata["total"], 2)
             edata["success_rate_pct"] = round(edata["success"] / edata["total"] * 100, 2)
 
+    reasoning_and_usage = {}
+    try:
+        reasoning_and_usage = summarize_usage_by_dimensions(records, filter_purpose=execution_purpose)
+    except Exception:
+        pass
+
     return {
         "run_filter": run_id,
         "profile_filter": profile_id,
         "execution_mode_filter": execution_mode,
+        "execution_purpose_filter": execution_purpose,
         "total_attempts": total_attempts,
         "successful_attempts": successful,
         "failed_attempts": failed,
@@ -6050,7 +6344,8 @@ def summarize_execution_metrics(run_id: str = None, profile_id: str = None, exec
         "by_profile": by_profile,
         "by_harness": by_harness,
         "by_execution_class": by_class,
-        "by_execution_mode": by_execution_mode
+        "by_execution_mode": by_execution_mode,
+        "reasoning_and_usage": reasoning_and_usage
     }
 
 
@@ -6254,7 +6549,7 @@ def generate_discovery_packet(project_root: pathlib.Path) -> dict:
 
 
 def compile_goal_spec(goal_text: str, project_root: pathlib.Path, project_policy: ProjectPolicy,
-                      goal_id: str = None, real_only: bool = False) -> dict:
+                      goal_id: str = None, real_only: bool = False, effort: str = None) -> dict:
     """
     Parses and structures high-level natural language goal into a GoalSpec schema
     with explicit USER_EXPLICIT criteria and derived DERIVED criteria.
@@ -6268,6 +6563,14 @@ def compile_goal_spec(goal_text: str, project_root: pathlib.Path, project_policy
 
     # In real provider mode, call planner LLM if authenticated
     if real_only and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+        resolved_effort = effort
+        try:
+            r_pol = ReasoningPolicy.load()
+            r_res = r_pol.resolve_initial_effort(role="planner", task_type="spec", execution_class="standard", project_policy=project_policy)
+            resolved_effort = effort or r_res.selected_effort
+        except Exception:
+            resolved_effort = effort or "medium"
+
         planner_prof = project_policy.execution_policy.get("planner_profile", "agy-spec-high")
         profiles = load_harness_profiles()
         pdata = profiles.get(planner_prof, {})
@@ -6301,6 +6604,8 @@ Output ONLY the JSON object.
         schema_path = (PROJECT_ROOT / "schemas" / "goal-spec.schema.json") if (PROJECT_ROOT / "schemas" / "goal-spec.schema.json").exists() else (FACTORY_ROOT / "schemas" / "goal-spec.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
+            if resolved_effort:
+                cmd.extend(["--effort", resolved_effort])
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
             proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=90)
@@ -6544,13 +6849,21 @@ def validate_plan_traceability(plan: dict, goal_spec: dict, project_policy: Proj
 
 
 def compile_plan_from_goal(goal_spec: dict, project_policy: ProjectPolicy,
-                           plan_id: str = None, real_only: bool = False) -> dict:
+                           plan_id: str = None, real_only: bool = False, effort: str = None) -> dict:
     """Compiles a GoalSpec into an OrchestrationPlan v2 DAG with requirement traceability."""
     plan_id = plan_id or f"plan-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     goal_id = goal_spec.get("goal_id", "goal-unknown")
     criteria = goal_spec.get("acceptance_criteria", [])
 
     if real_only and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+        resolved_effort = effort
+        try:
+            r_pol = ReasoningPolicy.load()
+            r_res = r_pol.resolve_initial_effort(role="planner", task_type="spec", execution_class="standard", project_policy=project_policy)
+            resolved_effort = effort or r_res.selected_effort
+        except Exception:
+            resolved_effort = effort or "medium"
+
         planner_prof = project_policy.execution_policy.get("planner_profile", "agy-spec-high")
         profiles = load_harness_profiles()
         pdata = profiles.get(planner_prof, {})
@@ -6577,6 +6890,8 @@ Requirements:
         schema_path = (PROJECT_ROOT / "schemas" / "plan.schema.json") if (PROJECT_ROOT / "schemas" / "plan.schema.json").exists() else (FACTORY_ROOT / "schemas" / "plan.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
+            if resolved_effort:
+                cmd.extend(["--effort", resolved_effort])
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
             proc = subprocess.run(cmd, cwd=str(project_policy.project_root), capture_output=True, text=True, timeout=90)
@@ -6717,7 +7032,7 @@ Requirements:
 
 
 def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
-                revision_index: int = 0, real_only: bool = False) -> dict:
+                revision_index: int = 0, real_only: bool = False, effort: str = None) -> dict:
     """Independent pre-execution plan review verifying completeness, scope bounds, and testability."""
     sim_verdict = os.environ.get("PLAN_REVIEW_TEST_VERDICT")
     if sim_verdict:
@@ -6748,6 +7063,14 @@ def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
         }
 
     if real_only and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+        resolved_effort = effort
+        try:
+            r_pol = ReasoningPolicy.load()
+            r_res = r_pol.resolve_initial_effort(role="plan_reviewer", task_type="spec", execution_class="standard", project_policy=project_policy)
+            resolved_effort = effort or r_res.selected_effort
+        except Exception:
+            resolved_effort = effort or "medium"
+
         reviewer_prof = project_policy.execution_policy.get("plan_reviewer_profile", "agy-audit-high")
         profiles = load_harness_profiles()
         pdata = profiles.get(reviewer_prof, {})
@@ -6766,6 +7089,8 @@ def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
         schema_path = (PROJECT_ROOT / "schemas" / "review-result.schema.json") if (PROJECT_ROOT / "schemas" / "review-result.schema.json").exists() else (FACTORY_ROOT / "schemas" / "review-result.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
+            if resolved_effort and pdata.get("model", "").startswith("gemini"):
+                cmd.extend(["--effort", resolved_effort])
             proc = subprocess.run(cmd, cwd=str(project_policy.project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 m = re.search(r"\{.*\}", proc.stdout.strip(), re.DOTALL)
@@ -6805,7 +7130,7 @@ def revise_plan(plan: dict, review_findings: list, goal_spec: dict,
 
 
 def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: ProjectPolicy,
-                  real_only: bool = False) -> dict:
+                  real_only: bool = False, effort: str = None) -> dict:
     """Independent final code audit verifying implementation against GoalSpec."""
     test_verdict = os.environ.get("AUDIT_TEST_VERDICT")
     if test_verdict:
@@ -6822,6 +7147,14 @@ def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: P
         return {"verdict": test_verdict, "findings": []}
 
     if real_only and os.environ.get("FACTORY_TEST_HARNESS") != "1":
+        resolved_effort = effort
+        try:
+            r_pol = ReasoningPolicy.load()
+            r_res = r_pol.resolve_initial_effort(role="final_auditor", task_type="audit", execution_class="deep", project_policy=project_policy)
+            resolved_effort = effort or r_res.selected_effort
+        except Exception:
+            resolved_effort = effort or "high"
+
         auditor_prof = project_policy.execution_policy.get("final_auditor_profile", "agy-audit-high")
         profiles = load_harness_profiles()
         pdata = profiles.get(auditor_prof, {})
@@ -6848,6 +7181,8 @@ def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: P
         prompt = stable_prefix + "\n" + packet.rendered_tail
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
+            if resolved_effort and pdata.get("model", "").startswith("gemini"):
+                cmd.extend(["--effort", resolved_effort])
             proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
                 m = re.search(r"\{.*\}", proc.stdout.strip(), re.DOTALL)
@@ -7160,6 +7495,14 @@ class GoalController:
 
     def generate_report(self) -> dict:
         """Generates comprehensive audit and traceability report for this goal."""
+        usage_summary = {}
+        if self.state.get("run_id"):
+            try:
+                metrics_res = summarize_execution_metrics(run_id=self.state.get("run_id"))
+                usage_summary = metrics_res.get("reasoning_and_usage", {})
+            except Exception:
+                usage_summary = {}
+
         return {
             "goal_id": self.goal_id,
             "project_root": str(self.project_root),
@@ -7173,13 +7516,14 @@ class GoalController:
                 "failed": sum(1 for v in self.state.get("validation_results", []) if not v.get("passed"))
             },
             "final_audit_verdict": self.state.get("audit_results")[-1].get("verdict") if self.state.get("audit_results") else None,
+            "usage_summary": usage_summary,
             "created_at": self.state.get("created_at"),
             "updated_at": self.state.get("updated_at")
         }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v8.0.0)")
+    parser = argparse.ArgumentParser(description="AGY-Herdr Software Factory Engine (v9.0.0)")
     parser.add_argument("--project-root", default=None, help="Target project root directory (defaults to current project)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -7293,6 +7637,19 @@ def main():
     c_pkt.add_argument("packet_id", type=str, help="Context packet ID to display")
     c_pkt.add_argument("--run", type=str, default=None, help="Optional run ID")
 
+    # Reasoning (v9.0.0)
+    reasoning_parser = subparsers.add_parser("reasoning", help="Inspect and explain deterministic reasoning policy (v9.0.0)")
+    reasoning_sub = reasoning_parser.add_subparsers(dest="reasoning_action", required=True)
+    re_exp = reasoning_sub.add_parser("explain", help="Explain initial effort and escalation policy for role/task")
+    re_exp.add_argument("--role", default="worker", choices=["planner", "plan_reviewer", "worker", "final_auditor", "remediation_planner", "remediation_worker"], help="Role")
+    re_exp.add_argument("--task-type", default="backend", help="Task type (e.g. backend, frontend, tests)")
+    re_exp.add_argument("--execution-class", default="standard", choices=["routine", "standard", "deep"], help="Execution class")
+    re_exp.add_argument("--model", default="gemini-3.8-flash", help="Model family")
+    re_exp.add_argument("--json", action="store_true", help="Output JSON format")
+
+    re_chk = reasoning_sub.add_parser("check", help="Verify reasoning policy schema and provenance staleness")
+    re_chk.add_argument("--json", action="store_true", help="Output JSON format")
+
     # Metrics
     metrics_parser = subparsers.add_parser("metrics", help="Execution telemetry and performance metrics")
     metrics_sub = metrics_parser.add_subparsers(dest="metrics_action", required=True)
@@ -7301,6 +7658,7 @@ def main():
     m_sum.add_argument("--run", type=str, default=None, help="Filter summary to specific run ID")
     m_sum.add_argument("--profile", type=str, default=None, help="Filter summary to specific profile ID")
     m_sum.add_argument("--execution-mode", type=str, default=None, choices=["REAL", "MOCK", "TRANSPORT_ONLY", "UNKNOWN"], help="Filter summary by execution mode")
+    m_sum.add_argument("--execution-purpose", type=str, default=None, choices=["PRODUCTION", "CALIBRATION", "CERTIFICATION", "DETERMINISTIC_TEST"], help="Filter summary by execution purpose (v9.0.0)")
 
     # Cleanup
     cl_parser = subparsers.add_parser("cleanup", help="Safely clean owned workspaces, worktrees, and ephemeral files")
@@ -7588,9 +7946,53 @@ def main():
         print("Cleanup completed safely:")
         print(json.dumps(result, indent=2))
 
+    elif args.command == "reasoning":
+        if args.reasoning_action == "explain":
+            policy = ReasoningPolicy.load()
+            explanation = policy.explain(
+                role=args.role,
+                task_type=args.task_type,
+                execution_class=args.execution_class,
+                model_family=args.model
+            )
+            if args.json:
+                print(json.dumps(explanation, indent=2))
+            else:
+                print(f"Reasoning Policy Explanation (v{explanation['policy_version']}):")
+                print(f"  Role:            {explanation['role']}")
+                print(f"  Task Type:       {explanation['task_type']}")
+                print(f"  Execution Class: {explanation['execution_class']}")
+                print(f"  Model Family:    {explanation['model_family']}")
+                print(f"  Initial Effort:  {explanation['selected_initial_effort']}")
+                print(f"  Ladder:          {' -> '.join(explanation['ladder'])}")
+                print(f"  Escalation:      {explanation['next_escalated_effort'] or 'None (at ceiling)'}")
+        elif args.reasoning_action == "check":
+            policy = ReasoningPolicy.load()
+            is_valid, drift_reasons = policy.check_staleness(PROJECT_ROOT)
+            status_report = {
+                "policy_version": policy.version,
+                "status": "VALID" if is_valid else "STALE",
+                "drift_detected": not is_valid,
+                "drift_reasons": drift_reasons
+            }
+            if args.json:
+                print(json.dumps(status_report, indent=2))
+            else:
+                print(f"Reasoning Policy Status: {status_report['status']}")
+                if drift_reasons:
+                    print("Drift Reasons:")
+                    for r in drift_reasons:
+                        print(f"  - {r}")
+            sys.exit(0 if is_valid else 1)
+
     elif args.command == "metrics":
         if args.metrics_action == "summarize":
-            summary = summarize_execution_metrics(run_id=args.run, profile_id=args.profile, execution_mode=args.execution_mode)
+            summary = summarize_execution_metrics(
+                run_id=args.run,
+                profile_id=args.profile,
+                execution_mode=args.execution_mode,
+                execution_purpose=getattr(args, "execution_purpose", None)
+            )
             if args.json:
                 print(json.dumps(summary, indent=2))
             else:
@@ -7603,6 +8005,8 @@ def main():
                     print(f"Profile Filter:  {summary['profile_filter']}")
                 if summary["execution_mode_filter"]:
                     print(f"Mode Filter:     {summary['execution_mode_filter']}")
+                if summary.get("execution_purpose_filter"):
+                    print(f"Purpose Filter:  {summary['execution_purpose_filter']}")
                 print(f"Total Attempts:  {summary['total_attempts']}")
                 print(f"Successful:      {summary['successful_attempts']} ({summary['success_rate_pct']}%)")
                 print(f"Failed:          {summary['failed_attempts']}")

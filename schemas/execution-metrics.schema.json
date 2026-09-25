@@ -140,6 +140,64 @@
     },
     "raw_result_hash": {
       "type": "string"
+    },
+    "execution_purpose": {
+      "type": "string",
+      "enum": [
+        "PRODUCTION",
+        "CALIBRATION",
+        "CERTIFICATION",
+        "DETERMINISTIC_TEST"
+      ]
+    },
+    "requested_effort": {
+      "type": ["string", "null"]
+    },
+    "resolved_effort": {
+      "type": ["string", "null"]
+    },
+    "effort_policy_version": {
+      "type": ["string", "null"]
+    },
+    "effort_source": {
+      "type": ["string", "null"],
+      "enum": [
+        "explicit_plan",
+        "reasoning_policy",
+        "escalation",
+        "legacy",
+        null
+      ]
+    },
+    "effort_attempt_index": {
+      "type": ["integer", "null"]
+    },
+    "escalated_from_profile": {
+      "type": ["string", "null"]
+    },
+    "escalation_reason": {
+      "type": ["string", "null"]
+    },
+    "provider_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_cached_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_output_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_reasoning_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_credits_or_units": {
+      "type": ["number", "null"]
+    },
+    "provider_usage_source": {
+      "type": ["string", "null"]
+    },
+    "total_model_duration_ms": {
+      "type": ["number", "null"]
     }
   }
 }
