@@ -516,7 +516,7 @@ def summarize_usage_by_dimensions(
         totals["attempts"] += 1
 
         status = rec.get("status") or rec.get("state")
-        if status in {"SUCCESS", "INTEGRATED", "COMPLETED", "ACCEPTED"}:
+        if status in {"SUCCESS", "INTEGRATED", "COMPLETED", "ACCEPTED", "COMMITTED", "PATH_VALIDATED"}:
             g["successes"] += 1
             totals["successes"] += 1
         else:
