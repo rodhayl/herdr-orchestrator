@@ -513,7 +513,7 @@ class HandoffPacket:
 
         # Enforce total aggregate bound proportionally across all four free-text fields
         # Reserve envelope headroom so the overall serialized JSON remains <= max_bytes
-        ft_budget = max(512, max_bytes - 768)
+        ft_budget = max(32, max_bytes - 768) if max_bytes > 800 else max(32, max_bytes // 4)
 
         # Initial proportional scale down if massive initial excess
         init_parts = {
@@ -642,27 +642,46 @@ class HandoffPacket:
             self.satisfied_criteria = sorted(self.satisfied_criteria)[:100]
 
         # Ensure total serialized size is strictly within max_bytes before computing final handoff_bytes
-        for _ in range(20):
+        for _ in range(25):
             cur_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
-            if cur_raw_bytes <= max_bytes - 256:
+            if cur_raw_bytes <= max_bytes - 200:
                 break
             if isinstance(self.decisions, list) and len(self.decisions) > 1:
                 self.decisions = self.decisions[:1]
                 continue
-            if isinstance(self.decisions, str) and len(self.decisions) > 32 and not self.decisions.endswith("\n[TRUNCATED:BOUND]"):
+            if isinstance(self.decisions, str) and len(self.decisions) > 50:
                 self.decisions = self.decisions[:32] + "\n[TRUNCATED:BOUND]"
                 continue
             if isinstance(self.known_risks, list) and len(self.known_risks) > 1:
                 self.known_risks = self.known_risks[:1]
                 continue
-            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 32 and not self.consumer_notes.endswith("\n[TRUNCATED:BOUND]"):
+            if isinstance(self.known_risks, str) and len(self.known_risks) > 50:
+                self.known_risks = self.known_risks[:32] + "\n[TRUNCATED:BOUND]"
+                continue
+            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 50:
                 self.consumer_notes = self.consumer_notes[:32] + "\n[TRUNCATED:BOUND]"
                 continue
-            if isinstance(self.contracts, str) and len(self.contracts) > 32 and not self.contracts.endswith("\n[TRUNCATED:BOUND]"):
+            if isinstance(self.contracts, str) and len(self.contracts) > 50:
                 self.contracts = self.contracts[:32] + "\n[TRUNCATED:BOUND]"
                 continue
-            if len(self.changed_paths) > 10:
-                self.changed_paths = self.changed_paths[:10] + [f"[+{len(self.changed_paths)-10} paths truncated]"]
+            untruncated_paths = [p for p in self.changed_paths if not str(p).startswith("[+")]
+            if len(untruncated_paths) > 10:
+                self.changed_paths = untruncated_paths[:10] + [f"[+{len(untruncated_paths)-10} paths truncated]"]
+                continue
+            if len(untruncated_paths) > 5:
+                self.changed_paths = untruncated_paths[:5] + [f"[+{len(untruncated_paths)-5} paths truncated]"]
+                continue
+            if isinstance(self.consumer_notes, str) and self.consumer_notes != "[TRUNCATED:BOUND]":
+                self.consumer_notes = "[TRUNCATED:BOUND]"
+                continue
+            if isinstance(self.contracts, str) and self.contracts != "[TRUNCATED:BOUND]":
+                self.contracts = "[TRUNCATED:BOUND]"
+                continue
+            if isinstance(self.decisions, str) and self.decisions != "[TRUNCATED:BOUND]":
+                self.decisions = "[TRUNCATED:BOUND]"
+                continue
+            if len(untruncated_paths) > 2:
+                self.changed_paths = untruncated_paths[:2] + [f"[+{len(untruncated_paths)-2} paths truncated]"]
                 continue
             break
 
@@ -689,6 +708,14 @@ class HandoffPacket:
         actual_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
         if actual_bytes != self.handoff_bytes:
             self.handoff_bytes = actual_bytes
+        if actual_bytes > max_bytes:
+            untruncated_paths = [p for p in self.changed_paths if not str(p).startswith("[+")]
+            if len(untruncated_paths) > 1:
+                self.changed_paths = untruncated_paths[:1] + [f"[+{len(untruncated_paths)-1} paths truncated]"]
+                raw_repr = canonical_json_dump(self.to_dict_raw())
+                self.handoff_hash = sha256_text(raw_repr)
+                self.handoff_bytes = len(canonical_json_dump(self.to_dict()).encode("utf-8"))
+                actual_bytes = self.handoff_bytes
         # Verification invariant: handoff_bytes measures full to_dict() serialization (including synthesis_source),
         # while handoff_hash is scoped to immutable to_dict_raw(). The one-shot patch is sufficient because
         # synthesis_source is fixed-length ("REAL", "MOCK", or "TRANSPORT_ONLY").
