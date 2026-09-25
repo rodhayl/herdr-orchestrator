@@ -3898,7 +3898,7 @@ class TaskExecutor:
         self.review_only = plan_task.get("review_only", False)
         self.is_repair = plan_task.get("is_repair", False)
         self.timeout = plan_task.get("timeout", 180)
-        self.max_retries = plan_task.get("max_retries", 0)
+        self.max_retries = plan_task.get("max_retries") if plan_task.get("max_retries") is not None else factory_config.get("limits", {}).get("max_retries_per_task", 0)
 
         # Context Compiler integration (Factory v8.0.0)
         self.goal_spec = copy.deepcopy(goal_spec)
@@ -4439,8 +4439,14 @@ class TaskExecutor:
                 exit_code == 0
                 and agy_data.get("status") in ("SUCCESS", "COMPLETED")
                 and not path_violations
-                and not missing_expected
-                and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected) or self.task_type in ("support", "fixture"))
+                and (
+                    self.review_only
+                    or self.is_repair
+                    or len(changed_paths) > 0
+                    or len(structured_output.get("changed_files", [])) > 0
+                    or (self.expected_files and not missing_expected)
+                    or self.task_type in ("support", "fixture")
+                )
             )
 
             if is_success:
@@ -5870,7 +5876,12 @@ class FactoryOrchestrator:
                         if res.get("timed_out"):
                             fail_category = "TIMED_OUT"
 
-                        retries_allowed = tdef.get("max_retries", 0)
+                        max_retries_limit = (
+                            getattr(self.project_policy, "limits", {}).get("max_retries_per_task", 0)
+                            if getattr(self, "project_policy", None)
+                            else self.factory_config.get("limits", {}).get("max_retries_per_task", 0)
+                        )
+                        retries_allowed = tdef.get("max_retries") if tdef.get("max_retries") is not None else max_retries_limit
                         if retries_allowed > 0 and tinfo.get("attempts_count", 1) <= retries_allowed:
                             try:
                                 r_pol = ReasoningPolicy.load()
@@ -5911,7 +5922,7 @@ class FactoryOrchestrator:
                                 "reason": escalation_reason
                             })
 
-                        retries_allowed = tdef.get("max_retries", 0)
+                        retries_allowed = tdef.get("max_retries") if tdef.get("max_retries") is not None else max_retries_limit
                         if tinfo.get("attempts_count", 1) <= retries_allowed:
                             tinfo["canonical_state"] = "READY"
                             tinfo["status"] = "PENDING"
