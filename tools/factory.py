@@ -4405,7 +4405,24 @@ class TaskExecutor:
                 and (self.review_only or self.is_repair or len(changed_paths) > 0 or (self.expected_files and not missing_expected) or self.task_type in ("support", "fixture"))
             )
 
-            self.state = "PATH_VALIDATED" if is_success else "FAILED"
+            if is_success:
+                self.state = "PATH_VALIDATED"
+            elif path_violations:
+                self.state = "PATH_VALIDATION_FAILED"
+            elif missing_expected:
+                self.state = "MISSING_EXPECTED_FILES"
+            elif agy_data.get("state"):
+                self.state = agy_data["state"]
+            elif agy_data.get("failure_category"):
+                self.state = agy_data["failure_category"]
+            elif raw_res.get("failure_category"):
+                self.state = raw_res["failure_category"]
+            elif raw_res.get("state"):
+                self.state = raw_res["state"]
+            elif exit_code != 0:
+                self.state = "DETERMINISTIC_TEST_FAILED"
+            else:
+                self.state = "INCOMPLETE_RESULT"
 
             attempt_record = {
                 "attempt_id": attempt_id,

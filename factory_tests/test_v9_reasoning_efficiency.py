@@ -506,7 +506,8 @@ class TestV9FailpointsAndResume(unittest.TestCase):
         with open(self.cfg_path, "r", encoding="utf-8") as f:
             orig_cfg = json.load(f)
         patched_cfg = copy.deepcopy(orig_cfg)
-        patched_cfg["worker_registry"]["agy"]["adapter"] = "v9_fake_worker"
+        for w in patched_cfg.get("worker_registry", {}).values():
+            w["adapter"] = "v9_fake_worker"
         with open(self.cfg_path, "w", encoding="utf-8") as f:
             json.dump(patched_cfg, f, indent=2)
 
