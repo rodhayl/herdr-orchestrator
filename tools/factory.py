@@ -5868,19 +5868,21 @@ class FactoryOrchestrator:
                         if res.get("timed_out"):
                             fail_category = "TIMED_OUT"
 
-                        try:
-                            r_pol = ReasoningPolicy.load()
-                            escalated_effort, escalation_reason = r_pol.evaluate_escalation(
-                                current_effort=curr_effort,
-                                model_family=curr_model,
-                                failure_category=fail_category,
-                                attempt_id=att_id,
-                                execution_class=tinfo.get("execution_class") or derive_execution_class(tdef.get("task_type", "implementation")),
-                                project_policy=self.project_policy
-                            )
-                        except Exception as e:
-                            escalated_effort = None
-                            escalation_reason = f"Escalation evaluation error: {e}"
+                        retries_allowed = tdef.get("max_retries", 0)
+                        if retries_allowed > 0 and tinfo.get("attempts_count", 1) <= retries_allowed:
+                            try:
+                                r_pol = ReasoningPolicy.load()
+                                escalated_effort, escalation_reason = r_pol.evaluate_escalation(
+                                    current_effort=curr_effort,
+                                    model_family=curr_model,
+                                    failure_category=fail_category,
+                                    attempt_id=att_id,
+                                    execution_class=tinfo.get("execution_class") or derive_execution_class(tdef.get("task_type", "implementation")),
+                                    project_policy=self.project_policy
+                                )
+                            except Exception as e:
+                                escalated_effort = None
+                                escalation_reason = f"Escalation evaluation error: {e}"
 
                         if escalated_effort:
                             old_profile = tinfo.get("profile_id")
@@ -5896,7 +5898,6 @@ class FactoryOrchestrator:
                             tdef["effort_attempt_index"] = att_id + 1
                             tdef["escalated_from_profile"] = old_profile
                             tdef["escalation_reason"] = escalation_reason
-                            tdef.pop("worker_id", None)
                             tdef.pop("profile_id", None)
                             tdef.pop("profile", None)
 
@@ -5907,9 +5908,6 @@ class FactoryOrchestrator:
                                 "to_effort": escalated_effort,
                                 "reason": escalation_reason
                             })
-
-                            if tdef.get("max_retries", 0) < att_id:
-                                tdef["max_retries"] = att_id
 
                         retries_allowed = tdef.get("max_retries", 0)
                         if tinfo.get("attempts_count", 1) <= retries_allowed:
