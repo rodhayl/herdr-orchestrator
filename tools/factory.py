@@ -5788,6 +5788,8 @@ class FactoryOrchestrator:
                         self.routing_provenance[tid]["mode"] = executor.execution_mode
                     elif not res.get("is_real_execution"):
                         self.routing_provenance[tid]["mode"] = "MOCK"
+                    else:
+                        self.routing_provenance[tid]["mode"] = "REAL"
                     tinfo["routing_provenance"] = self.routing_provenance[tid]
 
                     tinfo["attempts"].append(res)

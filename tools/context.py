@@ -649,13 +649,16 @@ class HandoffPacket:
             if isinstance(self.decisions, list) and len(self.decisions) > 1:
                 self.decisions = self.decisions[:1]
                 continue
+            if isinstance(self.decisions, str) and len(self.decisions) > 32 and not self.decisions.endswith("\n[TRUNCATED:BOUND]"):
+                self.decisions = self.decisions[:32] + "\n[TRUNCATED:BOUND]"
+                continue
             if isinstance(self.known_risks, list) and len(self.known_risks) > 1:
                 self.known_risks = self.known_risks[:1]
                 continue
-            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 32:
+            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 32 and not self.consumer_notes.endswith("\n[TRUNCATED:BOUND]"):
                 self.consumer_notes = self.consumer_notes[:32] + "\n[TRUNCATED:BOUND]"
                 continue
-            if isinstance(self.contracts, str) and len(self.contracts) > 32:
+            if isinstance(self.contracts, str) and len(self.contracts) > 32 and not self.contracts.endswith("\n[TRUNCATED:BOUND]"):
                 self.contracts = self.contracts[:32] + "\n[TRUNCATED:BOUND]"
                 continue
             if len(self.changed_paths) > 10:
