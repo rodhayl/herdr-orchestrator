@@ -44,7 +44,9 @@
         "planner_profile": { "type": "string", "default": "agy-spec-high" },
         "planner_model": { "type": "string", "default": "gemini-3.8-flash-high" },
         "plan_reviewer_profile": { "type": "string", "default": "agy-audit-high" },
-        "final_auditor_profile": { "type": "string", "default": "agy-audit-high" }
+        "final_auditor_profile": { "type": "string", "default": "agy-audit-high" },
+        "max_effort": { "type": "string", "enum": ["none", "low", "medium", "high", "xhigh", "max"] },
+        "disable_effort_escalation": { "type": "boolean", "default": false }
       },
       "additionalProperties": false
     },

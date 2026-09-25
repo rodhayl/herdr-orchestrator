@@ -2646,6 +2646,11 @@ def get_adapter(worker_id: str, worker_config: dict, herdr: HerdrClient, res_mgr
                 register_adapter("fake_worker", FakeWorkerAdapter)
             except Exception:
                 pass
+            try:
+                from factory_tests.test_v9_reasoning_efficiency import V9FakeWorkerAdapter
+                register_adapter("v9_fake_worker", V9FakeWorkerAdapter)
+            except Exception:
+                pass
     if adapter_name not in ADAPTER_REGISTRY:
         raise ValueError(f"Unknown worker adapter '{adapter_name}' declared for worker '{worker_id}'")
     cls = ADAPTER_REGISTRY[adapter_name]
@@ -5426,6 +5431,8 @@ class FactoryOrchestrator:
                         tdef["effort"] = route_meta.get("effort")
                         tdef["routing_provenance"] = route_meta
 
+                        check_failpoint("after_effort_selected", self.run_dir, {"task_id": tid, "effort": tinfo["effort"]})
+
                         busy_workers.add(wid)
                         if route_meta.get("selected_profile_id"):
                             busy_profiles.add(route_meta.get("selected_profile_id"))
@@ -6089,6 +6096,14 @@ class ProjectPolicy:
         self.execution_policy = exec_policy
 
         self.routing_overrides = self.raw_data.get("routing_overrides", {})
+
+    @property
+    def max_effort(self) -> Optional[str]:
+        return self.execution_policy.get("max_effort")
+
+    @property
+    def disable_effort_escalation(self) -> bool:
+        return bool(self.execution_policy.get("disable_effort_escalation", False))
 
     @classmethod
     def load(cls, path: pathlib.Path = None) -> "ProjectPolicy":
