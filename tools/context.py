@@ -513,7 +513,7 @@ class HandoffPacket:
 
         # Enforce total aggregate bound proportionally across all four free-text fields
         # Reserve envelope headroom so the overall serialized JSON remains <= max_bytes
-        ft_budget = max(32, max_bytes - 768) if max_bytes > 800 else max(32, max_bytes // 4)
+        ft_budget = max(32, max_bytes - 768)
 
         # Initial proportional scale down if massive initial excess
         init_parts = {
@@ -646,44 +646,58 @@ class HandoffPacket:
             cur_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
             if cur_raw_bytes <= max_bytes - 200:
                 break
+            modified = False
             if isinstance(self.decisions, list) and len(self.decisions) > 1:
                 self.decisions = self.decisions[:1]
+                modified = True
                 continue
             if isinstance(self.decisions, str) and len(self.decisions) > 50:
                 self.decisions = self.decisions[:32] + "\n[TRUNCATED:BOUND]"
+                modified = True
                 continue
             if isinstance(self.known_risks, list) and len(self.known_risks) > 1:
                 self.known_risks = self.known_risks[:1]
+                modified = True
                 continue
             if isinstance(self.known_risks, str) and len(self.known_risks) > 50:
                 self.known_risks = self.known_risks[:32] + "\n[TRUNCATED:BOUND]"
+                modified = True
                 continue
             if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 50:
                 self.consumer_notes = self.consumer_notes[:32] + "\n[TRUNCATED:BOUND]"
+                modified = True
                 continue
             if isinstance(self.contracts, str) and len(self.contracts) > 50:
                 self.contracts = self.contracts[:32] + "\n[TRUNCATED:BOUND]"
+                modified = True
                 continue
             untruncated_paths = [p for p in self.changed_paths if not str(p).startswith("[+")]
             if len(untruncated_paths) > 10:
                 self.changed_paths = untruncated_paths[:10] + [f"[+{len(untruncated_paths)-10} paths truncated]"]
+                modified = True
                 continue
             if len(untruncated_paths) > 5:
                 self.changed_paths = untruncated_paths[:5] + [f"[+{len(untruncated_paths)-5} paths truncated]"]
+                modified = True
                 continue
-            if isinstance(self.consumer_notes, str) and self.consumer_notes != "[TRUNCATED:BOUND]":
+            if isinstance(self.consumer_notes, str) and len(self.consumer_notes) > 17:
                 self.consumer_notes = "[TRUNCATED:BOUND]"
+                modified = True
                 continue
-            if isinstance(self.contracts, str) and self.contracts != "[TRUNCATED:BOUND]":
+            if isinstance(self.contracts, str) and len(self.contracts) > 17:
                 self.contracts = "[TRUNCATED:BOUND]"
+                modified = True
                 continue
-            if isinstance(self.decisions, str) and self.decisions != "[TRUNCATED:BOUND]":
+            if isinstance(self.decisions, str) and len(self.decisions) > 17:
                 self.decisions = "[TRUNCATED:BOUND]"
+                modified = True
                 continue
             if len(untruncated_paths) > 2:
                 self.changed_paths = untruncated_paths[:2] + [f"[+{len(untruncated_paths)-2} paths truncated]"]
+                modified = True
                 continue
-            break
+            if not modified:
+                break
 
         final_raw_bytes = len(canonical_json_dump(self.to_dict_raw()).encode("utf-8"))
         if final_raw_bytes > max_bytes - 128:

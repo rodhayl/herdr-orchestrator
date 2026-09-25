@@ -77,7 +77,9 @@ VALID_EXECUTION_PURPOSES = {
     "PRODUCTION",
     "CALIBRATION",
     "CERTIFICATION",
-    "DETERMINISTIC_TEST"
+    "DETERMINISTIC_TEST",
+    "LEGACY",
+    "UNKNOWN"
 }
 
 
@@ -220,6 +222,20 @@ class ReasoningPolicy:
         if not isinstance(max_esc, int) or max_esc < 0 or max_esc > 1:
             raise MalformedReasoningPolicyError(f"Invalid max_effort_escalations_per_task '{max_esc}'. Must be 0 or 1.")
 
+        # Validate 64-char hex format for all provenance hashes
+        prov = self.data.get("provenance_hashes", {})
+        import re
+        for k, v in prov.items():
+            if not isinstance(v, str) or not re.fullmatch(r'[0-9a-f]{64}', v):
+                raise MalformedReasoningPolicyError(f"Provenance hash '{k}' must be a 64-character lowercase hex SHA-256 string, got '{v}'")
+
+        # Validate that all declared roles in role_policy are calibrated
+        calib_roles = set(self.data.get("calibration_evidence", {}).get("calibrated_roles", []))
+        declared_roles = set(self.data.get("role_policy", {}).keys())
+        if calib_roles and not declared_roles.issubset(calib_roles):
+            missing = declared_roles - calib_roles
+            raise MalformedReasoningPolicyError(f"Declared roles in role_policy missing calibration evidence: {missing}")
+
     @property
     def version(self) -> str:
         return str(self.data.get("policy_version", "unknown"))
@@ -234,10 +250,15 @@ class ReasoningPolicy:
 
     def get_ladder(self, model_family: str) -> List[str]:
         """Returns ordered effort ladder for a model family."""
-        clean_model = model_family.split("-high")[0].split("-medium")[0].split("-low")[0]
+        clean_model = model_family
+        if "/" in clean_model and clean_model not in self.data.get("model_ladders", {}):
+            clean_model = clean_model.split("/")[-1]
+        clean_model = clean_model.split("-high")[0].split("-medium")[0].split("-low")[0]
         ladder = self.data.get("model_ladders", {}).get(clean_model)
         if not ladder:
-            ladder = CERTIFIED_MODEL_LADDERS.get(clean_model, ["medium"])
+            ladder = self.data.get("model_ladders", {}).get(model_family)
+        if not ladder:
+            ladder = CERTIFIED_MODEL_LADDERS.get(clean_model, CERTIFIED_MODEL_LADDERS.get(model_family, ["medium"]))
         return list(ladder)
 
     def is_failure_escalation_eligible(self, failure_category: str) -> bool:
@@ -301,9 +322,15 @@ class ReasoningPolicy:
                 if execution_class in t_profs:
                     preferred_profile = t_profs[execution_class]
 
-        # Ensure effort is in ladder
+        # Ensure effort is in ladder (map to highest available <= requested or closest)
         if initial_effort not in ladder:
-            initial_effort = ladder[0] if ladder else "medium"
+            effort_ranks = {"free": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5, "deep": 4}
+            target_rank = effort_ranks.get(initial_effort, 2)
+            lower_or_equal = [e for e in ladder if effort_ranks.get(e, 2) <= target_rank]
+            if lower_or_equal:
+                initial_effort = lower_or_equal[-1]
+            else:
+                initial_effort = ladder[0] if ladder else "medium"
 
         # 2. Project Policy Constraints and Deep Task Safety (Section 56-57)
         if project_policy:
@@ -354,7 +381,8 @@ class ReasoningPolicy:
         attempt_id: int,
         execution_class: str = "standard",
         project_policy: Optional[Any] = None,
-        current_profile_id: Optional[str] = None
+        current_profile_id: Optional[str] = None,
+        escalation_ceiling: Optional[str] = None
     ) -> Tuple[Optional[str], str]:
         """
         Evaluates whether a failed attempt should escalate reasoning effort.
@@ -377,8 +405,14 @@ class ReasoningPolicy:
             if disable_esc:
                 return None, "ESCALATION_DISABLED_BY_PROJECT_POLICY"
 
+        # Normalize attempt indexing: ensure 1-based integer
+        try:
+            norm_attempt = max(1, int(attempt_id))
+        except (TypeError, ValueError):
+            norm_attempt = 1
+
         # Only allow 1 escalation by default in v9 (e.g. attempt 1 failed -> attempt 2 escalates)
-        if attempt_id > max_escalations:
+        if norm_attempt > max_escalations:
             return None, f"ESCALATION_LIMIT_REACHED: Attempt {attempt_id} exceeds max_escalations ({max_escalations})"
 
         # 3. Ladder lookup in same model family
@@ -393,7 +427,16 @@ class ReasoningPolicy:
 
         next_effort = ladder[cur_idx + 1]
 
-        # 4. Check project policy ceiling
+        # 4. Check policy escalation ceiling
+        if not escalation_ceiling:
+            worker_ceilings = self.data.get("role_policy", {}).get("worker", {}).get("escalation_ceiling_by_class", {})
+            escalation_ceiling = worker_ceilings.get(execution_class, ladder[-1])
+
+        if escalation_ceiling and escalation_ceiling in ladder:
+            if ladder.index(next_effort) > ladder.index(escalation_ceiling):
+                return None, f"CEILING_REACHED: next effort '{next_effort}' exceeds escalation ceiling '{escalation_ceiling}'"
+
+        # 5. Check project policy ceiling
         if project_policy:
             project_max = getattr(project_policy, "max_effort", None)
             if isinstance(project_policy, dict):
@@ -477,7 +520,7 @@ def summarize_usage_by_dimensions(
     }
 
     for rec in records:
-        purpose = rec.get("execution_purpose") or "PRODUCTION"
+        purpose = rec.get("execution_purpose") or "LEGACY"
         if filter_purpose and purpose != filter_purpose:
             continue
 

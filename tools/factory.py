@@ -2873,7 +2873,8 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
                         busy_workers: set = None, busy_profiles: set = None,
                         profiles_path: pathlib.Path = None,
                         routing_overrides: dict = None,
-                        project_policy: Any = None) -> tuple:
+                        project_policy: Any = None,
+                        reasoning_policy: Any = None) -> tuple:
     """
     Deterministically routes a task to an eligible worker based on execution profiles and capabilities.
     Section 20 priority order:
@@ -2910,7 +2911,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
 
             reasoning_res = None
             try:
-                r_pol = ReasoningPolicy.load()
+                r_pol = reasoning_policy or ReasoningPolicy.load()
                 reasoning_res = r_pol.resolve_initial_effort(
                     role="worker",
                     task_type=task_type,
@@ -3117,7 +3118,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
         clean_model = candidate_model.split("-high")[0].split("-medium")[0].split("-low")[0]
         reasoning_res = None
         try:
-            r_pol = ReasoningPolicy.load()
+            r_pol = reasoning_policy or ReasoningPolicy.load()
             reasoning_res = r_pol.resolve_initial_effort(
                 role="worker",
                 task_type=task_type,
@@ -4464,7 +4465,12 @@ class TaskExecutor:
             elif raw_res.get("state"):
                 self.state = raw_res["state"]
             elif exit_code != 0:
-                self.state = "DETERMINISTIC_TEST_FAILED"
+                if exit_code in (126, 127, 137, 143) or exit_code > 128:
+                    self.state = "INFRASTRUCTURE_FAILURE"
+                elif self.task_type in ("tests", "testing") and exit_code in (1, 2):
+                    self.state = "DETERMINISTIC_TEST_FAILED"
+                else:
+                    self.state = "EXECUTION_ERROR"
             else:
                 self.state = "INCOMPLETE_RESULT"
 
@@ -4901,6 +4907,12 @@ class FactoryOrchestrator:
         self.active_handoffs = {}
         self.routing_provenance = {}
         self.context_compiler = ContextCompiler(ContextPolicy.load(), FilesystemGitContextSource(PROJECT_ROOT))
+
+        # Reasoning Efficiency Policy Integration (Factory v9.0.0)
+        try:
+            self.reasoning_policy = ReasoningPolicy.load()
+        except Exception:
+            self.reasoning_policy = None
 
         if PROJECT_POLICY_PATH.exists():
             try:
@@ -5659,7 +5671,8 @@ class FactoryOrchestrator:
                             self.factory_config,
                             busy_workers=busy_workers,
                             busy_profiles=busy_profiles,
-                            routing_overrides=self.routing_overrides
+                            routing_overrides=self.routing_overrides,
+                            reasoning_policy=self.reasoning_policy
                         )
 
                         if route_status == "ROUTED" and self.real_only:
@@ -5882,20 +5895,23 @@ class FactoryOrchestrator:
                             else self.factory_config.get("limits", {}).get("max_retries_per_task", 0)
                         )
                         retries_allowed = tdef.get("max_retries") if tdef.get("max_retries") is not None else max_retries_limit
-                        if retries_allowed > 0 and tinfo.get("attempts_count", 1) <= retries_allowed:
-                            try:
-                                r_pol = ReasoningPolicy.load()
-                                escalated_effort, escalation_reason = r_pol.evaluate_escalation(
-                                    current_effort=curr_effort,
-                                    model_family=curr_model,
-                                    failure_category=fail_category,
-                                    attempt_id=att_id,
-                                    execution_class=tinfo.get("execution_class") or derive_execution_class(tdef.get("task_type", "implementation")),
-                                    project_policy=self.project_policy
-                                )
-                            except Exception as e:
-                                escalated_effort = None
-                                escalation_reason = f"Escalation evaluation error: {e}"
+                        try:
+                            r_pol = self.reasoning_policy or ReasoningPolicy.load()
+                            worker_ceilings = r_pol.data.get("role_policy", {}).get("worker", {}).get("escalation_ceiling_by_class", {})
+                            e_class = tinfo.get("execution_class") or derive_execution_class(tdef.get("task_type", "implementation"))
+                            ceil = worker_ceilings.get(e_class)
+                            escalated_effort, escalation_reason = r_pol.evaluate_escalation(
+                                current_effort=curr_effort,
+                                model_family=curr_model,
+                                failure_category=fail_category,
+                                attempt_id=att_id,
+                                execution_class=e_class,
+                                project_policy=self.project_policy,
+                                escalation_ceiling=ceil
+                            )
+                        except Exception as e:
+                            escalated_effort = None
+                            escalation_reason = f"Escalation evaluation error: {e}"
 
                         if escalated_effort:
                             old_profile = tinfo.get("profile_id")
@@ -5922,8 +5938,8 @@ class FactoryOrchestrator:
                                 "reason": escalation_reason
                             })
 
-                        retries_allowed = tdef.get("max_retries") if tdef.get("max_retries") is not None else max_retries_limit
-                        if tinfo.get("attempts_count", 1) <= retries_allowed:
+                        # Decoupled retry & escalation eligibility: grant attempt if retry count permits OR if effort escalated
+                        if escalated_effort or (retries_allowed > 0 and tinfo.get("attempts_count", 1) <= retries_allowed):
                             tinfo["canonical_state"] = "READY"
                             tinfo["status"] = "PENDING"
                             raw_cmd = res.get("failing_command")
@@ -6623,6 +6639,19 @@ def generate_discovery_packet(project_root: pathlib.Path) -> dict:
     }
 
 
+def should_inject_effort_flag(model: str, effort: Optional[str]) -> bool:
+    """
+    Determines whether the CLI invocation should include the --effort flag.
+    AGY CLI rejects --effort for Claude models ('--effort is not supported for model claude-*').
+    Effort is passed when effort is non-empty and the model supports effort flags.
+    """
+    if not effort:
+        return False
+    if model and ("claude" in str(model).lower()):
+        return False
+    return True
+
+
 def compile_goal_spec(goal_text: str, project_root: pathlib.Path, project_policy: ProjectPolicy,
                       goal_id: str = None, real_only: bool = False, effort: str = None) -> dict:
     """
@@ -6679,7 +6708,7 @@ Output ONLY the JSON object.
         schema_path = (PROJECT_ROOT / "schemas" / "goal-spec.schema.json") if (PROJECT_ROOT / "schemas" / "goal-spec.schema.json").exists() else (FACTORY_ROOT / "schemas" / "goal-spec.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
-            if resolved_effort:
+            if should_inject_effort_flag(model, resolved_effort):
                 cmd.extend(["--effort", resolved_effort])
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
@@ -6965,7 +6994,7 @@ Requirements:
         schema_path = (PROJECT_ROOT / "schemas" / "plan.schema.json") if (PROJECT_ROOT / "schemas" / "plan.schema.json").exists() else (FACTORY_ROOT / "schemas" / "plan.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
-            if resolved_effort:
+            if should_inject_effort_flag(model, resolved_effort):
                 cmd.extend(["--effort", resolved_effort])
             if schema_path.exists():
                 cmd.extend(["--json-schema", schema_path.read_text(encoding="utf-8")])
@@ -7164,7 +7193,7 @@ def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
         schema_path = (PROJECT_ROOT / "schemas" / "review-result.schema.json") if (PROJECT_ROOT / "schemas" / "review-result.schema.json").exists() else (FACTORY_ROOT / "schemas" / "review-result.schema.json")
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
-            if resolved_effort and pdata.get("model", "").startswith("gemini"):
+            if should_inject_effort_flag(model, resolved_effort):
                 cmd.extend(["--effort", resolved_effort])
             proc = subprocess.run(cmd, cwd=str(project_policy.project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:
@@ -7256,7 +7285,7 @@ def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: P
         prompt = stable_prefix + "\n" + packet.rendered_tail
         try:
             cmd = ["agy", "-p", prompt, "--model", model, "--output-format", "json", "--dangerously-skip-permissions"]
-            if resolved_effort and pdata.get("model", "").startswith("gemini"):
+            if should_inject_effort_flag(model, resolved_effort):
                 cmd.extend(["--effort", resolved_effort])
             proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, timeout=90)
             if proc.returncode == 0:

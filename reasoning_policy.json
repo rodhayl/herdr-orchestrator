@@ -326,7 +326,9 @@
       "worker",
       "planner",
       "plan_reviewer",
-      "final_auditor"
+      "final_auditor",
+      "remediation_planner",
+      "remediation_worker"
     ]
   }
 }
