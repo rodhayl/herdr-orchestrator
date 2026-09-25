@@ -10,7 +10,6 @@ __pycache__/
 .coverage
 htmlcov/
 *.log
-factory_tests/fixtures/output_*.txt
 
 # Factory ephemeral state
 .agy-factory/worktrees/
