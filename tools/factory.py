@@ -2675,7 +2675,19 @@ def register_adapter(name: str, adapter_cls: type):
 def get_adapter(worker_id: str, worker_config: dict, herdr: HerdrClient, res_mgr: ResourceManager) -> WorkerAdapter:
     adapter_name = worker_config.get("adapter") or worker_config.get("invocation_adapter", "agy")
     if adapter_name not in ADAPTER_REGISTRY:
-        if os.environ.get("FACTORY_TEST_HARNESS") == "1":
+        if adapter_name == "fake_worker":
+            try:
+                from factory_tests.test_v3_capabilities import FakeWorkerAdapter
+                register_adapter("fake_worker", FakeWorkerAdapter)
+            except Exception:
+                pass
+        elif adapter_name == "v9_fake_worker":
+            try:
+                from factory_tests.test_v9_reasoning_efficiency import V9FakeWorkerAdapter
+                register_adapter("v9_fake_worker", V9FakeWorkerAdapter)
+            except Exception:
+                pass
+        elif os.environ.get("FACTORY_TEST_HARNESS") == "1":
             try:
                 from factory_tests.test_v3_capabilities import FakeWorkerAdapter
                 register_adapter("fake_worker", FakeWorkerAdapter)
@@ -3155,14 +3167,22 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
                         if profiles[p].get("model", "").split("-high")[0].split("-medium")[0].split("-low")[0] == clean_target
                     ]
                     selected_pid = same_family_any[0] if same_family_any else available_profiles[0]
-            elif reasoning_res and reasoning_res.preferred_profile and reasoning_res.preferred_profile in available_profiles:
-                selected_pid = reasoning_res.preferred_profile
+            elif explicit_class:
+                # Requirement 38: Router top choice available_profiles[0] dictates harness & model family.
+                # Reasoning policy resolves certified effort variant within that same family.
+                top_p = profiles[available_profiles[0]]
+                top_family = top_p.get("model", "").split("-high")[0].split("-medium")[0].split("-low")[0]
+                top_harness = top_p.get("harness") or top_p.get("adapter")
+                same_family_eff = [
+                    p for p in available_profiles
+                    if (profiles[p].get("harness") or profiles[p].get("adapter")) == top_harness
+                    and profiles[p].get("model", "").split("-high")[0].split("-medium")[0].split("-low")[0] == top_family
+                    and profiles[p].get("effort") == effort
+                ]
+                selected_pid = same_family_eff[0] if same_family_eff else available_profiles[0]
             else:
-                matching_effort = [p for p in available_profiles if profiles[p].get("effort") == effort]
-                if matching_effort:
-                    selected_pid = matching_effort[0]
-                else:
-                    selected_pid = available_profiles[0]
+                # Legacy / unspecified execution class: router priority is authoritative
+                selected_pid = available_profiles[0]
         else:
             selected_pid = available_profiles[0]
 
@@ -3170,6 +3190,7 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
         wid = sp.get("worker_identity", selected_pid)
         adapter = sp.get("adapter", "agy")
         model = sp.get("model")
+        actual_effort = sp.get("effort") or effort
 
         metadata = {
             "routing_mode": "execution_profile",
@@ -3189,13 +3210,13 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             "selected_adapter": adapter,
             "harness": sp.get("harness", adapter),
             "model": model,
-            "effort": effort,
+            "effort": actual_effort,
             "effort_source": effort_source,
             "effort_attempt_index": effort_attempt_index,
             "escalated_from_profile": escalated_from_profile,
             "escalation_reason": escalation_reason,
             "native": sp.get("native", {}),
-            "selection_reason": f"Selected preferred available profile '{selected_pid}' with effort '{effort}' (source: {effort_source}) from eligible pool {eligible_profiles}"
+            "selection_reason": f"Selected preferred available profile '{selected_pid}' with effort '{actual_effort}' (source: {effort_source}) from eligible pool {eligible_profiles}"
         }
         return wid, metadata, "ROUTED"
 
@@ -7616,10 +7637,12 @@ def main():
     # Run
     run_parser = subparsers.add_parser("run", help="Execute an orchestration plan")
     run_parser.add_argument("plan", type=str, help="Path to plan JSON (e.g. plans/demo.json)")
+    run_parser.add_argument("--failpoint", default=None, help="Halt at deterministic failpoint")
 
     # Resume
     res_parser = subparsers.add_parser("resume", help="Resume an interrupted or partial factory run")
     res_parser.add_argument("run_id", type=str, help="Run ID to resume (e.g. run-20260922-223926)")
+    res_parser.add_argument("--failpoint", default=None, help="Halt at deterministic failpoint")
 
     # Status
     st_parser = subparsers.add_parser("status", help="Show active and past factory run status")
@@ -7790,6 +7813,8 @@ def main():
             print(f"Plan {plan_file} is VALID.")
 
     elif args.command == "run":
+        if getattr(args, "failpoint", None):
+            os.environ["FACTORY_TEST_FAILPOINT"] = args.failpoint
         plan_file = pathlib.Path(args.plan)
         if not plan_file.is_absolute():
             plan_file = PROJECT_ROOT / plan_file
@@ -7805,6 +7830,8 @@ def main():
         print(f"Manifest written to: {orch.manifest_path}")
 
     elif args.command == "resume":
+        if getattr(args, "failpoint", None):
+            os.environ["FACTORY_TEST_FAILPOINT"] = args.failpoint
         run_dir = RUNS_DIR / args.run_id
         if not run_dir.exists():
             print(f"Error: Run directory {run_dir} does not exist", file=sys.stderr)
