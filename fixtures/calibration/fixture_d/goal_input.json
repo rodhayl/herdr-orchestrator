@@ -1,0 +1,19 @@
+{
+  "goal_id": "goal-fixture-d-planning",
+  "title": "KV-Store — Persistent Key-Value Store with TTL and Snapshot API",
+  "raw_goal": "# KV-Store\nBuild a lightweight persistent key-value store with TTL expiration, snapshot creation, and CLI inspection in Python 3 stdlib.\n\n## Requirements\n1. R1: Basic CRUD — Support set(key, value), get(key), delete(key), and has(key).\n2. R2: TTL Expiration — Configurable time-to-live per key with automatic lazy or periodic expiration.\n3. R3: Snapshot Dump & Load — Create atomic snapshot file on disk and restore from snapshot.\n4. R4: CLI Interface — Command line interface: kvstore get <key>, kvstore set <key> <val> [--ttl <sec>], kvstore snapshot <file>.\n5. R5: Unit Test Suite — Comprehensive deterministic tests in tests/ covering CRUD, TTL, and snapshots.",
+  "user_explicit_criteria": [
+    "R1: Basic CRUD — Support set(key, value), get(key), delete(key), and has(key).",
+    "R2: TTL Expiration — Configurable time-to-live per key with automatic lazy or periodic expiration.",
+    "R3: Snapshot Dump & Load — Create atomic snapshot file on disk and restore from snapshot.",
+    "R4: CLI Interface — Command line interface: kvstore get <key>, kvstore set <key> <val> [--ttl <sec>], kvstore snapshot <file>.",
+    "R5: Unit Test Suite — Comprehensive deterministic tests in tests/ covering CRUD, TTL, and snapshots."
+  ],
+  "acceptance_criteria": [
+    {"id": "R1", "title": "R1", "description": "Basic CRUD", "provenance": "USER_EXPLICIT"},
+    {"id": "R2", "title": "R2", "description": "TTL Expiration", "provenance": "USER_EXPLICIT"},
+    {"id": "R3", "title": "R3", "description": "Snapshot Dump & Load", "provenance": "USER_EXPLICIT"},
+    {"id": "R4", "title": "R4", "description": "CLI Interface", "provenance": "USER_EXPLICIT"},
+    {"id": "R5", "title": "R5", "description": "Unit Test Suite", "provenance": "USER_EXPLICIT"}
+  ]
+}

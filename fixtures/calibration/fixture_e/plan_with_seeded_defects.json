@@ -1,0 +1,35 @@
+{
+  "plan_id": "plan-seeded-defects-v1",
+  "goal_id": "goal-fixture-d-planning",
+  "name": "Seeded Defect Plan for Review Calibration",
+  "tasks": [
+    {
+      "task_id": "task_core",
+      "name": "Core Implementation",
+      "task_type": "backend",
+      "satisfies": ["R1", "R2", "R3"],
+      "allowed_paths": ["/"],
+      "validations": [["python3", "-c", "import sys; sys.exit(0)"]],
+      "dependencies": []
+    },
+    {
+      "task_id": "task_cli",
+      "name": "CLI Tool",
+      "task_type": "backend",
+      "satisfies": ["R99"],
+      "allowed_paths": ["cli.py"],
+      "validations": [],
+      "dependencies": ["task_core"],
+      "requires": ["distributed_consensus"]
+    },
+    {
+      "task_id": "task_tests",
+      "name": "Unit Tests",
+      "task_type": "tests",
+      "satisfies": ["R5"],
+      "allowed_paths": ["tests/**"],
+      "validations": [["python3", "-m", "unittest", "discover", "-s", "tests"]],
+      "dependencies": ["task_core", "task_cli"]
+    }
+  ]
+}

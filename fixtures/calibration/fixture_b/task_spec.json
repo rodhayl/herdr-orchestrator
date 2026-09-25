@@ -1,0 +1,12 @@
+{
+  "fixture_id": "fixture_b",
+  "name": "Standard Implementation: Event Store Filtering and CLI",
+  "execution_class": "standard",
+  "task_type": "backend",
+  "prompt": "Coordinate a multi-file change across models.py, store.py, cli.py, and test_event_store.py:\nR1: In models.py and store.py, add support for event timestamp range filtering in EventStore.query_by_type(event_type, start_time=None, end_time=None).\nR2: In cli.py, update the query command to accept optional --start and --end timestamp arguments.\nR3: Add unit tests in test_event_store.py asserting timestamp filtering correctness and boundary edge cases.\nR4: All tests must pass with python3 -m unittest discover -s . -v.\nAllowed paths: models.py, store.py, cli.py, test_event_store.py.",
+  "satisfies": ["R1", "R2", "R3", "R4"],
+  "allowed_paths": ["models.py", "store.py", "cli.py", "test_event_store.py"],
+  "validations": [
+    ["python3", "-m", "unittest", "discover", "-s", ".", "-v"]
+  ]
+}

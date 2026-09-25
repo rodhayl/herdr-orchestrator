@@ -1,0 +1,71 @@
+{
+  "schema_version": "9.0.0",
+  "certification_id": "v9-reasoning-policy-certification",
+  "calibrated_at": "2026-09-25T06:37:14Z",
+  "operator": "Antigravity Orchestrator (Gemini 3.8 Flash High)",
+  "total_calibration_calls": 12,
+  "calibration_decisions": {
+    "worker": {
+      "routine": {
+        "calibrated_initial_effort": "low",
+        "escalation_ceiling": "medium",
+        "evidence_fixture": "fixture_a",
+        "result": "PASSED_QUALITY_GATES",
+        "rationale": "Fixture A passed 100% tests with low effort in 23.5s (1,112 reasoning tokens vs 2,499 for medium, a 55.5% reasoning token reduction)."
+      },
+      "standard": {
+        "calibrated_initial_effort": "medium",
+        "escalation_ceiling": "high",
+        "evidence_fixture": "fixture_b",
+        "result": "PASSED_QUALITY_GATES",
+        "rationale": "Fixture B completed multi-file coordinated changes and passed all deterministic tests with medium effort in 85.5s (9,459 reasoning tokens)."
+      },
+      "deep": {
+        "calibrated_initial_effort": "high",
+        "escalation_ceiling": "high",
+        "evidence_fixture": "fixture_c",
+        "result": "RETAINED_HIGH_EFFORT",
+        "rationale": "Medium failed deep debugging fixture. Per Section 31 (Do Not Force Savings), high effort is retained as minimum sufficient effort."
+      }
+    },
+    "planner": {
+      "calibrated_initial_effort": "medium",
+      "escalation_ceiling": "high",
+      "evidence_fixture": "fixture_d",
+      "result": "PASSED_QUALITY_GATES",
+      "rationale": "Medium effort generated a structurally valid DAG covering 100% of explicit requirements with 1,335 reasoning tokens; high effort timed out."
+    },
+    "plan_reviewer": {
+      "calibrated_initial_effort": "medium",
+      "escalation_ceiling": "high",
+      "evidence_fixture": "fixture_e",
+      "result": "PASSED_QUALITY_GATES",
+      "rationale": "Medium effort achieved 100.0% recall of seeded Critical and Major plan defects with 1,571 reasoning tokens."
+    },
+    "final_auditor": {
+      "calibrated_initial_effort": "high",
+      "escalation_ceiling": "high",
+      "evidence_fixture": "fixture_f",
+      "result": "RETAINED_HIGH_EFFORT",
+      "rationale": "While medium achieved high recall, Section 84 and Section 30 require conservative audit gating. High effort is retained for production final auditor."
+    }
+  },
+  "lower_effort_rejections": [
+    {
+      "role": "worker",
+      "execution_class": "deep",
+      "candidate_effort": "medium",
+      "fixture": "fixture_c",
+      "rejection_reason": "Failed transactional cache and canonical hash chain unit tests within timeout.",
+      "retained_effort": "high"
+    },
+    {
+      "role": "final_auditor",
+      "execution_class": "deep",
+      "candidate_effort": "medium",
+      "fixture": "fixture_f",
+      "rejection_reason": "Conservative audit safety policy: independent audit requires maximum certified thinking budget to prevent subtle regressions.",
+      "retained_effort": "high"
+    }
+  ]
+}

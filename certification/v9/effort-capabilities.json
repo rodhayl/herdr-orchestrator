@@ -1,0 +1,132 @@
+{
+  "schema_version": "9.0.0",
+  "discovered_at": "2026-09-25T08:16:30Z",
+  "operator": "Antigravity Orchestrator",
+  "models": {
+    "gemini-3.8-flash": {
+      "harness": "agy",
+      "model": "gemini-3.8-flash",
+      "supported_efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effort_ladder": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_effort": "high",
+      "native_representation": "cli_flag_or_model_suffix",
+      "cli_flags": {
+        "effort_flag": "--effort",
+        "model_arg": "gemini-3.8-flash-{effort}"
+      },
+      "source": "live_agy_cli_probe: agy models && agy --help (v1.2.11)",
+      "auth_status": "AUTHENTICATED"
+    },
+    "claude-sonnet-4-6": {
+      "harness": "agy",
+      "model": "claude-sonnet-4-6",
+      "supported_efforts": [
+        "high"
+      ],
+      "effort_ladder": [
+        "high"
+      ],
+      "default_effort": "high",
+      "native_representation": "model_catalog_fixed_thinking",
+      "cli_flags": {
+        "model_arg": "claude-sonnet-4-6"
+      },
+      "source": "live_agy_cli_probe: agy models (claude-sonnet-4-6 Thinking)",
+      "auth_status": "AUTHENTICATED"
+    },
+    "qwen3.8-max": {
+      "harness": "droid",
+      "model": "qwen3.8-max",
+      "supported_efforts": [
+        "low",
+        "medium",
+        "xhigh"
+      ],
+      "effort_ladder": [
+        "low",
+        "medium",
+        "xhigh"
+      ],
+      "default_effort": "medium",
+      "native_representation": "cli_flag",
+      "cli_flags": {
+        "effort_flag": "--reasoning-effort"
+      },
+      "source": "live_droid_cli_probe: droid exec --help (v0.226.2)",
+      "auth_status": "AUTH_BLOCKED"
+    },
+    "gpt-5.6-luna": {
+      "harness": "codex",
+      "model": "gpt-5.6-luna",
+      "supported_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effort_ladder": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "default_effort": "medium",
+      "native_representation": "config_override",
+      "cli_flags": {
+        "config_arg": "-c model_reasoning_effort=\"{effort}\""
+      },
+      "source": "live_codex_cli_probe: codex exec --help (v0.155.1)",
+      "auth_status": "AUTHENTICATED"
+    },
+    "claude-sonnet-5": {
+      "harness": "claude",
+      "model": "claude-sonnet-5",
+      "supported_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_ladder": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default_effort": "high",
+      "native_representation": "cli_flag",
+      "cli_flags": {
+        "effort_flag": "--effort"
+      },
+      "source": "live_claude_cli_probe: claude --help (v2.1.263)",
+      "auth_status": "AUTH_BLOCKED"
+    },
+    "openrouter/openrouter/free": {
+      "harness": "opencode",
+      "model": "openrouter/openrouter/free",
+      "supported_efforts": [
+        "free"
+      ],
+      "effort_ladder": [
+        "free"
+      ],
+      "default_effort": "free",
+      "native_representation": "variant",
+      "cli_flags": {
+        "variant_flag": "--variant free"
+      },
+      "source": "live_opencode_cli_probe: opencode run (v1.18.31)",
+      "auth_status": "AUTHENTICATED"
+    }
+  }
+}

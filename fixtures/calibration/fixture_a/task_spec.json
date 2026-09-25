@@ -1,0 +1,12 @@
+{
+  "fixture_id": "fixture_a",
+  "name": "Routine Task: Record Formatter Canonical JSON",
+  "execution_class": "routine",
+  "task_type": "backend",
+  "prompt": "Update record_formatter.py to satisfy:\nR1: Implement to_canonical_json() method on RecordFormatter sorting keys and using compact separators (',', ':').\nR2: Add --canonical CLI argument to record_formatter.py printing canonical JSON.\nR3: Ensure all unit tests in test_formatter.py pass with python3 -m unittest discover -s . -v.\nAllowed paths: record_formatter.py, test_formatter.py.",
+  "satisfies": ["R1", "R2", "R3"],
+  "allowed_paths": ["record_formatter.py", "test_formatter.py"],
+  "validations": [
+    ["python3", "-m", "unittest", "discover", "-s", ".", "-v"]
+  ]
+}

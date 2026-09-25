@@ -1,0 +1,231 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReasoningPolicy",
+  "description": "Deterministic Reasoning Effort Policy Schema for AGY-Herdr Software Factory v9.0.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "policy_version",
+    "calibrated_at",
+    "status",
+    "model_ladders",
+    "role_policy",
+    "task_policy",
+    "escalation_policy"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["9.0.0"]
+    },
+    "policy_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "calibrated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["VALID", "NEEDS_REVALIDATION", "PROFILE_DRIFT"]
+    },
+    "provenance_hashes": {
+      "type": "object",
+      "properties": {
+        "context_policy_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "toolchain_lock_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "harness_profiles_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "calibration_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "model_ladders": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"},
+        "minItems": 1
+      }
+    },
+    "role_policy": {
+      "type": "object",
+      "required": [
+        "planner",
+        "plan_reviewer",
+        "worker",
+        "final_auditor",
+        "remediation_planner",
+        "remediation_worker"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "planner": {
+          "type": "object",
+          "required": ["initial_effort", "escalation_ceiling", "preferred_profile"],
+          "properties": {
+            "initial_effort": {"type": "string"},
+            "escalation_ceiling": {"type": "string"},
+            "preferred_profile": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "plan_reviewer": {
+          "type": "object",
+          "required": ["initial_effort", "escalation_ceiling", "preferred_profile"],
+          "properties": {
+            "initial_effort": {"type": "string"},
+            "escalation_ceiling": {"type": "string"},
+            "preferred_profile": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "worker": {
+          "type": "object",
+          "required": ["initial_effort_by_class", "escalation_ceiling_by_class"],
+          "properties": {
+            "initial_effort_by_class": {
+              "type": "object",
+              "required": ["routine", "standard", "deep"],
+              "properties": {
+                "routine": {"type": "string"},
+                "standard": {"type": "string"},
+                "deep": {"type": "string"}
+              },
+              "additionalProperties": false
+            },
+            "escalation_ceiling_by_class": {
+              "type": "object",
+              "required": ["routine", "standard", "deep"],
+              "properties": {
+                "routine": {"type": "string"},
+                "standard": {"type": "string"},
+                "deep": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "final_auditor": {
+          "type": "object",
+          "required": ["initial_effort", "escalation_ceiling", "preferred_profile"],
+          "properties": {
+            "initial_effort": {"type": "string"},
+            "escalation_ceiling": {"type": "string"},
+            "preferred_profile": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "remediation_planner": {
+          "type": "object",
+          "required": ["initial_effort", "escalation_ceiling", "preferred_profile"],
+          "properties": {
+            "initial_effort": {"type": "string"},
+            "escalation_ceiling": {"type": "string"},
+            "preferred_profile": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "remediation_worker": {
+          "type": "object",
+          "required": ["initial_effort", "escalation_ceiling"],
+          "properties": {
+            "initial_effort": {"type": "string"},
+            "escalation_ceiling": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "task_policy": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["default_execution_class", "initial_effort_by_class", "escalation_ceiling_by_class"],
+        "properties": {
+          "default_execution_class": {
+            "type": "string",
+            "enum": ["routine", "standard", "deep"]
+          },
+          "initial_effort_by_class": {
+            "type": "object",
+            "required": ["routine", "standard", "deep"],
+            "properties": {
+              "routine": {"type": "string"},
+              "standard": {"type": "string"},
+              "deep": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "escalation_ceiling_by_class": {
+            "type": "object",
+            "required": ["routine", "standard", "deep"],
+            "properties": {
+              "routine": {"type": "string"},
+              "standard": {"type": "string"},
+              "deep": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "preferred_profile_by_class": {
+            "type": "object",
+            "properties": {
+              "routine": {"type": "string"},
+              "standard": {"type": "string"},
+              "deep": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "escalation_policy": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "max_effort_escalations_per_task",
+        "eligible_failure_categories",
+        "non_eligible_failure_categories",
+        "same_model_family_only"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "max_effort_escalations_per_task": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "eligible_failure_categories": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "non_eligible_failure_categories": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "same_model_family_only": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "calibration_evidence": {
+      "type": "object",
+      "properties": {
+        "summary": {"type": "string"},
+        "baseline_ref": {"type": "string"},
+        "capabilities_ref": {"type": "string"},
+        "calibration_runs_ref": {"type": "string"},
+        "calibrated_roles": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
