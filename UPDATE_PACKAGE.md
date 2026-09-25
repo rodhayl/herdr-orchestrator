@@ -210,3 +210,20 @@ Execution Profiles decouple task definitions and routing decisions from raw work
 4. **Concurrency Bounds**: Each profile configures `max_concurrency` (default: 1) to prevent resource starvation.
 5. **No Speculative Rerouting**: The router operates strictly on capability ranking across certified profiles; if a preferred profile's provider is unauthenticated or busy, it falls back to the next certified profile in order.
 
+---
+
+## 12. Reasoning Policy & Effort Governance (v9.0.0)
+
+Reasoning Policy isolates and optimizes provider reasoning effort:
+1. **Schema Compliance**: `reasoning_policy.json` strictly conforms to `schemas/reasoning-policy.schema.json`.
+2. **Model-Specific Ladders**: Supported effort levels (`low`, `medium`, `high`, `xhigh`) are model-specific and validated against live CLI capabilities. Universal native effort enums are strictly forbidden.
+3. **Deterministic Selection**: Initial reasoning effort is resolved strictly from `(role, task_type, execution_class, model_family)` without LLM or probabilistic routing.
+4. **Bounded Deterministic Escalation**: Failed tasks on quality-related failures (e.g. `DETERMINISTIC_TEST_FAILED`, `REQUIREMENT_VALIDATION_FAILED`) may escalate by at most 1 ladder step within the same model family. Infrastructure failures (`AUTH_BLOCKED`, network, timeout) fail closed and never escalate.
+5. **Provenance Hash Invariant**: `reasoning_policy.json` records SHA-256 provenance hashes of `context_policy.json`, `toolchain.lock.json`, `harness_profiles.json`, and calibration evidence.
+6. **Governance Status Taxonomy**:
+   - `VALID`: All provenance hashes match live files; calibrated ladders are certified.
+   - `NEEDS_REVALIDATION`: Upstream context policy or calibration evidence drifted.
+   - `PROFILE_DRIFT`: Harness profile models or effort configurations drifted.
+   - `EXTERNAL_UPDATE_REQUIRED`: External toolchain lock or installed CLI versions changed.
+7. **Read-Only Verification**: `./scripts/update-package.sh --check` audits reasoning policy provenance without consuming provider quota.
+

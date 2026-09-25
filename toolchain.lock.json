@@ -1,7 +1,7 @@
 {
   "factory": {
-    "version": "8.0.0",
-    "schema_version": "8.0.0"
+    "version": "9.0.0",
+    "schema_version": "9.0.0"
   },
   "certified_environment": {
     "os": "Linux",

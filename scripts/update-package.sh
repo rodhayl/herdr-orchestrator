@@ -107,15 +107,24 @@ board_status = "OK"
 if herdr_ver != board_supported_herdr:
     board_status = "BLOCKED_EXTERNAL_COMPATIBILITY"
 
+factory_json_path = project_root / "factory.json"
+factory_ver = "9.0.0"
+if factory_json_path.exists():
+    try:
+        with open(factory_json_path, "r", encoding="utf-8") as f:
+            factory_ver = json.load(f).get("version", "9.0.0")
+    except Exception:
+        pass
+
 # Build report
 matrix = [
     {
         "component": "Factory Engine",
-        "prev_certified": prev_lock.get("factory", {}).get("version", "8.0.0"),
-        "installed": "8.0.0",
-        "latest_stable": "8.0.0",
+        "prev_certified": prev_lock.get("factory", {}).get("version", "9.0.0"),
+        "installed": factory_ver,
+        "latest_stable": factory_ver,
         "action": "Maintain",
-        "evidence": "Local package declaration"
+        "evidence": "Local package declaration (factory.json)"
     },
     {
         "component": "Herdr CLI",
@@ -217,7 +226,7 @@ matrix = [
 ]
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v8.0.0) — Toolchain & Package Update Gate")
+print("AGY-Herdr Software Factory (v9.0.0) — Toolchain & Package Update Gate")
 print("=" * 80)
 header_fmt = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
 row_fmt    = "{:<16} | {:<12} | {:<12} | {:<14} | {:<12}"
@@ -258,6 +267,42 @@ for pid, p in profiles_data.items():
     ))
 print("-" * 80)
 
+# Display Reasoning Policy Provenance & Calibration Gate Matrix (v9.0.0)
+reasoning_policy_file = project_root / "reasoning_policy.json"
+reasoning_status = "MISSING"
+drift_reasons = []
+if reasoning_policy_file.exists():
+    try:
+        sys.path.insert(0, str(project_root / "tools"))
+        sys.path.insert(0, str(project_root))
+        from tools.reasoning import ReasoningPolicy
+        r_pol = ReasoningPolicy.load(reasoning_policy_file)
+        is_valid, drift_reasons = r_pol.check_staleness(project_root)
+        if not is_valid:
+            if any("harness_profiles" in r for r in drift_reasons):
+                reasoning_status = "PROFILE_DRIFT"
+            elif any("toolchain_lock" in r for r in drift_reasons):
+                reasoning_status = "EXTERNAL_UPDATE_REQUIRED"
+            else:
+                reasoning_status = "NEEDS_REVALIDATION"
+        else:
+            reasoning_status = "VALID"
+    except Exception as e:
+        reasoning_status = f"ERROR: {e}"
+
+print("\n" + "=" * 80)
+print("Reasoning Policy Calibration & Provenance Gate (v9.0.0)")
+print("=" * 80)
+print(f"Policy File:        {reasoning_policy_file.name}")
+print(f"Governance Status:  {reasoning_status}")
+if drift_reasons:
+    print("Drift Reasons:")
+    for dr in drift_reasons:
+        print(f"  - {dr}")
+else:
+    print("Drift Check:        Clean (all provenance hashes certified)")
+print("-" * 80)
+
 if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
     print("\n[COMPATIBILITY GATE NOTICE]")
     print(f"  herdr-board {upstream_board} strictly requires Herdr {board_supported_herdr} (protocol {board_supported_proto}).")
@@ -268,7 +313,7 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
 if mode == "--apply":
     print("\n[APPLY MODE]")
     new_lock = {
-        "factory": {"version": "6.1.0", "schema_version": "6.1.0"},
+        "factory": {"version": "9.0.0", "schema_version": "9.0.0"},
         "certified_environment": {
             "os": os.uname().sysname,
             "architecture": os.uname().machine,

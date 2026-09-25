@@ -3138,7 +3138,24 @@ def resolve_task_worker(task_id: str, task_def: dict, factory_config: dict,
             escalation_reason = None
 
         if not override_pid:
-            if reasoning_res and reasoning_res.preferred_profile and reasoning_res.preferred_profile in available_profiles:
+            if task_def.get("effort_source") == "escalation" and task_def.get("model"):
+                # Requirement 37: Escalation in v9 changes effort, not model family!
+                target_model = task_def["model"]
+                clean_target = target_model.split("-high")[0].split("-medium")[0].split("-low")[0]
+                same_family_matching = [
+                    p for p in available_profiles
+                    if profiles[p].get("effort") == effort and
+                    profiles[p].get("model", "").split("-high")[0].split("-medium")[0].split("-low")[0] == clean_target
+                ]
+                if same_family_matching:
+                    selected_pid = same_family_matching[0]
+                else:
+                    same_family_any = [
+                        p for p in available_profiles
+                        if profiles[p].get("model", "").split("-high")[0].split("-medium")[0].split("-low")[0] == clean_target
+                    ]
+                    selected_pid = same_family_any[0] if same_family_any else available_profiles[0]
+            elif reasoning_res and reasoning_res.preferred_profile and reasoning_res.preferred_profile in available_profiles:
                 selected_pid = reasoning_res.preferred_profile
             else:
                 matching_effort = [p for p in available_profiles if profiles[p].get("effort") == effort]
@@ -4858,6 +4875,14 @@ class FactoryOrchestrator:
         self.routing_provenance = {}
         self.context_compiler = ContextCompiler(ContextPolicy.load(), FilesystemGitContextSource(PROJECT_ROOT))
 
+        if PROJECT_POLICY_PATH.exists():
+            try:
+                self.project_policy = ProjectPolicy.load(PROJECT_POLICY_PATH)
+            except Exception:
+                self.project_policy = None
+        else:
+            self.project_policy = None
+
         spec_path = self.plan_path.parent / "goal-spec.json"
         if spec_path.exists():
             try:
@@ -5718,6 +5743,7 @@ class FactoryOrchestrator:
                 for fut in done_futures:
                     tid, executor, att_id = active_executors.pop(fut)
                     tinfo = self.manifest["tasks"][tid]
+                    tdef = self.tasks_def[tid]
 
                     try:
                         res = fut.result()
