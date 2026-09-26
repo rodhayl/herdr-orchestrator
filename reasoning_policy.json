@@ -287,7 +287,6 @@
       "DETERMINISTIC_TEST_FAILED",
       "INCOMPLETE_RESULT",
       "MISSING_EXPECTED_FILES",
-      "PATH_VALIDATION_FAILED",
       "REQUIREMENT_VALIDATION_FAILED",
       "SCHEMA_VIOLATION",
       "WORKER_RESULT_INVALID"
@@ -303,6 +302,7 @@
       "CONTEXT_PACKET_STALE",
       "EXECUTABLE_MISSING",
       "GIT_CONFLICT",
+      "PATH_VALIDATION_FAILED",
       "INVALID_CLI_FLAG",
       "INVALID_MODEL",
       "NETWORK_FAILURE",
@@ -317,7 +317,7 @@
     "same_model_family_only": true
   },
   "calibration_evidence": {
-    "summary": "Calibrated across Fixtures A-F for lowest sufficient reasoning effort satisfying deterministic quality gates.",
+    "summary": "Initial evidence-backed defaults calibrated across Fixtures A-F. These are conservative production starting points, not universal optima across repositories, task distributions, providers, or future model versions.",
     "baseline_ref": "certification/v9/effort-baseline.json",
     "capabilities_ref": "certification/v9/effort-capabilities.json",
     "calibration_runs_ref": "certification/v9/calibration-runs.jsonl",

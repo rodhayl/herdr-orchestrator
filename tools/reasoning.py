@@ -43,12 +43,13 @@ ELIGIBLE_FAILURE_CATEGORIES = {
     "REQUIREMENT_VALIDATION_FAILED",
     "DETERMINISTIC_TEST_FAILED",
     "AUDIT_REQUIRED_REMEDIATION",
-    "PATH_VALIDATION_FAILED",
     "MISSING_EXPECTED_FILES",
     "WORKER_RESULT_INVALID"
 }
 
-# Infrastructure failures that MUST NEVER trigger effort escalation
+# Failures that MUST NEVER trigger effort escalation. This includes infrastructure/auth
+# failures and guardrail/scope violations: more reasoning must never be used to bypass
+# a deterministic safety boundary such as path validation.
 NON_ELIGIBLE_FAILURE_CATEGORIES = {
     "AUTH_BLOCKED",
     "EXECUTABLE_MISSING",
@@ -62,6 +63,7 @@ NON_ELIGIBLE_FAILURE_CATEGORIES = {
     "INVALID_CLI_FLAG",
     "WORKTREE_FAILURE",
     "GIT_CONFLICT",
+    "PATH_VALIDATION_FAILED",
     "CONFLICTED",
     "CONTEXT_COMPILATION_FAILED",
     "CONTEXT_ANCHOR_MISSING",

@@ -218,7 +218,7 @@ Reasoning Policy isolates and optimizes provider reasoning effort:
 1. **Schema Compliance**: `reasoning_policy.json` strictly conforms to `schemas/reasoning-policy.schema.json`.
 2. **Model-Specific Ladders**: Supported effort levels (`low`, `medium`, `high`, `xhigh`) are model-specific and validated against live CLI capabilities. Universal native effort enums are strictly forbidden.
 3. **Deterministic Selection**: Initial reasoning effort is resolved strictly from `(role, task_type, execution_class, model_family)` without LLM or probabilistic routing.
-4. **Bounded Deterministic Escalation**: Failed tasks on quality-related failures (e.g. `DETERMINISTIC_TEST_FAILED`, `REQUIREMENT_VALIDATION_FAILED`) may escalate by at most 1 ladder step within the same model family. Infrastructure failures (`AUTH_BLOCKED`, network, timeout) fail closed and never escalate.
+4. **Bounded Deterministic Escalation**: Failed tasks on quality-related failures (e.g. `DETERMINISTIC_TEST_FAILED`, `REQUIREMENT_VALIDATION_FAILED`) may escalate by at most 1 ladder step within the same model family. Infrastructure failures (`AUTH_BLOCKED`, network, timeout) and guardrail/scope violations such as `PATH_VALIDATION_FAILED` fail closed and never escalate reasoning effort.
 5. **Provenance Hash Invariant**: `reasoning_policy.json` records SHA-256 provenance hashes of `context_policy.json`, `toolchain.lock.json`, `harness_profiles.json`, and calibration evidence.
 6. **Governance Status Taxonomy**:
    - `VALID`: All provenance hashes match live files; calibrated ladders are certified.
@@ -226,4 +226,6 @@ Reasoning Policy isolates and optimizes provider reasoning effort:
    - `PROFILE_DRIFT`: Harness profile models or effort configurations drifted.
    - `EXTERNAL_UPDATE_REQUIRED`: External toolchain lock or installed CLI versions changed.
 7. **Read-Only Verification**: `./scripts/update-package.sh --check` audits reasoning policy provenance without consuming provider quota.
+8. **Calibration Scope**: The certified v9 policy is an initial evidence-backed production default. Fixture calibration does not establish a universal optimum across repositories or future model versions; real usage should be observed passively and recalibration should be deliberate, bounded, and separately justified.
+9. **Efficiency Claim Boundary**: v9 certification demonstrates lower reasoning/output tokens and lower wall-clock time on the recorded TreeHash comparison. Because input tokens increased and provider cost units were unavailable, governance documentation must not infer total-token or monetary-cost savings from that comparison.
 

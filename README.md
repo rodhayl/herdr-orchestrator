@@ -1,4 +1,4 @@
-# AGY-Herdr Software Factory (v8.0.0 — Context Efficiency + Deep Hardening)
+# AGY-Herdr Software Factory (v9.0.0 — Context + Reasoning Efficiency)
 
 A project-local, orchestrator-agnostic autonomous software factory proving that an arbitrary brain/orchestrator can delegate the end-to-end specification, parallel implementation, deterministic verification, and independent audit of complete applications and features across multiple isolated worker identities through Herdr.
 
@@ -16,6 +16,9 @@ A project-local, orchestrator-agnostic autonomous software factory proving that 
 8. **Concurrent Run Isolation**: Multiple factory runs operate simultaneously without cross-run ownership contamination or accidental cleanup interference.
 9. **Zero Host Pollution**: Strict Python 3 standard library operation—zero external pip packages, no `.venv`, no `sudo`, and zero modification to host configuration.
 10. **Certified Multi-Application Reusability**: Successfully built and verified **MiniBoard**, **MiniLinks**, **MiniLinks Favorite/Star**, and genuine real-provider **TreeHash v8** Merkle directory hashing.
+
+> [!NOTE]
+> **v9 evidence interpretation:** the TreeHash v8→v9 comparison observed a 59.57% reduction in worker reasoning tokens and a 31.87% reduction in worker output tokens, while worker input tokens increased by 27.20%. The two target runs also produced different test-suite sizes (87 vs 141 tests). Therefore v9 does **not** claim demonstrated total-token or monetary-cost savings from that comparison. `reasoning_policy.json` is an initial evidence-backed default policy with bounded escalation, not a universal optimum for every repository or workload.
 
 ---
 

@@ -300,6 +300,11 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
   - `PYTHONHASHSEED=42 ./scripts/verify.sh` -> PASS (225/225 tests, exit code 0).
 - **Zero Host Mutation**: Workspaces 1–13 protected; zero external pip packages; standard-library Python only.
 
+## [2026-09-26] v9 Safety & Evidence Closeout (No Provider Calls)
 
-
-
+- **Scope**: Local/static closeout only. No AGY, Droid, Codex, Claude, OpenCode, or other model/provider calls were requested or required.
+- **Reasoning Escalation Safety**: Reclassified `PATH_VALIDATION_FAILED` from an escalation-eligible quality failure to a non-escalatable guardrail/scope violation in both `tools/reasoning.py` and `reasoning_policy.json`. Higher reasoning effort must never be used as an automatic response to writing outside allowed scope.
+- **Regression Coverage**: Added deterministic tests asserting that path-validation failures are absent from eligible categories, present in non-eligible categories, and produce `FAILURE_NOT_ELIGIBLE` with no effort increase.
+- **Calibration Scope**: Clarified that v9 effort calibration is an initial evidence-backed production default with bounded escalation, not a universal optimum across repositories, workloads, providers, or future model versions.
+- **Efficiency Evidence Correction**: The recorded TreeHash comparison demonstrates lower worker reasoning tokens (-59.57%), lower worker output tokens (-31.87%), and lower wall-clock duration (-20.10%), while worker input tokens increased (+27.20%). The v8 baseline does not expose comparable cached-input telemetry, and the v8/v9 target suites differ in size (87 vs 141 tests). Therefore the certification does not claim demonstrated total-token or monetary-cost savings.
+- **External Blockers**: Existing AUTH_BLOCKED / FREEBUFF_HEADLESS_BLOCKED / herdr-board compatibility states were intentionally left unchanged; no quota-consuming re-probes were performed.

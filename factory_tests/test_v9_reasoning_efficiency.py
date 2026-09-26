@@ -275,7 +275,7 @@ class TestV9DeterministicEscalation(unittest.TestCase):
 
     def test_non_eligible_infra_failures_never_escalate(self):
         """Infrastructure and environmental failures must NEVER escalate reasoning effort."""
-        for fail_cat in ["TIMEOUT", "TIMED_OUT", "AUTH_BLOCKED", "GIT_CONFLICT", "CONTEXT_COMPILATION_FAILED"]:
+        for fail_cat in ["TIMEOUT", "TIMED_OUT", "AUTH_BLOCKED", "GIT_CONFLICT", "PATH_VALIDATION_FAILED", "CONTEXT_COMPILATION_FAILED"]:
             next_effort, reason = self.policy.evaluate_escalation(
                 current_effort="low",
                 model_family="gemini-3.8-flash",
@@ -285,6 +285,21 @@ class TestV9DeterministicEscalation(unittest.TestCase):
             )
             self.assertIsNone(next_effort)
             self.assertIn("FAILURE_NOT_ELIGIBLE", reason)
+
+    def test_path_validation_failure_never_escalates_reasoning(self):
+        """Path/scope guardrail failures fail closed and never trigger a higher reasoning effort."""
+        self.assertNotIn("PATH_VALIDATION_FAILED", ELIGIBLE_FAILURE_CATEGORIES)
+        self.assertIn("PATH_VALIDATION_FAILED", NON_ELIGIBLE_FAILURE_CATEGORIES)
+        self.assertFalse(self.policy.is_failure_escalation_eligible("PATH_VALIDATION_FAILED"))
+        next_effort, reason = self.policy.evaluate_escalation(
+            current_effort="low",
+            model_family="gemini-3.8-flash",
+            failure_category="PATH_VALIDATION_FAILED",
+            attempt_id=1,
+            execution_class="routine"
+        )
+        self.assertIsNone(next_effort)
+        self.assertIn("FAILURE_NOT_ELIGIBLE", reason)
 
     def test_bounded_escalation_cap_max_one_step(self):
         """Escalation is strictly capped at 1 step: attempt 2 failure cannot escalate further."""

@@ -67,5 +67,10 @@
       "rejection_reason": "Conservative audit safety policy: independent audit requires maximum certified thinking budget to prevent subtle regressions.",
       "retained_effort": "high"
     }
-  ]
+  ],
+  "policy_scope": {
+    "classification": "INITIAL_EVIDENCE_BACKED_DEFAULTS",
+    "universal_optimum_claimed": false,
+    "note": "Fixtures A-F justify conservative default effort choices and escalation bounds for the certified baseline; they do not prove globally optimal effort for every repository, task distribution, provider, or future model release."
+  }
 }

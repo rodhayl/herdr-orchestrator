@@ -13,7 +13,7 @@
     "total_worker_duration_ms": 661324.18,
     "total_attempts": 3,
     "total_escalations": 0,
-    "anchor_recall": 1.0,
+    "anchor_recall": 1,
     "tasks": {
       "task_core_impl": {
         "profile": "agy-backend-high",
@@ -49,7 +49,7 @@
     "total_worker_duration_ms": 528382.97,
     "total_attempts": 3,
     "total_escalations": 0,
-    "anchor_recall": 1.0,
+    "anchor_recall": 1,
     "tasks": {
       "task_core_impl": {
         "profile": "agy-backend-medium",
@@ -80,7 +80,7 @@
       "v9": 36667,
       "absolute_reduction": 54036,
       "percentage_reduction": 59.57,
-      "target_percentage_reduction": 25.0,
+      "target_percentage_reduction": 25,
       "status": "TARGET_EXCEEDED"
     },
     "output_tokens": {
@@ -88,7 +88,7 @@
       "v9": 93299,
       "absolute_reduction": 43651,
       "percentage_reduction": 31.87,
-      "target_percentage_reduction": 25.0,
+      "target_percentage_reduction": 25,
       "status": "TARGET_EXCEEDED"
     },
     "duration_ms": {
@@ -114,15 +114,36 @@
         "output_tokens_delta": 16745,
         "notes": "v9 authored 141 comprehensive tests (Ran 141 tests in 0.795s OK) providing 100% test coverage of all requirements."
       }
+    },
+    "input_tokens": {
+      "v8": 1095534,
+      "v9": 1393545,
+      "absolute_increase": 298011,
+      "percentage_increase": 27.2,
+      "status": "INCREASED"
     }
   },
   "quality_and_governance": {
     "context_architecture_frozen": true,
-    "anchor_recall_maintained": 1.0,
+    "anchor_recall_maintained": 1,
     "escalations_count": 0,
-    "unit_tests_pass_rate_pct": 100.0,
+    "unit_tests_pass_rate_pct": 100,
     "final_audit_verdict": "ACCEPTED",
     "critical_findings": 0,
     "major_findings": 0
+  },
+  "interpretation": {
+    "reasoning_tokens_reduced": true,
+    "output_tokens_reduced": true,
+    "input_tokens_increased": true,
+    "cached_input_comparison_available": false,
+    "total_token_savings_demonstrated": false,
+    "monetary_cost_savings_demonstrated": false,
+    "policy_scope": "INITIAL_EVIDENCE_BACKED_DEFAULTS_NOT_UNIVERSAL_OPTIMUM",
+    "limitations": [
+      "The v8 baseline does not report cached-input tokens, so cache-volume changes are not comparable from the certification artifacts.",
+      "The v8 and v9 TreeHash runs produced different test-suite sizes (87 vs 141 passing tests), so the observed token deltas are not a perfectly controlled causal estimate of effort alone.",
+      "Provider usage/cost units were unavailable; no monetary-cost reduction is claimed."
+    ]
   }
 }

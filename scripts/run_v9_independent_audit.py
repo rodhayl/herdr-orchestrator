@@ -60,7 +60,7 @@ Audit specifically for:
    - Is lowest-sufficient-effort calibration maintained across Fixtures A–F (Routine, Standard, Deep, Planner, Reviewer, Final Auditor)?
 2. Bounded Escalation Logic:
    - Is escalation strictly bounded to at most 1 ladder step within the same model family?
-   - Are escalations allowed ONLY for quality failures (test failure, path violation, verification error)?
+   - Are escalations allowed ONLY for reasoning-quality failures, while guardrail/scope violations such as path validation fail closed without effort escalation?
    - Do infrastructure failures (timeouts, harness crashes, memory exhaustion, auth errors) fail closed without wasting reasoning tokens?
 3. Telemetry Isolation & Non-Fabrication:
    - Are the 15 provider telemetry fields captured truthfully without synthetic token fabrication or hallucinated cost metrics?
