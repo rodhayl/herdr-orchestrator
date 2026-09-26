@@ -1,65 +1,97 @@
-# CONTEXT_EFFICIENCY.md — Context Efficiency Architecture & Verification (v8.0.0)
+# Context & Usage Efficiency — v8 baseline, v9 interpretation
 
-## Executive Summary
+## Current role of this document
 
-The AGY-Herdr Software Factory v8.0.0 delivers a **75.1% reduction** in Factory-supplied prompt and context bytes on the primary TreeHash certification workflow, comfortably exceeding the mandatory $\ge 40\%$ reduction objective.
+v8 introduced the deterministic Context Management subsystem. v9 retained that architecture and changed a separate variable: reasoning effort.
 
-Crucially, this efficiency gain is achieved with **100.0% required anchor recall** across all dispatched worker, reviewer, and auditor stages, preserving deterministic validation quality, attempt isolation, and clean-room portability.
+The context system is therefore still the active v9 baseline.
 
----
+## Verified v7 → v8 context result
 
-## 1. Verified A/B Benchmark Results (TreeHash Workflow)
+The preserved TreeHash benchmark records:
 
-| Role / Stage | v7 Bytes | v8 Bytes | Reduction | Anchor Recall |
-|:---|:---:|:---:|:---:|:---:|
-| `reviewer` | 16,543 B | 2,613 B | **-84.2%** | 100% |
-| `task_core_impl` | 5,711 B | 1,943 B | **-66.0%** | 100% |
-| `task_cli_impl` | 5,633 B | 2,332 B | **-58.6%** | 100% |
-| `task_unit_tests` | 6,870 B | 2,634 B | **-61.7%** | 100% |
-| `auditor` | 16,413 B | 3,201 B | **-80.5%** | 100% |
-| **TOTAL (Workflow)** | **51,170 B** | **12,723 B** | **-75.1%** | **100%** |
+| Stage | v7 bytes | v8 bytes | Reduction |
+| --- | ---: | ---: | ---: |
+| reviewer | 16,543 | 2,613 | 84.2% |
+| task_core_impl | 5,711 | 1,943 | 66.0% |
+| task_cli_impl | 5,633 | 2,332 | 58.6% |
+| task_unit_tests | 6,870 | 2,634 | 61.7% |
+| auditor | 16,413 | 3,201 | 80.5% |
+| **workflow total** | **51,170** | **12,723** | **75.1%** |
 
-### Redundancy Analysis
-- **v7 Baseline Redundancy Ratio**: `67.1%`
-- **v8 Compiled Redundancy Ratio**: `59.7%`
-- **Measurement Standard**: Exact provider-independent byte counts calculated via bounded chunk segmentation.
+Required-anchor recall remained 100%.
 
----
+This is an exact Factory-supplied byte comparison and does not depend on provider token accounting.
 
-## 2. Context Compiler Architecture
+## Active ContextCompiler invariants
 
-The v8 context engine replaces ad-hoc multi-path prompt construction with a deterministic, role-specialized `ContextCompiler`:
+- role-specific context packets;
+- file references preferred over broad source inlining;
+- required anchors must achieve 100% recall before dispatch;
+- cross-task semantic handoffs are bounded;
+- new tasks default to fresh sessions;
+- native compaction is not required for correctness;
+- stable prompt prefixes are rendered deterministically;
+- stale source hashes invalidate packets;
+- context budgeting uses deterministic pruning, never blind slicing;
+- project/run isolation prevents context leakage.
 
-1. **Role-Specific Context Packets**:
-   - `PlanReviewContextPacket`: Scoped Goal Spec, proposed plan, policy constraints, and structural traceability.
-   - `TaskContextPacket`: Scoped criteria, task-relevant disk file references, predecessor task handoffs, and deterministic validations.
-   - `AuditContextPacket`: Authoritative Goal Spec, validation evidence, clean-commit Git diffs, and audit schema.
+Authoritative policy: [context_policy.json](context_policy.json).
 
-2. **File References Over File Inlining**:
-   - Agents operate directly within isolated Git worktrees and inspect code natively via tools.
-   - Raw full-file copies are completely eliminated from worker prompts by default; inlined excerpts are only included when strictly necessary and bounded.
+## v9 reasoning comparison
 
-3. **Required Anchor Gate**:
-   - Every requirement ID, allowed path, and validation command constitutes a required anchor.
-   - Dispatch fails closed (`CONTEXT_ANCHOR_MISSING`) if `required_anchor_recall < 1.0`.
+The preserved v8→v9 TreeHash comparison observed:
 
-4. **Bounded Semantic Handoffs**:
-   - Cross-task communication flows exclusively through immutable `HandoffPacket` instances bounded to $\le 4,096$ bytes.
-   - Unbounded conversation histories between tasks are strictly forbidden.
+| Metric | v8 | v9 | Observed change |
+| --- | ---: | ---: | ---: |
+| worker reasoning tokens | 90,703 | 36,667 | -59.57% |
+| worker output tokens | 136,950 | 93,299 | -31.87% |
+| worker input tokens | 1,095,534 | 1,393,545 | **+27.20%** |
+| worker duration | 661,324 ms | 528,383 ms | -20.10% |
 
-5. **Stable Prefix Architecture**:
-   - Static operational contracts are canonically positioned at the prefix of prompts, maximizing KV-cache reuse.
-   - Dynamic prompt content is isolated to the tail.
+Interpretation limits:
 
-6. **Derived Requirement Auditing**:
-   - Every derived requirement must trace to an explicit criterion or hard invariant with a documented rationale.
-   - Orphan derived requirements fail closed (`OrphanDerivedRequirementError`).
+1. v8 did not record comparable cached-input-token telemetry.
+2. v8 and v9 target runs produced different test-suite sizes (87 vs 141 passing tests).
+3. provider monetary usage/cost units were unavailable.
+4. therefore these runs do not establish total-token savings, cost savings, or a precise causal percentage attributable only to effort.
 
----
+The valid conclusion is narrower: the recorded v9 run used substantially fewer reasoning/output tokens and less wall-clock time while preserving the recorded quality gates.
 
-## 3. Provider Metric Honesty
+## Reasoning policy
 
-In accordance with Factory truth invariants:
-- Provider token counts (`input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_tokens`) are recorded when reported by the underlying provider.
-- When an adapter or harness does not report token metrics, fields remain `null`.
-- Canonical measurements remain exact byte lengths.
+v9 uses a deterministic, versioned policy after routing.
+
+The policy is an initial evidence-backed production default, not a universal optimum.
+
+It uses bounded escalation only for reasoning-quality failures. Infrastructure/auth/context/path guard failures do not trigger higher effort. `PATH_VALIDATION_FAILED` is explicitly non-escalatable.
+
+Authoritative policy: [reasoning_policy.json](reasoning_policy.json).
+
+## Provider metric honesty
+
+Provider metrics are recorded only when actually exposed:
+
+- input tokens;
+- cached input tokens;
+- output tokens;
+- reasoning tokens;
+- provider usage units if available.
+
+Unavailable fields remain null/unknown in evidence. Do not reconstruct hidden reasoning or monetary cost from guesses.
+
+Provider-independent measurements such as rendered packet bytes remain exact.
+
+## Operational recommendation
+
+Do not repeatedly run model-backed calibration/audits to optimize an already-certified baseline.
+
+For routine changes:
+
+```bash
+./scripts/verify.sh
+```
+
+Collect production metrics passively. Recalibrate only when there is a concrete reason, such as model/profile drift or evidence of systematic quality/usage problems.
+
+See [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) for the overall release status.

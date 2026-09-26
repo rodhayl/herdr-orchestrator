@@ -1,170 +1,195 @@
-# AGY-Herdr Software Factory (v9.0.0 — Context + Reasoning Efficiency)
+# AGY-Herdr Software Factory v9.0.0
 
-A project-local, orchestrator-agnostic autonomous software factory proving that an arbitrary brain/orchestrator can delegate the end-to-end specification, parallel implementation, deterministic verification, and independent audit of complete applications and features across multiple isolated worker identities through Herdr.
+A project-local, orchestrator-agnostic software factory for turning goals or declarative DAGs into isolated implementation work, deterministic validation, auditable Git integration, and bounded review/remediation.
 
----
+The current release combines:
 
-## 1. What This Factory Proves
+- durable DAG execution and crash recovery;
+- capability/profile-based multi-harness routing;
+- external-project Autopilot;
+- truthful REAL/MOCK execution provenance;
+- deterministic context compilation and bounded handoffs;
+- a versioned reasoning-effort policy with bounded escalation;
+- provider-free regression and clean-room portability workflows.
 
-1. **Context Efficiency Engine (v8.0.0)**: Delivers 75.1% prompt/context byte reduction with 100.0% required anchor recall, zero orphan requirements, and bounded semantic handoffs ($\le 4,096$ bytes) via the deterministic `ContextCompiler`.
-2. **Orchestrator Independence**: Any brain (AGY, Codex, Claude, Droid, human) can orchestrate development by issuing declarative DAG plans or natural-language Goal Specs and executing a standard-library driver.
-3. **Generic WorkerAdapter Architecture**: A clean adapter boundary separates factory core orchestration from worker execution. `AgyAdapter`, `DroidAdapter`, `CodexAdapter`, `ClaudeAdapter`, and `OpenCodeAdapter` plug in without rewriting scheduler, state, or Git logic.
-4. **Autonomous Goal Controller (Project Autopilot)**: End-to-end autonomous lifecycle (`Goal -> Discovery -> GoalSpec -> Traceable Plan v2 DAG -> Independent Plan Review -> Bounded Revision -> Routing / Execution -> Post-Validation -> Independent Final Audit -> Bounded Remediation -> Complete`).
-5. **Durable State Machine & First-Class Attempts**: Explicit canonical states, atomic JSON writes (`atomic_write_json`), append-only event logging (`events.jsonl`), and monotonic attempt isolation (`att-{attempt_id}`).
-6. **Reconciliation-Based Resume**: Resuming an interrupted or crashed run (`factory.py resume <run_id>`) inspects reality (Git commits, branches, status files) across Cases A through F, preventing duplicate work, duplicate commits, or duplicate merges.
-7. **Deterministic Failure Injection & Conflict Handling**: Inert-in-production failpoints (`FACTORY_TEST_FAILPOINT`) verify crash recovery; explicit merge conflict detection records unmerged diffs and safely executes `git merge --abort`.
-8. **Concurrent Run Isolation**: Multiple factory runs operate simultaneously without cross-run ownership contamination or accidental cleanup interference.
-9. **Zero Host Pollution**: Strict Python 3 standard library operation—zero external pip packages, no `.venv`, no `sudo`, and zero modification to host configuration.
-10. **Certified Multi-Application Reusability**: Successfully built and verified **MiniBoard**, **MiniLinks**, **MiniLinks Favorite/Star**, and genuine real-provider **TreeHash v8** Merkle directory hashing.
+## Current status
 
-> [!NOTE]
-> **v9 evidence interpretation:** the TreeHash v8→v9 comparison observed a 59.57% reduction in worker reasoning tokens and a 31.87% reduction in worker output tokens, while worker input tokens increased by 27.20%. The two target runs also produced different test-suite sizes (87 vs 141 tests). Therefore v9 does **not** claim demonstrated total-token or monetary-cost savings from that comparison. `reasoning_policy.json` is an initial evidence-backed default policy with bounded escalation, not a universal optimum for every repository or workload.
+The canonical state summary is [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md).
 
----
+Important evidence boundaries:
 
-## 2. Architecture & Boundary
+- v8 measured a **75.1% reduction in Factory-supplied context bytes** on the TreeHash benchmark while preserving 100% required-anchor recall.
+- v9 observed **59.57% fewer worker reasoning tokens** and **31.87% fewer worker output tokens** than the recorded v8 TreeHash run, but worker input tokens increased **27.20%**.
+- The v8 and v9 TreeHash runs produced different test-suite sizes, and v8 does not expose comparable cached-input telemetry.
+- Therefore the repository does **not** claim demonstrated total-token savings or monetary-cost savings from the v8→v9 comparison.
+- `reasoning_policy.json` is an initial evidence-backed production default, not a universal optimum.
 
+## Architecture
+
+```text
+High-level goal / DAG
+        |
+        v
+Project policy + GoalSpec
+        |
+        v
+Planner -> deterministic plan gates -> reviewer
+        |
+        v
+ContextCompiler
+  - role-specific packets
+  - required anchors
+  - bounded handoffs
+        |
+        v
+Deterministic router
+        |
+        v
+ReasoningPolicy
+  routine / standard / deep
+  bounded same-family escalation
+        |
+        v
+WorkerAdapter
+  AGY | Droid | Codex | Claude | OpenCode
+        |
+        v
+isolated task worktrees
+        |
+        v
+path + test + integration gates
+        |
+        v
+final audit / bounded remediation
 ```
-                  arbitrary orchestrator
-                            |
-                            v
-                     declarative DAG plan
-              (plans/minilinks_v3_favorite.json)
-                            |
-                            v
-                    tools/factory.py
-              (DAG Scheduler & State Engine)
-                            |
-                            v
-                      WorkerAdapter
-                            |
-                       AgyAdapter
-                            |
-                          Herdr
-                   /        |        \
-                  v         v         v
-                agy3      agy4      agy5
-              (backend) (frontend)  (tests)
-                  |         |         |
-                att-1     att-1     att-1
-                   \        |        /
-                    \       |       /
-                     v      v      v
-                   deterministic gates
-               (compileall + unittests + smoke)
-                            |
-                            v
-                          agy6
-                 (repair / integration)
-                            |
-                            v
-                          agy7
-                  (independent audit)
-```
 
-### Components
-- **Control Plane**: The existing Herdr workspace (`wK`) and pane (`wK:p1`) from which the orchestrator runs.
-- **Factory Engine (`tools/factory.py`)**: Python 3 stdlib driver managing task lifecycles, worktrees, Herdr panes, merges, deterministic gates, and resume.
-- **Worker Registry (`factory.json`)**: Declarative definitions for each worker identity and future adapter templates.
-- **Plan Schema**: Declarative DAG JSON declaring tasks, worker identities, explicit dependencies, allowed paths, context files, and post-validation commands.
-- **Worktrees (`.agy-factory/worktrees/`)**: Isolated Git worktrees per run, task, and attempt (`att-{attempt_id}`) where workers modify code without touching the main working tree.
-- **Audit & Evidence (`.agy-factory/runs/`)**: Full audit trails of prompts, outputs, diffs, tokens, event logs (`events.jsonl`), and manifest state (`manifest.json`).
+Factory state, scheduling, routing, retries, Git integration, completion gates, and evidence remain deterministic. Models perform semantic tasks; they do not own completion truth.
 
----
+## Quick start — provider-free
 
-## 3. Ownership & Isolation Invariant
-
-The factory strictly enforces the ownership boundary:
-```python
-if resource_id not in owned_resources:
-    mutation_forbidden()
-```
-- Every Herdr workspace or pane created by the factory is recorded immediately in `.agy-factory/state/owned-resources.json` under run-scoped tracking.
-- Pre-existing Herdr resources (other projects, active agents) are read-only baseline references and are **never** mutated, stopped, or cleaned up.
-- The control plane itself is registered as protected and excluded from cleanup.
-
-> [!IMPORTANT]
-> **Security Boundary Notice**: Factory path guardrails enforce Git allowlists, expected target files, and symlink escape checks before committing. They operate at the application/commit gate and do **not** constitute an OS kernel sandbox.
-
----
-
-## 4. Worker Registry & Readiness
-
-| Worker Identity | Script / Binary | Profile Home | Capabilities | Adapter | Default Role |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `agy` | `/root/.local/bin/agy` | `/root/.agy_home` | general, orchestration | `agy` | Primary CLI (control plane) |
-| `agy2` | `/root/.local/bin/agy2` | `/root/.agy2_home` | planning, specification | `agy` | Product Specification |
-| `agy3` | `/root/.local/bin/agy3` | `/root/.agy3_home` | implementation, backend, database | `agy` | Backend / SQLite Storage |
-| `agy4` | `/root/.local/bin/agy4` | `/root/.agy4_home` | implementation, frontend | `agy` | Frontend UI (HTML/CSS/JS) |
-| `agy5` | `/root/.local/bin/agy5` | `/root/.agy5_home` | implementation, testing | `agy` | Test Suite & Smoke Harness |
-| `agy6` | `/root/.local/bin/agy6` | `/root/.agy6_home` | review, repair, integration | `agy` | Integration Quality & Repair |
-| `agy7` | `/root/.local/bin/agy7` | `/root/.agy7_home` | review, audit, evaluation | `agy` | Independent Final Audit |
-
-### Future Worker Family Readiness (v4 Scope)
-The `WorkerAdapter` interface decouples the factory core from worker CLI mechanics. The v4 iteration is fixed: adding `DroidAdapter` and deterministic capability-based routing alongside one-way `nelsonPires5/herdr-board` projection.
-
----
-
-## 5. Usage & Operations
-
-### Validating a Plan
-Validates DAG integrity, duplicate task IDs, unknown workers, missing dependencies, cycles, and unsafe path escapes before execution:
 ```bash
-python3 tools/factory.py validate-plan plans/minilinks_v3_favorite.json
+./scripts/doctor.sh
+./scripts/update-package.sh --check
+./scripts/bootstrap.sh
+./scripts/verify.sh
 ```
 
-### Running a Plan
-Executes the declarative orchestration DAG end-to-end:
+For a clean-room rehearsal:
+
 ```bash
-python3 tools/factory.py run plans/minilinks_v3_favorite.json
+./scripts/portable-smoke.sh
 ```
 
-### Resuming an Interrupted Run
-Resumes an interrupted or partial factory run, reconciling reality against on-disk commits and artifacts:
+These are the normal maintenance paths. Real-provider verification is intentionally separate because it consumes provider usage:
+
 ```bash
-python3 tools/factory.py resume run-<timestamp>
+./scripts/verify-real.sh
 ```
 
-### Checking Status (CLI and JSON)
-Inspects active and past runs, task states, and owned resources:
+Run it only when new real-provider evidence is actually required.
+
+## External-project Autopilot
+
 ```bash
-python3 tools/factory.py status
+python3 tools/factory.py --project-root /path/to/project project init --name "MyProject"
+python3 tools/factory.py --project-root /path/to/project project doctor
+python3 tools/factory.py --project-root /path/to/project goal run --goal-file /path/to/GOAL.md --real-only
+python3 tools/factory.py --project-root /path/to/project goal report --goal-id <goal-id>
 ```
 
-Machine-readable JSON projection for Kanban / automated tooling:
-```bash
-python3 tools/factory.py status --json
-python3 tools/factory.py status --json --run run-<timestamp>
+Interrupted goals/runs are resumed from durable state rather than restarted from scratch.
+
+## Execution provenance
+
+Production evidence distinguishes:
+
+- `REAL`: verified provider-backed execution;
+- `MOCK`: deterministic test-harness execution;
+- `TRANSPORT_ONLY`: transport was proven without substantive task execution;
+- `UNKNOWN`: insufficient evidence.
+
+Mock execution can validate architecture and recovery, but cannot satisfy a real-provider certification gate.
+
+## Current harness state
+
+The live source of truth is [harness_profiles.json](harness_profiles.json), with the last certified stack in [toolchain.lock.json](toolchain.lock.json).
+
+At the current documented baseline:
+
+| Harness | State |
+| --- | --- |
+| AGY | real-provider certified profiles exist |
+| OpenCode | `opencode-mimo-free` real-provider certified |
+| Droid | adapter implemented/deterministically tested; direct profiles currently `AUTH_BLOCKED` |
+| Codex | adapter implemented/deterministically tested; direct profiles currently `AUTH_BLOCKED` |
+| Claude Code | adapter implemented/deterministically tested; direct profiles currently `AUTH_BLOCKED` |
+| OpenCode Gemini | `PROFILE_UNAVAILABLE` under current provider guardrails |
+| Freebuff | `FREEBUFF_HEADLESS_BLOCKED` |
+| herdr-board | `BLOCKED_EXTERNAL_COMPATIBILITY` |
+
+These statuses can drift. Use `doctor.sh` and `update-package.sh --check`; do not silently mutate authentication to make a test pass.
+
+## Reasoning policy
+
+The v9 policy separates routing from reasoning effort.
+
+- routine work: lower certified effort where supported;
+- standard work: medium/default calibrated effort;
+- deep work and final audit: conservative high effort;
+- at most one same-model-family escalation by default;
+- only reasoning-quality failures can trigger escalation;
+- infrastructure/auth failures and scope/path guardrail failures never trigger higher effort.
+
+See [reasoning_policy.json](reasoning_policy.json) and [UPDATE_PACKAGE.md](UPDATE_PACKAGE.md).
+
+## Context policy
+
+v8 introduced deterministic role-specific context packets, file references instead of broad inlining, 100% required-anchor recall gates, bounded handoffs, stable prefixes, fresh-session defaults, and stale-packet detection.
+
+See [CONTEXT_EFFICIENCY.md](CONTEXT_EFFICIENCY.md) and [context_policy.json](context_policy.json).
+
+## Documentation
+
+Start with [docs/README.md](docs/README.md).
+
+Current operational documents:
+
+- [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
+- [ORCHESTRATOR.md](ORCHESTRATOR.md)
+- [HARNESS_PROFILES.md](HARNESS_PROFILES.md)
+- [CONTEXT_EFFICIENCY.md](CONTEXT_EFFICIENCY.md)
+- [REPRODUCIBILITY.md](REPRODUCIBILITY.md)
+- [UPDATE_PACKAGE.md](UPDATE_PACKAGE.md)
+- [UPDATE_HISTORY.md](UPDATE_HISTORY.md)
+
+Application contracts:
+
+- [MiniBoard specification](docs/SPECIFICATION.md)
+- [MiniLinks specification](examples/minilinks/SPEC.md)
+
+Historical narrative certification documents are under [docs/archive/](docs/archive/README.md). Machine-readable certification evidence remains under [certification/](certification/README.md).
+
+## Repository layout
+
+```text
+tools/              orchestration, context, reasoning engines
+schemas/            versioned machine-readable contracts
+factory_tests/      Factory regression/invariant tests
+scripts/            doctor, update, verify, portability, certification utilities
+prompts/            stable worker/reviewer prompt contracts
+plans/              retained orchestration plans and compatibility fixtures
+certification/      machine-readable certification evidence
+docs/               current docs index, app specification, historical archive
+examples/minilinks/ second reference application
+app/, web/, tests/  MiniBoard reference application
+.agy-factory/       retained historical evidence/runtime samples in this PoC repository
 ```
 
-### Safe Cleanup
-Removes only project-owned Herdr workspaces, Git worktrees, and ephemeral scratch files:
-```bash
-python3 tools/factory.py cleanup
-```
+## Project principles
 
-### Running Factory Self-Tests
-Runs the comprehensive 35-test unit suite verifying DAG execution, adapter lookup, timeout isolation, failpoints, merge conflict aborts, symlink escapes, and status projections:
-```bash
-python3 -m unittest discover -s factory_tests -v
-```
-
----
-
-## 6. Built Applications
-
-### 1. MiniBoard (`./`)
-Local single-user Kanban task board:
-- **Backend**: Python 3 `http.server` with `sqlite3` persistence (`app/server.py`, `app/database.py`).
-- **Frontend**: Vanilla responsive HTML/CSS/JS with TODO, DOING, and DONE columns (`web/`).
-- **Tests**: 34 passing unit tests (`tests/test_api.py`, `tests/test_persistence.py`) and 12-step standalone smoke verification (`scripts/smoke_test.py`).
-- **Verification**: `python3 -m unittest discover -s tests -v` (34/34 passing), `python3 scripts/smoke_test.py` (12/12 steps passing).
-
-### 2. MiniLinks (`examples/minilinks/`)
-Local single-user bookmark manager with certified Favorite/Star feature:
-- **Specification**: `examples/minilinks/SPEC.md` authored by `agy2`.
-- **Backend**: Python 3 `http.server` with `sqlite3` store, `/health`, search filtering `?q=`, favorite filtering `?favorites=true`, and boolean SQLite table migration (`examples/minilinks/app/`).
-- **Frontend**: Vanilla responsive HTML/CSS/JS with search, star toggle buttons (★/☆), favorite filters, modal dialogs, and toast notifications (`examples/minilinks/web/`).
-- **Tests**: 30 passing unit tests (`examples/minilinks/tests/`) and 12-step standalone smoke verification (`examples/minilinks/scripts/smoke_test.py`).
-- **Audit**: Independent audit by `agy7` produced `APPROVED` status with 0 critical, 0 major findings.
-- **Verification**: `python3 -m unittest discover -s examples/minilinks/tests -v` (30/30 passing), `python3 examples/minilinks/scripts/smoke_test.py` (12/12 steps passing).
+1. Local/project scope before global mutation.
+2. Deterministic control plane; model reasoning only where semantic reasoning is needed.
+3. Fail closed on path, provenance, schema, context, and certification ambiguity.
+4. Provider-free tests by default.
+5. Real-provider calls only when they create genuinely new evidence.
+6. Historical evidence is preserved, but historical documentation is not presented as current truth.

@@ -1,133 +1,156 @@
-# Orchestrator Integration Guide (v8.0.0 — Context Efficiency + Deep Hardening)
+# Orchestrator Integration Guide — Factory v9.0.0
 
-## Overview
+## Contract
 
-The AGY-Herdr Software Factory is an orchestrator-agnostic framework for delegating arbitrary software development workflows across multiple isolated worker identities through Herdr.
+An external brain/orchestrator supplies a goal or an explicit DAG. The Factory owns execution truth.
 
-In **v8.0.0 (Context Efficiency + Deep Hardening)**, the orchestration pipeline is supercharged with a deterministic `ContextCompiler`, achieving 75.1% context byte reduction, 100% required anchor recall, zero orphan requirements, and bounded semantic handoffs:
-
-```
-               USER / EXTERNAL BRAIN
-                       |
-                       v
-                 HIGH-LEVEL GOAL
-                       |
-                       v
-                Goal Controller
-                       |
-          +------------+-------------+
-          |                          |
-          v                          v
-   Project Policy               Goal Spec
-          |                          |
-          +------------+-------------+
-                       |
-                       v
-                 Planner Profile
-                       |
-                       v
-              Requirements + DAG
-                       |
-                       v
-              Deterministic Gates
-                       |
-                       v
-                Plan Reviewer
-                       |
-                       v
-              Approved DAG Plan v2
-                       |
-                       v
-            Deterministic Routing
-                       |
-                       v
-              FactoryOrchestrator
-                       |
-           +-----------+-----------+
-           |                       |
-           v                       v
-       Worker 1                 Worker 2
-  (Isolated Worktree)      (Isolated Worktree)
-           |                       |
-           +-----------+-----------+
-                       |
-                       v
-         Deterministic Validations
-                       |
-                       v
-            Independent Final Audit
-                       |
-                       v
-               Finished Project
+```text
+external brain
+    |
+    v
+GoalSpec / DAG
+    |
+    v
+Project policy
+    |
+    v
+planning + deterministic gates + review
+    |
+    v
+ContextCompiler
+    |
+    v
+deterministic router
+    |
+    v
+ReasoningPolicy
+    |
+    v
+WorkerAdapter
+    |
+    v
+isolated worktree
+    |
+    v
+validation + integration + audit
 ```
 
----
+The planner/model may propose work. It does not own:
 
-## Operating Boundary & Contract
+- scheduler state;
+- routing truth;
+- retries;
+- Git integration;
+- path validation;
+- completion;
+- certification.
 
-### 1. High-Level Project Autopilot (v7 Recommended Mode)
-
-To run autonomous project autopilot on an external or local repository:
+## Recommended external-project workflow
 
 ```bash
-# Initialize project policy in target repository
-python3 tools/factory.py --project-root /path/to/target-project project init --name "MyProject"
-
-# Run project doctor check
-python3 tools/factory.py --project-root /path/to/target-project project doctor
-
-# Execute autonomous goal controller
-python3 tools/factory.py --project-root /path/to/target-project goal run --goal-file /path/to/GOAL.md --real-only
-
-# If interrupted or halted, resume durably from last phase without duplicate task execution
-python3 tools/factory.py --project-root /path/to/target-project goal resume --goal-id <goal-id>
-
-# Query goal progress and validation/audit report
-python3 tools/factory.py --project-root /path/to/target-project goal report --goal-id <goal-id>
+python3 tools/factory.py --project-root /path/to/project project init --name "MyProject"
+python3 tools/factory.py --project-root /path/to/project project doctor
+python3 tools/factory.py --project-root /path/to/project goal plan --goal-file /path/to/GOAL.md
+python3 tools/factory.py --project-root /path/to/project goal run --goal-file /path/to/GOAL.md --real-only
+python3 tools/factory.py --project-root /path/to/project goal status --goal-id <goal-id> --json
+python3 tools/factory.py --project-root /path/to/project goal report --goal-id <goal-id>
 ```
 
-### 2. Low-Level DAG Execution (Backward-Compatible Engine Mode)
-
-An orchestrator interfacing directly with DAG plans can also invoke the core engine:
+Interrupted work should be resumed from durable state:
 
 ```bash
-# Validate plan traceability and structure
-python3 tools/factory.py validate-plan plans/my_plan.json
+python3 tools/factory.py --project-root /path/to/project goal resume --goal-id <goal-id>
+```
 
-# Execute DAG plan
-python3 tools/factory.py run plans/my_plan.json
+## Low-level DAG mode
 
-# Reconcile interrupted run
+Retained declarative plans remain supported:
+
+```bash
+python3 tools/factory.py validate-plan plans/<plan>.json
+python3 tools/factory.py run plans/<plan>.json
 python3 tools/factory.py resume <run-id>
 ```
 
----
+## Context contract
 
-## Safety and Isolation Invariants
+v8 introduced deterministic role-specific context packets.
 
-When operating the factory, every orchestrator must uphold these invariants:
+A worker receives only the information required for its task:
 
-1. **Ownership Invariant**:
-   ```python
-   if resource_id not in owned_resources:
-       mutation_forbidden()
-   ```
-   Never target, inspect destructively, or clean up any Herdr pane, workspace, or session that was not explicitly created during the active factory run. The orchestrator's own pane/workspace is registered as `control_plane` and is strictly protected.
+- task objective;
+- relevant acceptance criteria;
+- allowed/protected paths;
+- dependency handoffs;
+- relevant file references;
+- validation commands;
+- output contract.
 
-2. **Target Isolation**:
-   The factory operates cleanly on external projects without writing artifacts into the target repository's committed tree. All runtime state resides in `<project_root>/.agy-factory/`.
+It does not inherit unrelated worker conversations by default.
 
-3. **Dirty Git Fail-Closed Guard**:
-   Target repositories must be clean Git working trees before autopilot begins execution.
+Dispatch fails closed if required-anchor recall is below 100%.
 
-4. **Attempt Isolation**:
-   Every worker attempt runs in a dedicated Git worktree and branch (`factory/<run-id>/<task-id>/att-<attempt_id>`). Retries increment the attempt counter, preserving full attempt history.
+## Reasoning contract
 
-5. **Traceability & Validation Contracts**:
-   Every task in an approved plan must specify `satisfies` referencing acceptance criteria and define non-empty, safe deterministic `validations`.
+v9 adds deterministic effort selection after model-family/profile routing.
 
-6. **Certification Provenance Invariant**:
-   `execution_mode` is strictly tracked as `REAL`, `MOCK`, `TRANSPORT_ONLY`, or `UNKNOWN`. Only genuine provider executions with verifiable binary identities, non-fixture executables, and authentic output hashes can achieve `REAL_PROVIDER_CERTIFIED`.
+Production defaults are evidence-backed starting points, not universal optima. The Factory may perform at most one same-family effort escalation by default when a normalized **reasoning-quality** failure justifies it.
 
-7. **Host Cleanliness**:
-   No global packages, sudo commands, or system-wide modifications are permitted. Zero external pip or npm packages are required. Python 3 standard library is enforced throughout.
+No automatic effort escalation is allowed for:
+
+- auth/provider/infrastructure failures;
+- context compilation/anchor/budget failures;
+- Git/worktree conflicts;
+- path/scope guardrail failures.
+
+In particular, `PATH_VALIDATION_FAILED` fails closed.
+
+## Execution provenance
+
+Every attempt is classified as:
+
+- `REAL`
+- `MOCK`
+- `TRANSPORT_ONLY`
+- `UNKNOWN`
+
+A run containing mock execution cannot be promoted into real-provider certification.
+
+## Safety boundaries
+
+1. Foreign Herdr resources are never mutated.
+2. Every attempt owns a dedicated task worktree/branch.
+3. Target projects must be clean before production execution.
+4. Path allowlists and symlink checks are commit/integration guardrails, not an OS sandbox.
+5. Runtime artifacts belong under the target project's `.agy-factory/`.
+6. No global installation/auth mutation is required for normal operation.
+7. Deterministic tests are preferred over quota-consuming real-provider re-certification.
+
+## Provider-call discipline
+
+For routine maintenance, use:
+
+```bash
+./scripts/update-package.sh --check
+./scripts/doctor.sh
+./scripts/verify.sh
+```
+
+Only use `verify-real.sh`, real calibration, or a model-backed audit when new real-provider evidence is explicitly needed.
+
+## Machine-readable integration surface
+
+Prefer stable JSON/CLI outputs rather than scraping terminal UI:
+
+- status/report JSON;
+- profile/route/reasoning explain commands;
+- run/goal manifests;
+- context packet/evidence metadata;
+- certification bundles.
+
+## Documentation
+
+- [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
+- [HARNESS_PROFILES.md](HARNESS_PROFILES.md)
+- [CONTEXT_EFFICIENCY.md](CONTEXT_EFFICIENCY.md)
+- [REPRODUCIBILITY.md](REPRODUCIBILITY.md)

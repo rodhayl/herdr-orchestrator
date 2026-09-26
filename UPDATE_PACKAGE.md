@@ -91,51 +91,40 @@ The update system queries official upstream repositories for the newest **stable
 
 ---
 
-## 6. Compatibility Matrix Schema
+## 6. Certified Baseline & Compatibility Summary
 
-The output of `./scripts/update-package.sh --check` produces an explicit compatibility matrix:
+This section documents the **committed certified baseline**, not a substitute for a live `--check` run. Live/current/latest values may drift.
 
-| Component | Previous Certified | Installed Now | Latest Stable | Compatible Target | Action | Evidence |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Factory Engine** | `5.0.0` | `6.0.0` | `6.0.0` | `6.0.0` | Maintain | Local repo `factory.json` |
-| **Herdr CLI** | `0.9.1` | `0.9.1` | `0.9.1` | `0.9.1` | Check Only | `herdr --version` |
-| **Herdr Protocol**| `22` | `22` | `22` | `22` | Check Only | Socket snapshot (`protocol 22`) |
-| **herdr-board** | `v0.17.0` | None | `v0.17.0` | None | Blocked | `v0.17.0` requires Herdr `0.9.0` |
-| **AGY CLI** | `1.2.9` | `1.2.9` | `1.2.9` | `1.2.9` | Check Only | `agy --version` |
-| **AGY Models** | Gemini 3.8 Flash, Claude Sonnet 4.6 | Live Verified | Live Verified | Live Verified | Certified | `agy models` |
-| **Droid CLI** | `0.225.1` | `0.225.1` | `0.225.1` | `0.225.1` | Check Only | `droid --version` |
-| **Droid Model** | `qwen3.8-max` (xhigh/med) | Installed | Catalog | Live/Test Ready | Certified Harness | Real executed & mock tested |
-| **Codex CLI** | `0.155.1` | `0.155.1` | `0.155.1` | `0.155.1` | Check Only | `codex --version` |
-| **Codex Model** | `gpt-5.6-luna` (xhigh/high/med) | Installed | Catalog | Live/Test Ready | Certified Harness | Mock harness certified |
-| **Claude Code** | None | `2.1.263` | `2.1.263` | `2.1.263` | Certified Harness | `claude --version` |
-| **OpenCode CLI**| None | `1.18.31` | `1.18.31` | `1.18.31` | Certified Harness | `opencode --version` |
-| **Python** | `3.12.3` | `3.12.3` | `3.12.3` | `3.12.3` | Retain | `python3 -V` (stdlib only) |
-| **Git** | `2.43.0` | `2.43.0` | `2.43.0` | `2.43.0` | Retain | `git --version` |
-| **Rust / Cargo** | None | None | `1.85.0` | None | Host Pre-req | `rustc` not installed |
+Baseline source: `toolchain.lock.json`.
 
-### Harness Profiles Matrix (v6.0.0)
+| Component | Committed baseline | Current committed status / policy |
+| :--- | :--- | :--- |
+| Factory Engine | `9.0.0` | current release |
+| Herdr | `0.9.1`, protocol `22` | certified external control-plane baseline |
+| herdr-board | `v0.17.0` | `BLOCKED_EXTERNAL_COMPATIBILITY`; release expects Herdr 0.9.0 |
+| AGY CLI | `1.2.10` | real-provider certified profiles retained |
+| Droid CLI | `0.226.2` | adapter/profile implementation deterministic; direct profiles `AUTH_BLOCKED` |
+| Codex CLI | `0.155.1` | adapter/profile implementation deterministic; direct profiles `AUTH_BLOCKED` |
+| Claude Code | `2.1.263` | adapter/profile implementation deterministic; direct profiles `AUTH_BLOCKED` |
+| OpenCode CLI | `1.18.31` | free profile real-provider certified; Gemini profile unavailable under current guardrails |
+| Freebuff | `0.0.195` | `FREEBUFF_HEADLESS_BLOCKED` |
+| Python | `3.12.3` | CPython, stdlib-only project policy |
+| Git | `2.43.0` | retained baseline |
 
-| Profile ID | Harness | Model | Effort | Concurrency | Certification Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `agy-spec-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
-| `agy-backend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
-| `agy-backend-medium` | `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
-| `agy-frontend-high` | `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
-| `agy-frontend-medium`| `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
-| `agy-tests-medium` | `agy` | `gemini-3.8-flash` | `medium` | 1 | CERTIFIED |
-| `agy-integration-high`| `agy` | `gemini-3.8-flash` | `high` | 1 | CERTIFIED |
-| `agy-audit-high` | `agy` | `claude-sonnet-4-6` | `high` | 1 | CERTIFIED |
-| `droid-backend-medium`| `droid` | `qwen3.8-max` | `medium` | 1 | AUTH_BLOCKED |
-| `droid-backend-xhigh` | `droid` | `qwen3.8-max` | `xhigh` | 1 | AUTH_BLOCKED |
-| `droid-backend-deep` | `droid` | `qwen3.8-max` | `xhigh` | 1 | AUTH_BLOCKED |
-| `codex-luna-medium` | `codex` | `gpt-5.6-luna` | `medium` | 1 | AUTH_BLOCKED |
-| `codex-luna-high` | `codex` | `gpt-5.6-luna` | `high` | 1 | AUTH_BLOCKED |
-| `codex-luna-xhigh` | `codex` | `gpt-5.6-luna` | `xhigh` | 1 | AUTH_BLOCKED |
-| `codex-frontend-high`| `codex` | `gpt-5.6-luna` | `high` | 1 | AUTH_BLOCKED |
-| `claude-sonnet5-high` | `claude` | `claude-sonnet-5` | `high` | 1 | AUTH_BLOCKED |
-| `claude-sonnet5-medium`| `claude` | `claude-sonnet-5` | `medium` | 1 | AUTH_BLOCKED |
-| `opencode-gemini-high`| `opencode` | `google/gemini-3.8-flash` | `high` | 1 | AUTH_BLOCKED |
-| `opencode-mimo-free` | `opencode` | `opencode/mimo-v2.6-flash-free` | `free` | 1 | AVAILABLE |
+### Harness profile-state summary
+
+Factory release and profile schema versions are independent: the Factory is v9.0.0 while `harness_profiles.json` currently declares schema/config version 6.1.0.
+
+| Profile family | Committed status |
+| :--- | :--- |
+| AGY specification/backend/frontend/tests/integration/audit | `REAL_PROVIDER_CERTIFIED` profiles are present |
+| Droid backend | `AUTH_BLOCKED` for direct live execution; deterministic adapter coverage retained |
+| Codex Luna | `AUTH_BLOCKED` for direct live execution; deterministic adapter coverage retained |
+| Claude Sonnet 5 | `AUTH_BLOCKED` for direct live execution; deterministic adapter coverage retained |
+| OpenCode free | `REAL_PROVIDER_CERTIFIED` |
+| OpenCode Gemini | `PROFILE_UNAVAILABLE` |
+
+Do not reinterpret `enabled=true` as live authentication. Live status must be discovered read-only.
 
 ---
 
@@ -229,3 +218,16 @@ Reasoning Policy isolates and optimizes provider reasoning effort:
 8. **Calibration Scope**: The certified v9 policy is an initial evidence-backed production default. Fixture calibration does not establish a universal optimum across repositories or future model versions; real usage should be observed passively and recalibration should be deliberate, bounded, and separately justified.
 9. **Efficiency Claim Boundary**: v9 certification demonstrates lower reasoning/output tokens and lower wall-clock time on the recorded TreeHash comparison. Because input tokens increased and provider cost units were unavailable, governance documentation must not infer total-token or monetary-cost savings from that comparison.
 
+---
+
+## 13. Documentation Governance
+
+Current documentation is indexed in `docs/README.md` and summarized in `docs/CURRENT_STATE.md`.
+
+Rules:
+1. Keep operational files consumed by scripts/agents at stable paths unless code is changed in the same commit.
+2. Use relative repository links in current docs; do not add host-specific `file:///root/...` links.
+3. Archive superseded narrative certification documents under `docs/archive/releases/` instead of deleting history.
+4. Keep machine-readable certification evidence under `certification/`; do not move current evidence into the narrative archive.
+5. Distinguish Factory release version, schema/config versions, live auth state, deterministic test status, and real-provider certification.
+6. Do not claim total-token or monetary-cost savings unless the evidence directly supports those metrics.

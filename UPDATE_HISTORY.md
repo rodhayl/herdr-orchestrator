@@ -308,3 +308,15 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Calibration Scope**: Clarified that v9 effort calibration is an initial evidence-backed production default with bounded escalation, not a universal optimum across repositories, workloads, providers, or future model versions.
 - **Efficiency Evidence Correction**: The recorded TreeHash comparison demonstrates lower worker reasoning tokens (-59.57%), lower worker output tokens (-31.87%), and lower wall-clock duration (-20.10%), while worker input tokens increased (+27.20%). The v8 baseline does not expose comparable cached-input telemetry, and the v8/v9 target suites differ in size (87 vs 141 tests). Therefore the certification does not claim demonstrated total-token or monetary-cost savings.
 - **External Blockers**: Existing AUTH_BLOCKED / FREEBUFF_HEADLESS_BLOCKED / herdr-board compatibility states were intentionally left unchanged; no quota-consuming re-probes were performed.
+
+## [2026-09-26] Documentation Reorganization & Archive
+
+- **Scope**: Documentation-only maintenance plus archive moves. No model/provider calls were used.
+- **Current Documentation Refresh**: Rewrote `README.md`, `HARNESS_PROFILES.md`, `ORCHESTRATOR.md`, `REPRODUCIBILITY.md`, and `CONTEXT_EFFICIENCY.md` to reflect Factory v9.0.0, v8 context architecture, v9 reasoning policy, current evidence boundaries, and provider-call discipline.
+- **New Indexes**: Added `docs/README.md`, `docs/CURRENT_STATE.md`, `docs/archive/README.md`, and `certification/README.md`.
+- **Archive Policy**: Historical certification narratives from v3, v6.1, and v7 were moved to `docs/archive/releases/`. Current app specifications remain in their established paths because retained plans/evidence reference them. Machine-readable certification evidence remains under `certification/`.
+- **Link Hygiene**: Current documentation now uses repository-relative links instead of host-specific `file:///root/...` paths.
+- **Evidence Interpretation**: Current docs consistently state the v8 75.1% context-byte reduction and the narrower v9 reasoning/output reductions while explicitly recording the +27.20% input-token increase and declining to claim total-token or monetary-cost savings.
+- **Reasoning Safety**: Current docs consistently state that `PATH_VALIDATION_FAILED` is a fail-closed scope guardrail and never a trigger for higher reasoning effort.
+- **Version Hygiene**: Documentation now distinguishes Factory v9.0.0 from retained schema/config versions (notably context policy 8.0.0 and harness profile schema/config 6.1.0).
+
