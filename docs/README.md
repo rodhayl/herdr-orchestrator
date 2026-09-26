@@ -8,6 +8,7 @@ This directory separates **current operational truth**, **application contracts*
 - [../README.md](../README.md) — project overview and quick start.
 - [../ORCHESTRATOR.md](../ORCHESTRATOR.md) — integration contract for external brains/orchestrators.
 - [../REPRODUCIBILITY.md](../REPRODUCIBILITY.md) — provider-free bootstrap and verification workflow.
+- [FACTORY_UI.md](FACTORY_UI.md) — local browser control surface, API, security and dependency contract.
 
 ## Current operational documentation
 

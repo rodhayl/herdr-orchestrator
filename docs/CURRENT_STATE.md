@@ -28,7 +28,8 @@ v9 combines the previously certified capabilities:
 - external-project Goal Autopilot;
 - deterministic requirement traceability and bounded remediation;
 - v8 ContextCompiler with role-specific packets, 100% required-anchor gates, bounded handoffs, and fresh-session defaults;
-- v9 deterministic reasoning-effort policy with bounded same-model-family escalation.
+- v9 deterministic reasoning-effort policy with bounded same-model-family escalation;
+- Factory Control UI: loopback-only stdlib HTTP facade with read-only Kanban projection, goal/run/task inspection, system/profile/context/reasoning views, adaptive ETag polling, and delegation only to stable public Factory actions.
 
 ## Current evidence interpretation
 
@@ -82,6 +83,16 @@ From the current committed profile/lock records:
 | herdr-board | BLOCKED_EXTERNAL_COMPATIBILITY |
 
 Use read-only diagnostics for live status. Do not mutate credentials merely to improve a certification matrix.
+
+## Factory Control UI
+
+The current v9 repository includes a local browser UI launched with:
+
+```bash
+./scripts/ui.sh --project-root /path/to/project
+```
+
+It uses Web Awesome 3.14.0 and Alpine CSP 3.17.4 as exact-version self-hosted browser dependencies. Generated assets live under `.tools/ui/` and are not committed. Provider-free UI/server/vendor integrity tests are part of `factory_tests/`.
 
 ## Verification policy
 

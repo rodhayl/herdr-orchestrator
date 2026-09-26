@@ -19,6 +19,10 @@ htmlcov/
 .agy-factory/runs/
 .agy-factory/evidence/
 .agy-factory/state/
+.agy-factory/ui/
+
+# Factory Control UI generated vendor assets
+.tools/ui/
 
 # IDE and OS
 .DS_Store

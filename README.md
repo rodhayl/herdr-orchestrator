@@ -10,7 +10,8 @@ The current release combines:
 - truthful REAL/MOCK execution provenance;
 - deterministic context compilation and bounded handoffs;
 - a versioned reasoning-effort policy with bounded escalation;
-- provider-free regression and clean-room portability workflows.
+- provider-free regression and clean-room portability workflows;
+- a local Factory Control UI for goals, runs, Kanban projection, profiles, context/reasoning state and bounded public actions.
 
 ## Current status
 
@@ -87,6 +88,20 @@ These are the normal maintenance paths. Real-provider verification is intentiona
 ```
 
 Run it only when new real-provider evidence is actually required.
+
+## Factory Control UI
+
+Factory v9 includes a local, no-build browser control surface:
+
+```bash
+./scripts/ui.sh --project-root /path/to/project
+```
+
+Then open `http://127.0.0.1:8765`.
+
+The UI is intentionally thin: Factory remains the single source of truth, the Kanban is read-only, there is no UI database, and mutable actions only delegate to existing public Factory operations. Browser dependencies are exact-version, SRI-verified and self-hosted after first sync; no Node/npm runtime is required.
+
+See [docs/FACTORY_UI.md](docs/FACTORY_UI.md).
 
 ## External-project Autopilot
 
@@ -172,7 +187,8 @@ Historical narrative certification documents are under [docs/archive/](docs/arch
 ## Repository layout
 
 ```text
-tools/              orchestration, context, reasoning engines
+tools/              orchestration, context, reasoning engines and UI HTTP facade
+ui/                 Factory Control UI static assets + frontend dependency lock
 schemas/            versioned machine-readable contracts
 factory_tests/      Factory regression/invariant tests
 scripts/            doctor, update, verify, portability, certification utilities

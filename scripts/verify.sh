@@ -11,7 +11,7 @@ echo "==========================================================================
 echo "AGY-Herdr Software Factory (v9.0.0) — Deterministic Verification Matrix"
 echo "================================================================================"
 
-echo -e "\n[Suite 1/5] Factory Core & State Machine Tests..."
+echo -e "\n[Suite 1/5] Factory Core, Control UI & State Machine Tests..."
 python3 -m unittest discover -s factory_tests -v
 
 echo -e "\n[Suite 2/5] MiniBoard Unit Tests..."

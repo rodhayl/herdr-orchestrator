@@ -320,3 +320,14 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Reasoning Safety**: Current docs consistently state that `PATH_VALIDATION_FAILED` is a fail-closed scope guardrail and never a trigger for higher reasoning effort.
 - **Version Hygiene**: Documentation now distinguishes Factory v9.0.0 from retained schema/config versions (notably context policy 8.0.0 and harness profile schema/config 6.1.0).
 
+## [2026-09-26] Factory Control UI Lite
+
+- **Scope**: Implemented locally and provider-free. No AGY, Droid, Codex, Claude, OpenCode, or other model/provider calls were used.
+- **Architecture**: Added a loopback-only Python stdlib HTTP facade and a read-only `FactoryReadModel`; no UI database, ORM, scheduler, routing engine, WebSocket layer, frontend build system, or Node/npm runtime.
+- **Frontend**: Added four views — Overview, Board, Goals/Runs, and System — with task details in a drawer. The board is a projection only; no drag/drop state mutation is allowed.
+- **Reuse**: Uses Web Awesome 3.14.0 and Alpine CSP 3.17.4 instead of custom components/state plumbing. Exact npm packages are locked in `ui/vendor.lock.json`, registry SRI is verified, and generated browser assets are self-hosted under ignored `.tools/ui/vendor/`.
+- **Actions**: v1 exposes only existing stable Factory operations. Goal resume delegates to the public Factory CLI and warns that real execution can consume provider usage. No UI-specific retry/cancel/DAG-edit semantics were introduced.
+- **Efficiency**: Snapshot polling is adaptive (active/idle/background) and state-derived ETags return HTTP 304 when nothing changed. WebSockets/SSE were deliberately deferred.
+- **Security**: Loopback-only bind, explicit loopback Host validation (DNS-rebinding resistance), no CORS, same-origin mutation checks, CSP without `unsafe-eval`, Alpine CSP build, bounded JSON bodies, path traversal/identifier guards, and compact evidence projections instead of raw provider prompt/output exposure.
+- **Verification**: Added 12 deterministic provider-free tests covering read-model projections, task/goal/run detail, ETag stability/304, static/traversal security, loopback/Host policy, same-origin resume delegation, vendor extraction/SRI failure, tamper detection, and lock path safety. Python/Bash/JavaScript/JSON syntax checks passed during implementation.
+
