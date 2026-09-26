@@ -44,7 +44,7 @@ h4 { margin: 1rem 0 .65rem; }
 .alert button { margin-left: auto; border: 0; background: none; color: inherit; font-size: 1.3rem; cursor: pointer; }
 .loading-state, .empty-state { min-height: 7rem; display: flex; flex-direction: column; gap: .55rem; align-items: center; justify-content: center; color: var(--fc-muted); text-align: center; }
 .empty-state.small { min-height: 3.5rem; font-size: .9rem; }
-.metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
 .metric-card, .panel { background: var(--fc-panel); border: 1px solid var(--fc-border); border-radius: var(--fc-radius); box-shadow: var(--fc-shadow); }
 .metric-card { padding: .9rem 1rem; display: grid; gap: .12rem; min-width: 0; }
 .metric-label { color: var(--fc-muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
@@ -88,6 +88,14 @@ h4 { margin: 1rem 0 .65rem; }
 .criteria-list { display: grid; gap: .4rem; }
 .criterion-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .6rem; align-items: start; padding: .6rem 0; border-bottom: 1px solid var(--fc-border); }
 .criterion-row > span { display: grid; gap: .15rem; }
+
+.validation-list { display: grid; gap: .4rem; }
+.validation-row { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .55rem .1rem; border-bottom: 1px solid var(--fc-border); }
+.validation-row > span { min-width: 0; display: grid; gap: .12rem; }
+.validation-row small, .table-note { display: block; color: var(--fc-muted); white-space: normal; overflow-wrap: anywhere; margin-top: .12rem; }
+.tag-list { display: flex; gap: .4rem; flex-wrap: wrap; }
+.task-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+wa-tab-panel { padding-top: .75rem; }
 .key-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; }.key-grid.single { grid-template-columns: 1fr; }
 .key-grid > div { min-width: 0; display: grid; gap: .15rem; padding: .65rem; background: color-mix(in srgb, var(--wa-color-neutral-fill-quiet) 45%, transparent); border-radius: .55rem; }
 .key-grid span { color: var(--fc-muted); font-size: .72rem; }.key-grid strong { overflow-wrap: anywhere; }

@@ -42,11 +42,16 @@
 
   function statusVariant(status) {
     const normalized = String(status || '').toUpperCase();
-    if (['DONE', 'COMPLETE', 'COMPLETED', 'SUCCESS', 'REAL_PROVIDER_CERTIFIED', 'AVAILABLE'].includes(normalized)) return 'success';
-    if (['FAILED', 'TIMED_OUT', 'CONFLICTED', 'CANCELLED', 'PROFILE_INVALID'].includes(normalized)) return 'danger';
-    if (['BLOCKED', 'AUTH_BLOCKED', 'PROFILE_UNAVAILABLE', 'FREEBUFF_HEADLESS_BLOCKED', 'BLOCKED_EXTERNAL_COMPATIBILITY'].includes(normalized)) return 'warning';
-    if (['RUNNING', 'EXECUTING', 'READY', 'REVIEW', 'TRANSPORT_CERTIFIED'].includes(normalized)) return 'brand';
+    if (['DONE', 'COMPLETE', 'COMPLETED', 'SUCCESS', 'PASS', 'REAL_PROVIDER_CERTIFIED', 'AVAILABLE', 'VALID'].includes(normalized)) return 'success';
+    if (['FAILED', 'FAIL', 'TIMED_OUT', 'CANCELLED', 'PROFILE_INVALID', 'UNMAPPED'].includes(normalized)) return 'danger';
+    if (['BLOCKED', 'PARTIAL', 'AUTH_BLOCKED', 'PROFILE_UNAVAILABLE', 'FREEBUFF_HEADLESS_BLOCKED', 'BLOCKED_EXTERNAL_COMPATIBILITY', 'IN_PROGRESS', 'REVIEW'].includes(normalized)) return 'warning';
+    if (['RUNNING', 'EXECUTING', 'READY', 'TRANSPORT_CERTIFIED', 'REAL'].includes(normalized)) return 'brand';
     return 'neutral';
+  }
+
+  function commandText(command) {
+    if (Array.isArray(command)) return command.join(' ');
+    return command ? String(command) : '—';
   }
 
   async function readJson(response) {
@@ -63,11 +68,11 @@
     Alpine.data('factoryControl', () => ({
       view: 'overview',
       snapshot: { factory: {}, board: { columns: [], counts: {}, task_count: 0 }, providers: [], goals: [], runs: [], metrics: {} },
-      system: { profiles: {}, context_policy: { roles: {} }, reasoning_policy: { escalation_policy: {} }, toolchain: {} },
+      system: { profiles: {}, context_policy: { roles: {} }, reasoning_policy: { escalation_policy: {} }, toolchain: {}, ui_vendor_lock: { packages: [] } },
       systemLoaded: false,
-      taskDetail: { task: {}, attempts: [], events: [], telemetry: [] },
-      goalDetail: { state: {}, summary: {}, goal_spec: { acceptance_criteria: [] }, plan: null },
-      runDetail: { run: {}, tasks: [] },
+      taskDetail: { task: {}, definition: {}, requirements: [], context: null, validation: { commands: [], results: [], path_violations: [], missing_expected: [] }, git: { commits: [], changed_paths: [] }, attempts: [], events: [], telemetry: [] },
+      goalDetail: { state: {}, summary: {}, goal_spec: { acceptance_criteria: [] }, plan: null, traceability: [], validation_results: [], final_audit: null },
+      runDetail: { run: {}, tasks: [], traceability: [], validation_results: [], final_audit: null, metrics: {} },
       selectedDetailType: '',
       selectedGoalId: null,
       selectedRunId: null,
@@ -91,77 +96,45 @@
         if (this.requestController) this.requestController.abort();
       },
 
-      get projectName() {
-        return this.snapshot?.factory?.project_name || 'Factory project';
-      },
-
-      get factoryVersion() {
-        return this.snapshot?.factory?.version || '—';
-      },
-
+      get projectName() { return this.snapshot?.factory?.project_name || 'Factory project'; },
+      get factoryVersion() { return this.snapshot?.factory?.version || '—'; },
       get isActive() {
         if (this.snapshot?.factory?.active) return true;
         return (this.snapshot?.runs || []).some(run => ACTIVE_RUN_STATES.has(String(run.run_state || '').toUpperCase()));
       },
-
-      get activeGoal() {
-        return this.snapshot.active_goal || {};
-      },
-
-      get hasActiveGoal() {
-        return Boolean(this.snapshot.active_goal && this.snapshot.active_goal.goal_id);
-      },
-
-      get selectedRunLabel() {
-        return this.snapshot.selected_run_id ? `Run ${this.snapshot.selected_run_id}` : 'No run selected';
-      },
-
-      get boardColumns() {
-        return this.snapshot?.board?.columns || [];
-      },
-
-      get providers() {
-        return this.snapshot?.providers || [];
-      },
-
-      get goals() {
-        return this.snapshot?.goals || [];
-      },
-
-      get runs() {
-        return this.snapshot?.runs || [];
-      },
-
-      get metrics() {
-        return this.snapshot?.metrics || {};
-      },
-
+      get activeGoal() { return this.snapshot.active_goal || {}; },
+      get hasActiveGoal() { return Boolean(this.snapshot.active_goal && this.snapshot.active_goal.goal_id); },
+      get selectedRunLabel() { return this.snapshot.selected_run_id ? `Run ${this.snapshot.selected_run_id}` : 'No run selected'; },
+      get boardColumns() { return this.snapshot?.board?.columns || []; },
+      get providers() { return this.snapshot?.providers || []; },
+      get goals() { return this.snapshot?.goals || []; },
+      get runs() { return this.snapshot?.runs || []; },
+      get metrics() { return this.snapshot?.metrics || {}; },
       get overviewMetrics() {
         return [
           { label: 'Tasks', value: numberOrDash(this.snapshot?.board?.task_count), hint: 'selected run' },
           { label: 'Running', value: numberOrDash(this.snapshot?.board?.counts?.RUNNING || 0), hint: 'active tasks' },
           { label: 'Blocked', value: numberOrDash(this.snapshot?.board?.counts?.BLOCKED || 0), hint: 'needs attention' },
-          { label: 'Reasoning', value: numberOrDash(this.metrics.reasoning_tokens), hint: 'provider-reported tokens' },
-          { label: 'Input', value: numberOrDash(this.metrics.input_tokens), hint: 'provider-reported tokens' },
+          { label: 'Attempts', value: numberOrDash(this.metrics.attempts), hint: 'selected run' },
+          { label: 'Context', value: bytesOrDash(this.metrics.context_bytes), hint: 'Factory-supplied' },
+          { label: 'Input', value: numberOrDash(this.metrics.input_tokens), hint: 'provider-reported' },
+          { label: 'Reasoning', value: numberOrDash(this.metrics.reasoning_tokens), hint: 'provider-reported' },
           { label: 'Duration', value: durationOrDash(this.metrics.duration_ms), hint: 'observed selected run' },
         ];
       },
-
-      get goalCriteria() {
-        return this.goalDetail.goal_spec?.acceptance_criteria || [];
-      },
-
-      get selectedRunTasks() {
-        return this.runDetail.tasks || [];
-      },
-
+      get goalCriteria() { return this.goalDetail.goal_spec?.acceptance_criteria || []; },
+      get goalDetailTitle() { return (this.goalDetail.goal_spec && this.goalDetail.goal_spec.title) || this.goalDetail.state.goal_id || 'Goal'; },
+      get runAuditVerdict() { const audit = this.runDetail.final_audit || {}; return audit.verdict || audit.status || 'recorded'; },
+      get goalTraceability() { return this.goalDetail.traceability || []; },
+      get selectedRunTasks() { return this.runDetail.tasks || []; },
+      get runTraceability() { return this.runDetail.traceability || []; },
+      get runValidationResults() { return this.runDetail.validation_results || []; },
       get boardProgress() {
         const counts = this.snapshot?.board?.counts || {};
         const total = Number(this.snapshot?.board?.task_count || 0);
         if (!total) return 0;
         return Math.round((Number(counts.DONE || 0) / total) * 100);
       },
-
       get systemProfiles() {
         const profiles = this.system.profiles || {};
         return Object.keys(profiles).sort().map(profileId => ({
@@ -170,23 +143,28 @@
           certification_status: profiles[profileId]?.certification?.status || 'UNKNOWN',
         }));
       },
-
       get systemContextRoles() {
         const roles = this.system?.context_policy?.roles || {};
         return Object.keys(roles).sort().map(role => ({ role, ...roles[role] }));
       },
-
-      get selectedTask() {
-        return this.taskDetail.task || {};
+      get systemToolchain() {
+        const lock = this.system.toolchain || {};
+        return Object.keys(lock).sort().map(key => ({ key, value: this.toolchainLabel(lock[key]) }));
       },
-
+      get uiVendorPackages() { return this.system?.ui_vendor_lock?.packages || []; },
+      get selectedTask() { return this.taskDetail.task || {}; },
+      get selectedTaskDefinition() { return this.taskDetail.definition || {}; },
+      get selectedTaskRequirements() { return this.taskDetail.requirements || []; },
+      get selectedTaskContext() { return this.taskDetail.context || {}; },
+      get selectedTaskValidation() { return this.taskDetail.validation || { commands: [], results: [], path_violations: [], missing_expected: [] }; },
+      get selectedTaskGit() { return this.taskDetail.git || { commits: [], changed_paths: [] }; },
       get selectedTaskAttempts() { return this.taskDetail.attempts || []; },
       get selectedTaskEvents() { return this.taskDetail.events || []; },
       get selectedTaskTelemetry() { return this.taskDetail.telemetry || []; },
-      get hasChangedPaths() { return (this.selectedTask.changed_paths || []).length > 0; },
+      get hasTaskContext() { return Boolean(this.taskDetail.context && this.taskDetail.context.packet_id); },
       get reasoningPolicyVersion() { return this.system.reasoning_policy?.policy_version || '—'; },
       get reasoningPolicyStatus() { return this.system.reasoning_policy?.status || '—'; },
-      get reasoningEscalationLimit() { return this.system.reasoning_policy?.escalation_policy?.max_effort_escalations_per_task || '—'; },
+      get reasoningEscalationLimit() { return this.system.reasoning_policy?.escalation_policy?.max_effort_escalations_per_task ?? '—'; },
 
       pollDelay() {
         if (document.hidden) return 30000;
@@ -199,11 +177,7 @@
       },
 
       async request(path, options = {}) {
-        const response = await fetch(path, {
-          cache: 'no-store',
-          credentials: 'same-origin',
-          ...options,
-        });
+        const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin', ...options });
         if (!response.ok) {
           const payload = await readJson(response).catch(() => ({}));
           throw new Error(payload.error || `HTTP ${response.status}`);
@@ -218,10 +192,7 @@
         if (this.etag) headers['If-None-Match'] = this.etag;
         try {
           const response = await fetch(`${API}/snapshot`, {
-            cache: 'no-store',
-            credentials: 'same-origin',
-            headers,
-            signal: this.requestController.signal,
+            cache: 'no-store', credentials: 'same-origin', headers, signal: this.requestController.signal,
           });
           if (response.status === 304) {
             this.error = '';
@@ -267,7 +238,7 @@
         if (!task?.run_id || !task?.task_id) return;
         this.detailLoading = true;
         this.detailOpen = true;
-        this.taskDetail = { task: {}, attempts: [], events: [], telemetry: [] };
+        this.taskDetail = { task: {}, definition: {}, requirements: [], context: null, validation: { commands: [], results: [], path_violations: [], missing_expected: [] }, git: { commits: [], changed_paths: [] }, attempts: [], events: [], telemetry: [] };
         try {
           this.taskDetail = await this.request(`${API}/runs/${encodeURIComponent(task.run_id)}/tasks/${encodeURIComponent(task.task_id)}`);
         } catch (error) {
@@ -278,15 +249,13 @@
         }
       },
 
-      closeTask() {
-        this.detailOpen = false;
-      },
+      closeTask() { this.detailOpen = false; },
 
       async selectGoal(goal) {
         if (!goal?.goal_id) return;
         this.selectedGoalId = goal.goal_id;
         this.selectedDetailType = 'goal';
-        this.goalDetail = { state: {}, summary: {}, goal_spec: { acceptance_criteria: [] }, plan: null };
+        this.goalDetail = { state: {}, summary: {}, goal_spec: { acceptance_criteria: [] }, plan: null, traceability: [], validation_results: [], final_audit: null };
         try {
           this.goalDetail = await this.request(`${API}/goals/${encodeURIComponent(goal.goal_id)}`);
         } catch (error) {
@@ -298,7 +267,7 @@
         if (!run?.run_id) return;
         this.selectedRunId = run.run_id;
         this.selectedDetailType = 'run';
-        this.runDetail = { run: {}, tasks: [] };
+        this.runDetail = { run: {}, tasks: [], traceability: [], validation_results: [], final_audit: null, metrics: {} };
         try {
           this.runDetail = await this.request(`${API}/runs/${encodeURIComponent(run.run_id)}`);
         } catch (error) {
@@ -311,9 +280,7 @@
         if (!window.confirm(`Resume ${goal.goal_id}? This delegates to Factory's existing goal resume command and may consume provider usage.`)) return;
         try {
           const result = await this.request(`${API}/goals/${encodeURIComponent(goal.goal_id)}/resume`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
           });
           this.notice = `Resume accepted (PID ${result.pid}).`;
           this.reschedule(500);
@@ -322,20 +289,18 @@
         }
       },
 
-      clearNotice() {
-        this.notice = '';
+      clearNotice() { this.notice = ''; },
+      yesNoUnknown(value) { return value === true ? 'yes' : (value === false ? 'no' : 'unknown'); },
+      attemptDescriptor(attempt) { return [attempt?.profile_id || attempt?.worker_id, attempt?.model, attempt?.effort].filter(Boolean).join(' · '); },
+      toolchainLabel(value) {
+        if (value === null || value === undefined) return '—';
+        if (typeof value !== 'object') return String(value);
+        return value.version || value.installed_version || value.certified_version || value.status || value.compatibility_status || value.feasibility_status || JSON.stringify(value);
       },
-
-      yesNoUnknown(value) {
-        if (value === true) return 'yes';
-        if (value === false) return 'no';
-        return 'unknown';
-      },
-
-      attemptDescriptor(attempt) {
-        return [attempt?.profile_id || attempt?.worker_id, attempt?.model, attempt?.effort].filter(Boolean).join(' · ');
-      },
-
+      formatCommand: commandText,
+      joinOrDash(value) { return Array.isArray(value) && value.length ? value.join(', ') : '—'; },
+      percentageOrDash(value) { return value === null || value === undefined ? '—' : `${Math.round(Number(value) * 100)}%`; },
+      taskDescriptor(task) { return [task?.profile_id || task?.worker_id, task?.model, task?.effort].filter(Boolean).join(' · '); },
       statusVariant,
       numberOrDash,
       bytesOrDash,

@@ -69,7 +69,7 @@ python3 scripts/vendor_ui.py sync
 
 ### Overview
 
-Shows current project, active goal, selected run, task counts, observed usage and provider/profile status.
+Shows current project, active goal, selected run, task/attempt counts, Factory-supplied context bytes, observed provider usage and aggregated provider/profile status.
 
 ### Board
 
@@ -87,7 +87,7 @@ Inspects durable GoalController state, persisted GoalSpec criteria, run/task sta
 
 Shows committed execution profiles, context policy, reasoning policy and external compatibility status.
 
-Task details open in a drawer rather than creating a separate navigation surface.
+Task details open in a drawer rather than creating a separate navigation surface. The drawer provides Overview, Requirements, Context, Validation, Git, Attempts and Events tabs. It shows routing/reasoning provenance (profile, model, effort, effort source, escalation), ContextPacket metadata/anchor recall, deterministic validation evidence, commits/changed paths and bounded event/usage summaries. Raw prompts, raw provider outputs, validation stdout/stderr and arbitrary event payloads are deliberately not exposed.
 
 ## API
 
@@ -137,7 +137,7 @@ v1 security is based on a local control surface:
 - `Referrer-Policy: no-referrer`;
 - no credentials/tokens exposed by the read model.
 
-The server returns compact task/attempt/evidence projections rather than raw provider prompt/output files.
+The server returns allowlisted task/attempt/context/validation/event/telemetry projections rather than raw provider prompt/output files. Validation stdout/stderr, arbitrary event payloads, raw telemetry fields, inline ContextPacket content and source-hash fingerprints stay server-side.
 
 ## Maintenance rules
 
@@ -147,3 +147,8 @@ The server returns compact task/attempt/evidence projections rather than raw pro
 4. Keep frontend dependencies exact and self-hosted.
 5. Do not introduce a frontend database, build pipeline, framework router, WebSocket layer, charting library, or data-grid until a measured requirement justifies it.
 6. Keep UI tests provider-free.
+
+
+## Shared contracts
+
+`tools/factory_contracts.py` is a small pure module shared by the Factory core and the UI. It owns the canonical task-to-Kanban mapping, run/goal terminal semantics, real-only monotonicity helpers and root-scoped `.agy-factory/` Git-status filtering. This prevents the UI from maintaining a second interpretation of scheduler state.

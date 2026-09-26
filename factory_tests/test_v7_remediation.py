@@ -91,7 +91,6 @@ class TestV7Remediation(unittest.TestCase):
     def test_audit_project_simulated_remediation_required(self):
         policy = ProjectPolicy.load(self.tmp_dir / "factory.project.json")
         goal_spec = compile_goal_spec("1. Broken feature", self.tmp_dir, policy)
-        os.environ["AUDIT_TEST_VERDICT"] = "REVIATION_REQUIRED"
         os.environ["AUDIT_TEST_VERDICT"] = "REMEDIATION_REQUIRED"
         res = audit_project(self.tmp_dir, goal_spec, policy)
         self.assertEqual(res["verdict"], "REMEDIATION_REQUIRED")

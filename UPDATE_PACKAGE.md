@@ -97,11 +97,13 @@ This section documents the **committed certified baseline**, not a substitute fo
 
 Baseline source: `toolchain.lock.json`.
 
+The committed lock is evidence of the last certified stack, not a claim that the newest compatible upstream package has already been applied. As of 2026-09-26 the lock still records herdr-board v0.17.0; the read-only updater recognizes v0.18.0 as compatible with Herdr 0.9.1/protocol 22. Apply/update the lock only after the normal provider-free compatibility and regression gate.
+
 | Component | Committed baseline | Current committed status / policy |
 | :--- | :--- | :--- |
 | Factory Engine | `9.0.0` | current release |
 | Herdr | `0.9.1`, protocol `22` | certified external control-plane baseline |
-| herdr-board | `v0.17.0` | `BLOCKED_EXTERNAL_COMPATIBILITY`; release expects Herdr 0.9.0 |
+| herdr-board | certified lock: `v0.17.0` | lock remains blocked; current upstream `v0.18.0` explicitly accepts Herdr 0.9.1 / protocol 22 and is selected by the update checker |
 | AGY CLI | `1.2.10` | real-provider certified profiles retained |
 | Droid CLI | `0.226.2` | adapter/profile implementation deterministic; direct profiles `AUTH_BLOCKED` |
 | Codex CLI | `0.155.1` | adapter/profile implementation deterministic; direct profiles `AUTH_BLOCKED` |

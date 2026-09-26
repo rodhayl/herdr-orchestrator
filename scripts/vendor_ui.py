@@ -18,8 +18,10 @@ import shutil
 import tarfile
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
-from typing import Any, Dict, Iterable, List
+import re
+from typing import Any, List
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_LOCK = ROOT / "ui" / "vendor.lock.json"
@@ -27,6 +29,7 @@ DEFAULT_DEST = ROOT / ".tools" / "ui" / "vendor"
 STATE_FILE = "vendor-state.json"
 MAX_PACKAGE_BYTES = 25 * 1024 * 1024
 MAX_MEMBER_BYTES = 8 * 1024 * 1024
+EXACT_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 
 class VendorError(RuntimeError):
@@ -48,26 +51,44 @@ def load_lock(path: pathlib.Path) -> dict:
         raise VendorError(f"Unable to read vendor lock: {path}: {exc}") from exc
     if data.get("schema_version") != 1 or not isinstance(data.get("packages"), list):
         raise VendorError("Unsupported or malformed vendor lock")
-    seen_targets = set()
+
+    mappings: list[tuple[str, bool, str]] = []
     for package in data["packages"]:
         if not isinstance(package, dict) or not package.get("name") or not package.get("version"):
             raise VendorError("Each package requires name and exact version")
+        if not EXACT_VERSION_RE.fullmatch(str(package["version"])):
+            raise VendorError(f"Package {package.get('name')} must use an exact semantic version")
         files = package.get("files", [])
         prefixes = package.get("prefixes", [])
         if not isinstance(files, list) or not isinstance(prefixes, list) or (not files and not prefixes):
             raise VendorError(f"Package {package.get('name')} requires files or prefixes")
-        for item in [*files, *prefixes]:
-            source = str(item.get("source") or "")
-            target = str(item.get("target") or "")
-            if not source or not target or source.startswith("/") or target.startswith("/"):
-                raise VendorError(f"Unsafe vendor mapping in {package.get('name')}")
-            if ".." in pathlib.PurePosixPath(source).parts or ".." in pathlib.PurePosixPath(target).parts:
-                raise VendorError(f"Unsafe vendor mapping in {package.get('name')}")
-            target_key = target.rstrip("/") + ("/" if item in prefixes else "")
-            if target_key in seen_targets:
-                raise VendorError(f"Duplicate vendor target: {target_key}")
-            seen_targets.add(target_key)
+
+        for is_prefix, items in ((False, files), (True, prefixes)):
+            for item in items:
+                if not isinstance(item, dict):
+                    raise VendorError(f"Invalid vendor mapping in {package.get('name')}")
+                source = str(item.get("source") or "")
+                target = str(item.get("target") or "")
+                if not source or not target or source.startswith("/") or target.startswith("/"):
+                    raise VendorError(f"Unsafe vendor mapping in {package.get('name')}")
+                if ".." in pathlib.PurePosixPath(source).parts or ".." in pathlib.PurePosixPath(target).parts:
+                    raise VendorError(f"Unsafe vendor mapping in {package.get('name')}")
+                normalized = target.rstrip("/")
+                if not normalized or normalized in {".", STATE_FILE}:
+                    raise VendorError(f"Reserved or empty vendor target in {package.get('name')}")
+                mappings.append((normalized, is_prefix, str(package.get("name"))))
+
+    for index, (target, is_prefix, package_name) in enumerate(mappings):
+        for other, other_prefix, other_package in mappings[index + 1:]:
+            overlaps = (
+                target == other
+                or (is_prefix and other.startswith(target + "/"))
+                or (other_prefix and target.startswith(other + "/"))
+            )
+            if overlaps:
+                raise VendorError(f"Overlapping vendor targets: {package_name}:{target} and {other_package}:{other}")
     return data
+
 
 def _npm_metadata_url(name: str, version: str) -> str:
     encoded = urllib.parse.quote(name, safe="")
@@ -76,10 +97,13 @@ def _npm_metadata_url(name: str, version: str) -> str:
 
 def _fetch_json(url: str, timeout: int = 30) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "agy-herdr-factory-ui-vendor/1"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        if response.status != 200:
-            raise VendorError(f"HTTP {response.status} fetching {url}")
-        raw = response.read(2 * 1024 * 1024)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if response.status != 200:
+                raise VendorError(f"HTTP {response.status} fetching package metadata")
+            raw = response.read(2 * 1024 * 1024)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise VendorError(f"Unable to fetch npm package metadata: {type(exc).__name__}") from exc
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -91,19 +115,22 @@ def _fetch_json(url: str, timeout: int = 30) -> dict:
 
 def _download(url: str, timeout: int = 60) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "agy-herdr-factory-ui-vendor/1"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        if response.status != 200:
-            raise VendorError(f"HTTP {response.status} fetching package")
-        chunks = []
-        total = 0
-        while True:
-            chunk = response.read(64 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_PACKAGE_BYTES:
-                raise VendorError("Package exceeds size limit")
-            chunks.append(chunk)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if response.status != 200:
+                raise VendorError(f"HTTP {response.status} fetching package")
+            chunks = []
+            total = 0
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_PACKAGE_BYTES:
+                    raise VendorError("Package exceeds size limit")
+                chunks.append(chunk)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise VendorError(f"Unable to download npm package: {type(exc).__name__}") from exc
     return b"".join(chunks)
 
 
@@ -209,8 +236,16 @@ def sync(lock_path: pathlib.Path = DEFAULT_LOCK, destination: pathlib.Path = DEF
             dist = metadata.get("dist") if isinstance(metadata.get("dist"), dict) else {}
             tarball = str(dist.get("tarball") or "")
             integrity = str(dist.get("integrity") or "")
-            if not tarball.startswith("https://"):
-                raise VendorError(f"Missing HTTPS tarball URL for {name}")
+            parsed_tarball = urllib.parse.urlsplit(tarball)
+            if (
+                parsed_tarball.scheme != "https"
+                or parsed_tarball.hostname != "registry.npmjs.org"
+                or parsed_tarball.username is not None
+                or parsed_tarball.password is not None
+                or parsed_tarball.query
+                or parsed_tarball.fragment
+            ):
+                raise VendorError(f"Untrusted npm tarball URL for {name}")
             package_bytes = _download(tarball)
             verify_sri(package_bytes, integrity)
 
@@ -284,6 +319,15 @@ def check(lock_path: pathlib.Path = DEFAULT_LOCK, destination: pathlib.Path = DE
         return [f"missing {destination / STATE_FILE}"]
     if state.get("lock_sha256") != expected_lock_hash:
         errors.append("vendor lock changed since last sync")
+
+    expected_packages = [(str(item["name"]), str(item["version"])) for item in lock["packages"]]
+    state_packages = [
+        (str(item.get("name")), str(item.get("version")))
+        for item in state.get("packages", []) if isinstance(item, dict)
+    ]
+    if state_packages != expected_packages:
+        errors.append("vendor state package set/version mismatch")
+
     file_state = state.get("files") if isinstance(state.get("files"), dict) else {}
     expected_explicit = {str(item["target"]) for package in lock["packages"] for item in package.get("files", [])}
     recorded_targets = set(file_state)
@@ -295,13 +339,29 @@ def check(lock_path: pathlib.Path = DEFAULT_LOCK, destination: pathlib.Path = DE
             prefix = str(item["target"]).rstrip("/") + "/"
             if not any(target.startswith(prefix) for target in recorded_targets):
                 errors.append(f"vendor state missing locked prefix: {prefix}")
+
+    actual_targets: set[str] = set()
+    if destination.is_dir():
+        try:
+            for path in destination.rglob("*"):
+                if path.is_symlink():
+                    errors.append(f"unexpected vendor symlink: {path.relative_to(destination)}")
+                    continue
+                if path.is_file() and path.name != STATE_FILE:
+                    actual_targets.add(path.relative_to(destination).as_posix())
+        except OSError as exc:
+            errors.append(f"unable to enumerate vendor assets: {exc}")
+    for target in sorted(actual_targets - recorded_targets):
+        errors.append(f"unrecorded vendor asset: {target}")
+    for target in sorted(recorded_targets - actual_targets):
+        errors.append(f"missing vendor asset: {target}")
+
     for target, recorded in sorted(file_state.items()):
         if not isinstance(recorded, dict):
             errors.append(f"invalid vendor state entry: {target}")
             continue
         path = destination.joinpath(*pathlib.PurePosixPath(target).parts)
-        if not path.is_file():
-            errors.append(f"missing vendor asset: {target}")
+        if not path.is_file() or path.is_symlink():
             continue
         try:
             digest = sha256_bytes(path.read_bytes())
@@ -345,7 +405,11 @@ def main(argv: List[str] | None = None) -> int:
     if args.action in {"sync", "ensure"}:
         if errors:
             print("[UI VENDOR] syncing exact-version frontend assets...")
-        state = sync(lock, destination)
+        try:
+            state = sync(lock, destination)
+        except VendorError as exc:
+            print(f"[UI VENDOR] {exc}", file=os.sys.stderr)
+            return 1
         print(f"[UI VENDOR] synced {len(state.get('files', {}))} files to {destination}")
         return 0
     return 2

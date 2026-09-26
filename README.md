@@ -66,6 +66,8 @@ final audit / bounded remediation
 
 Factory state, scheduling, routing, retries, Git integration, completion gates, and evidence remain deterministic. Models perform semantic tasks; they do not own completion truth.
 
+The v9 closeout also hardens recovery/provenance: real-only semantic roles fail closed on provider failure or malformed output, real-only intent persists across resume, fresh runs do not enter resume reconciliation accidentally, and project cleanliness ignores only the repository-root `.agy-factory/` runtime subtree.
+
 ## Quick start — provider-free
 
 ```bash
@@ -140,7 +142,7 @@ At the current documented baseline:
 | Claude Code | adapter implemented/deterministically tested; direct profiles currently `AUTH_BLOCKED` |
 | OpenCode Gemini | `PROFILE_UNAVAILABLE` under current provider guardrails |
 | Freebuff | `FREEBUFF_HEADLESS_BLOCKED` |
-| herdr-board | `BLOCKED_EXTERNAL_COMPATIBILITY` |
+| herdr-board | certified lock still records v0.17.0 as blocked; the update gate now recognizes upstream v0.18.0 compatibility with Herdr 0.9.1/protocol 22 |
 
 These statuses can drift. Use `doctor.sh` and `update-package.sh --check`; do not silently mutate authentication to make a test pass.
 

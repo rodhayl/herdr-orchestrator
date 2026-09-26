@@ -67,11 +67,11 @@ droid_ver = droid_ver.strip() if droid_ver else "not_installed"
 codex_ver, _, _ = run_cmd(["codex", "--version"])
 codex_ver = codex_ver.replace("codex-cli", "").strip() if codex_ver else "not_installed"
 
-# Claude Code (detected, future v6)
+# Claude Code
 claude_ver, _, _ = run_cmd(["claude", "--version"])
 claude_ver = claude_ver.replace("Claude Code", "").strip().replace("(", "").replace(")", "").strip() if claude_ver else "not_installed"
 
-# OpenCode (detected, future v6)
+# OpenCode
 opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
 opencode_ver, _, _ = run_cmd([opencode_cmd, "--version"])
 opencode_ver = opencode_ver.strip() if opencode_ver else "not_installed"
@@ -98,13 +98,13 @@ cargo_ver, _, ccode = run_cmd(["cargo", "--version"])
 cargo_ver = cargo_ver.replace("cargo", "").strip() if ccode == 0 else "not_installed"
 
 # Upstream checks
-upstream_board = "v0.17.0"
-board_commit = "b6c9bce7a2307053a3ba039db31eb880c8979230"
-board_supported_herdr = "0.9.0"
+upstream_board = "v0.18.0"
+board_commit = "d7a67470309c378778e388982bda67eee6dc1a58"
+board_supported_herdr = ["0.9.0", "0.9.1"]
 board_supported_proto = 22
 
 board_status = "OK"
-if herdr_ver != board_supported_herdr:
+if herdr_ver not in board_supported_herdr or (herdr_proto is not None and herdr_proto != board_supported_proto):
     board_status = "BLOCKED_EXTERNAL_COMPATIBILITY"
 
 factory_json_path = project_root / "factory.json"
@@ -148,7 +148,7 @@ matrix = [
         "installed": "Not Built" if rust_ver == "not_installed" else "Source Available",
         "latest_stable": upstream_board,
         "action": board_status,
-        "evidence": f"Requires Herdr {board_supported_herdr}/proto {board_supported_proto}; host has Herdr {herdr_ver}"
+        "evidence": f"Supports Herdr {', '.join(board_supported_herdr)}/proto {board_supported_proto}; host has Herdr {herdr_ver}/proto {herdr_proto}"
     },
     {
         "component": "AGY CLI",
@@ -305,15 +305,16 @@ print("-" * 80)
 
 if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
     print("\n[COMPATIBILITY GATE NOTICE]")
-    print(f"  herdr-board {upstream_board} strictly requires Herdr {board_supported_herdr} (protocol {board_supported_proto}).")
+    print(f"  herdr-board {upstream_board} supports Herdr {', '.join(board_supported_herdr)} on protocol {board_supported_proto}.")
     print(f"  The installed Herdr server version is {herdr_ver} (protocol {herdr_proto}).")
     print("  Status: BLOCKED_EXTERNAL_COMPATIBILITY.")
     print("  Per Section 7/8 rules: do not downgrade Herdr, do not patch gates, do not pretend compatibility.")
 
 if mode == "--apply":
     print("\n[APPLY MODE]")
-    new_lock = {
-        "factory": {"version": "9.0.0", "schema_version": "9.0.0"},
+    new_lock = dict(prev_lock)
+    new_lock.update({
+        "factory": {"version": factory_ver, "schema_version": prev_lock.get("factory", {}).get("schema_version", factory_ver)},
         "certified_environment": {
             "os": os.uname().sysname,
             "architecture": os.uname().machine,
@@ -327,68 +328,37 @@ if mode == "--apply":
         "herdr_board": {
             "selected_release": upstream_board,
             "git_commit": board_commit,
-            "required_herdr_version": board_supported_herdr,
+            "supported_herdr_versions": board_supported_herdr,
             "required_herdr_protocol": board_supported_proto,
-            "board_protocol": "board.v1",
-            "sqlite_schema": "v1",
+            "board_protocol": prev_lock.get("herdr_board", {}).get("board_protocol", "board.v1"),
+            "sqlite_schema": prev_lock.get("herdr_board", {}).get("sqlite_schema", "v1"),
             "compatibility_status": board_status,
-            "compatibility_notes": f"herdr-board {upstream_board} requires Herdr {board_supported_herdr} (protocol {board_supported_proto}); host has Herdr {herdr_ver} (protocol {herdr_proto})."
+            "compatibility_notes": f"herdr-board {upstream_board} supports Herdr {', '.join(board_supported_herdr)} on protocol {board_supported_proto}; host has Herdr {herdr_ver} (protocol {herdr_proto})."
         },
         "agy": {
+            **prev_lock.get("agy", {}),
             "cli_version": agy_ver,
-            "worker_profiles": ["agy", "agy2", "agy3", "agy4", "agy5", "agy6", "agy7"],
-            "certified_model": "gemini-3.8-flash-high",
-            "certified_effort": "high"
+            "worker_profiles": prev_lock.get("agy", {}).get("worker_profiles", ["agy", "agy2", "agy3", "agy4", "agy5", "agy6", "agy7"])
         },
-        "droid": {
-            "cli_version": droid_ver,
-            "certified_model": "qwen3.8-max",
-            "certified_effort": "xhigh",
-            "certified_autonomy": "low",
-            "catalog_status": "Installed droid CLI v0.225.1 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
-        },
-        "codex": {
-            "cli_version": codex_ver,
-            "certified_model": "gpt-5.6-luna",
-            "certified_effort": "high",
-            "certified_sandbox": "workspace-write",
-            "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
-        },
-        "claude": {
-            "cli_version": claude_ver,
-            "certified_model": "claude-sonnet-5",
-            "certified_effort": "high",
-            "permission_mode": "acceptEdits",
-            "catalog_status": f"Installed claude CLI ({claude_ver}) verified. ClaudeAdapter is fully implemented and deterministically tested via test harness. Requires CLAUDE_CODE_TOKEN / /login for live execution."
-        },
-        "opencode": {
-            "cli_version": opencode_ver,
-            "certified_model": "openrouter/openrouter/free",
-            "certified_effort": "free",
-            "catalog_status": f"Installed opencode CLI ({opencode_ver}) verified. Genuine execution certified via OPENROUTER_API_KEY with openrouter/openrouter/free."
+        "droid": {**prev_lock.get("droid", {}), "cli_version": droid_ver},
+        "codex": {**prev_lock.get("codex", {}), "cli_version": codex_ver},
+        "claude": {**prev_lock.get("claude", {}), "cli_version": claude_ver},
+        "opencode": {**prev_lock.get("opencode", {}), "cli_version": opencode_ver},
+        "freebuff": {
+            "cli_version": freebuff_ver,
+            "feasibility_status": "FREEBUFF_HEADLESS_BLOCKED",
+            "notes": "Interactive TUI only; no certified non-interactive/headless prompt execution mode."
         },
         "certified_profiles": list(profiles_data.keys()),
-        "python": {
-            "version": py_ver,
-            "implementation": "CPython",
-            "policy": "stdlib_only"
-        },
-        "git": {
-            "version": git_ver
-        },
-        "rustc": {
-            "version": rust_ver if rust_ver != "not_installed" else None,
-            "installed": rust_ver != "not_installed"
-        },
-        "cargo": {
-            "version": cargo_ver if cargo_ver != "not_installed" else None,
-            "installed": cargo_ver != "not_installed"
-        },
+        "python": {"version": py_ver, "implementation": "CPython", "policy": "stdlib_only"},
+        "git": {"version": git_ver},
+        "rustc": {"version": rust_ver if rust_ver != "not_installed" else None, "installed": rust_ver != "not_installed"},
+        "cargo": {"version": cargo_ver if cargo_ver != "not_installed" else None, "installed": cargo_ver != "not_installed"},
         "certified_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-    }
+    })
     with open(lock_file, "w", encoding="utf-8") as f:
         json.dump(new_lock, f, indent=2)
-    print("  -> Updated toolchain.lock.json to v6.1.0 successfully.")
+    print(f"  -> Updated toolchain.lock.json for Factory v{factory_ver} successfully.")
 
 print("=" * 80)
 EOF

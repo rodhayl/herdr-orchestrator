@@ -80,9 +80,22 @@ From the current committed profile/lock records:
 | Claude Code | adapter/profile implementation deterministic; direct live profiles AUTH_BLOCKED |
 | OpenCode Gemini | PROFILE_UNAVAILABLE under current provider guardrails |
 | Freebuff | FREEBUFF_HEADLESS_BLOCKED |
-| herdr-board | BLOCKED_EXTERNAL_COMPATIBILITY |
+| herdr-board | certified lock: v0.17.0 BLOCKED_EXTERNAL_COMPATIBILITY; upstream v0.18.0 adds Herdr 0.9.1/protocol-22 compatibility and is recognized by the update gate |
 
 Use read-only diagnostics for live status. Do not mutate credentials merely to improve a certification matrix.
+
+## Core recovery/provenance hardening
+
+The current closeout adds provider-free regression coverage for:
+
+- real-only GoalSpec planning, plan compilation, plan review and final audit failing closed instead of degrading silently;
+- persisted/monotonic `real_only` across GoalController and run resume;
+- missing goal IDs failing closed;
+- first execution using fresh-run semantics instead of accidental reconciliation;
+- v9 run manifests recording current Factory version and `real_only`;
+- root-scoped `.agy-factory/` dirty-Git filtering;
+- quoted string validations parsed with `shlex.split` while still executing without a shell;
+- test-only review/audit verdict overrides requiring `FACTORY_TEST_HARNESS=1`.
 
 ## Factory Control UI
 

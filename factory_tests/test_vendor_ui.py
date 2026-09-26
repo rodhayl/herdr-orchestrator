@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import io as textio
 import hashlib
 import importlib.util
 import io
@@ -47,7 +49,7 @@ class VendorUITests(unittest.TestCase):
         }), encoding="utf-8")
         self.tarball = package_tar({"single.js": "one", "dist/a.js": "a", "dist/styles/x.css": "x"})
         digest = base64.b64encode(hashlib.sha512(self.tarball).digest()).decode("ascii")
-        self.metadata = {"version": "1.2.3", "dist": {"tarball": "https://example.invalid/ui.tgz", "integrity": "sha512-" + digest}}
+        self.metadata = {"version": "1.2.3", "dist": {"tarball": "https://registry.npmjs.org/@example/ui/-/ui-1.2.3.tgz", "integrity": "sha512-" + digest}}
 
     def tearDown(self):
         self.temp.cleanup()
@@ -68,18 +70,88 @@ class VendorUITests(unittest.TestCase):
         errors = vendor_ui.check(self.lock, self.dest)
         self.assertTrue(any("hash mismatch" in item for item in errors))
 
+    def test_sync_rejects_foreign_tarball_host(self):
+        metadata = {"version": "1.2.3", "dist": {"tarball": "https://evil.example/ui.tgz", "integrity": self.metadata["dist"]["integrity"]}}
+        with mock.patch.object(vendor_ui, "_fetch_json", return_value=metadata), mock.patch.object(vendor_ui, "_download", return_value=self.tarball):
+            with self.assertRaisesRegex(vendor_ui.VendorError, "Untrusted npm tarball URL"):
+                vendor_ui.sync(self.lock, self.dest)
+        self.assertFalse(self.dest.exists())
+
     def test_integrity_failure_aborts_before_install(self):
-        metadata = {"version": "1.2.3", "dist": {"tarball": "https://example.invalid/ui.tgz", "integrity": "sha512-" + base64.b64encode(b"0" * 64).decode("ascii")}}
+        metadata = {"version": "1.2.3", "dist": {"tarball": "https://registry.npmjs.org/@example/ui/-/ui-1.2.3.tgz", "integrity": "sha512-" + base64.b64encode(b"0" * 64).decode("ascii")}}
         with mock.patch.object(vendor_ui, "_fetch_json", return_value=metadata), mock.patch.object(vendor_ui, "_download", return_value=self.tarball):
             with self.assertRaises(vendor_ui.VendorError):
                 vendor_ui.sync(self.lock, self.dest)
         self.assertFalse(self.dest.exists())
+
+    def test_cli_reports_vendor_network_failure_without_traceback(self):
+        stderr = textio.StringIO()
+        with mock.patch.object(vendor_ui, "check", return_value=["missing vendor state"]), \
+             mock.patch.object(vendor_ui, "sync", side_effect=vendor_ui.VendorError("Unable to fetch npm package metadata: URLError")), \
+             contextlib.redirect_stderr(stderr):
+            rc = vendor_ui.main(["sync", "--lock", str(self.lock), "--destination", str(self.dest)])
+        self.assertEqual(rc, 1)
+        self.assertIn("Unable to fetch npm package metadata", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_production_lock_uses_exact_self_hosted_packages(self):
+        production_lock = pathlib.Path(__file__).resolve().parents[1] / "ui" / "vendor.lock.json"
+        data = vendor_ui.load_lock(production_lock)
+        packages = {item["name"]: item for item in data["packages"]}
+        self.assertEqual(packages["@alpinejs/csp"]["version"], "3.17.4")
+        self.assertEqual(packages["@awesome.me/webawesome"]["version"], "3.14.0")
+        self.assertEqual(packages["@alpinejs/csp"]["files"][0]["source"], "dist/cdn.min.js")
+        self.assertEqual(packages["@awesome.me/webawesome"]["prefixes"][0]["source"], "dist-cdn/")
 
     def test_lock_rejects_path_traversal(self):
         bad = self.root / "bad.json"
         bad.write_text(json.dumps({"schema_version": 1, "packages": [{"name": "x", "version": "1", "files": [{"source": "x", "target": "../escape"}]}]}), encoding="utf-8")
         with self.assertRaises(vendor_ui.VendorError):
             vendor_ui.load_lock(bad)
+
+        reserved = self.root / "reserved.json"
+        reserved.write_text(json.dumps({
+            "schema_version": 1,
+            "packages": [{"name": "x", "version": "1.2.3", "prefixes": [{"source": "dist/", "target": "."}]}],
+        }), encoding="utf-8")
+        with self.assertRaises(vendor_ui.VendorError):
+            vendor_ui.load_lock(reserved)
+
+    def test_lock_requires_exact_semver_and_non_overlapping_targets(self):
+        ranged = self.root / "ranged.json"
+        ranged.write_text(json.dumps({
+            "schema_version": 1,
+            "packages": [{"name": "x", "version": "^1.2.3", "files": [{"source": "x", "target": "x.js"}]}],
+        }), encoding="utf-8")
+        with self.assertRaises(vendor_ui.VendorError):
+            vendor_ui.load_lock(ranged)
+
+        overlap = self.root / "overlap.json"
+        overlap.write_text(json.dumps({
+            "schema_version": 1,
+            "packages": [{
+                "name": "x", "version": "1.2.3",
+                "files": [{"source": "single.js", "target": "bundle/a.js"}],
+                "prefixes": [{"source": "dist/", "target": "bundle/"}],
+            }],
+        }), encoding="utf-8")
+        with self.assertRaises(vendor_ui.VendorError):
+            vendor_ui.load_lock(overlap)
+
+    def test_check_detects_unrecorded_files_and_state_package_tampering(self):
+        with mock.patch.object(vendor_ui, "_fetch_json", return_value=self.metadata), mock.patch.object(vendor_ui, "_download", return_value=self.tarball):
+            vendor_ui.sync(self.lock, self.dest)
+        (self.dest / "unexpected.js").write_text("surprise", encoding="utf-8")
+        errors = vendor_ui.check(self.lock, self.dest)
+        self.assertTrue(any("unrecorded vendor asset" in item for item in errors))
+
+        (self.dest / "unexpected.js").unlink()
+        state_path = self.dest / vendor_ui.STATE_FILE
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["packages"][0]["version"] = "9.9.9"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        errors = vendor_ui.check(self.lock, self.dest)
+        self.assertTrue(any("package set/version mismatch" in item for item in errors))
 
 
 if __name__ == "__main__":

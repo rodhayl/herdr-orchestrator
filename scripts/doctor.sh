@@ -13,7 +13,7 @@ lock_file = project_root / "toolchain.lock.json"
 profiles_file = project_root / "harness_profiles.json"
 
 print("=" * 80)
-print("AGY-Herdr Software Factory (v7.0.0) — Environment Diagnostics (doctor)")
+print("AGY-Herdr Software Factory (v9.0.0) — Environment Diagnostics (doctor)")
 print("=" * 80)
 
 structural_ok = True
@@ -143,13 +143,22 @@ if lock_file.exists():
 else:
     print("  [WARN] toolchain.lock.json: Not found (run scripts/update-package.sh --apply)")
 
-board_status = lock_data.get("herdr_board", {}).get("compatibility_status", "UNKNOWN")
+board_info = lock_data.get("herdr_board", {})
+board_status = board_info.get("compatibility_status", "UNKNOWN")
 if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
-    print(f"  [INFO] herdr-board Compatibility: {board_status}")
-    print("         (herdr-board v0.17.0 strictly pins Herdr 0.9.0 / protocol 22; installed Herdr is 0.9.1)")
-    print("         Factory handles this via synthetic projection and offline recovery without patching.")
+    supported = board_info.get("supported_herdr_versions")
+    if not supported:
+        required = board_info.get("required_herdr_version")
+        supported = [required] if required else []
+    supported_text = ", ".join(str(v) for v in supported) if supported else "unknown"
+    print(f"  [INFO] herdr-board Compatibility (certified lock): {board_status}")
+    print(
+        f"         {board_info.get('selected_release', 'unknown')} supports/requires Herdr "
+        f"{supported_text} / protocol {board_info.get('required_herdr_protocol', 'unknown')}."
+    )
+    print("         Run scripts/update-package.sh --check to evaluate current upstream compatibility; do not patch/downgrade silently.")
 else:
-    print(f"  [OK] herdr-board Compatibility: {board_status}")
+    print(f"  [OK] herdr-board Compatibility (certified lock): {board_status}")
 
 # Harness Profiles Validation
 print("\n[3. HARNESS PROFILES GOVERNANCE]")

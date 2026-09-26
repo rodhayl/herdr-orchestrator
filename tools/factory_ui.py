@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Factory Control UI — local, read-mostly browser surface for Factory v9.
+"""Factory Control UI: local browser projection over durable Factory state.
 
-The UI intentionally reads Factory's durable project artifacts rather than
-maintaining a second database or scheduler. The only mutable action currently
-exposed is the already-supported public `goal resume` command.
+The server is intentionally thin. It owns no orchestration state, database,
+routing policy, retry semantics, or provider client. Read paths project durable
+Factory artifacts; the only mutable v1 action delegates to the public
+``factory.py goal resume`` command.
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
-import datetime as _dt
+import datetime as dt
 import hashlib
 import http.server
 import ipaddress
@@ -23,60 +24,104 @@ import subprocess
 import sys
 import threading
 import urllib.parse
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, Optional
+
+try:
+    from tools.factory_contracts import (
+        DISPLAY_STATES,
+        TERMINAL_GOAL_PHASES,
+        TERMINAL_RUN_STATES,
+        display_state,
+        run_state,
+    )
+except ImportError:  # Direct execution from tools/.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from factory_contracts import (  # type: ignore
+        DISPLAY_STATES,
+        TERMINAL_GOAL_PHASES,
+        TERMINAL_RUN_STATES,
+        display_state,
+        run_state,
+    )
 
 FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 UI_ROOT = FACTORY_ROOT / "ui"
 DEFAULT_VENDOR_ROOT = FACTORY_ROOT / ".tools" / "ui" / "vendor"
 API_PREFIX = "/api/v1"
 MAX_REQUEST_BODY = 64 * 1024
-MAX_JSONL_LINES = 500
 MAX_RUNS = 50
 MAX_GOALS = 50
+MAX_EVENTS = 300
+MAX_TELEMETRY = 500
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,160}$")
-
-BOARD_COLUMNS = ("BACKLOG", "READY", "RUNNING", "BLOCKED", "REVIEW", "DONE", "FAILED")
-TERMINAL_RUN_STATES = {"COMPLETED", "FAILED", "CANCELLED"}
-TERMINAL_GOAL_PHASES = {"COMPLETE", "FAILED", "BLOCKED"}
-
-CANONICAL_TO_DISPLAY = {
-    "PENDING": "BACKLOG",
-    "CREATED": "BACKLOG",
-    "READY": "READY",
-    "DISPATCHING": "RUNNING",
-    "RUNNING": "RUNNING",
-    "EXECUTING": "RUNNING",
-    "BLOCKED": "BLOCKED",
-    "VALIDATING": "REVIEW",
-    "PATH_VALIDATED": "REVIEW",
-    "VALIDATED": "REVIEW",
-    "COMMITTING": "REVIEW",
-    "COMMITTED": "REVIEW",
-    "INTEGRATING": "REVIEW",
-    "REVIEW": "REVIEW",
-    "INTEGRATED": "DONE",
-    "COMPLETED": "DONE",
-    "SUCCESS": "DONE",
-    "FAILED": "FAILED",
-    "TIMED_OUT": "FAILED",
-    "CONFLICTED": "FAILED",
-    "CANCELLED": "FAILED",
-}
 
 
 class UIDataError(RuntimeError):
-    """Raised when an API detail request targets invalid or unavailable data."""
+    """Invalid or unavailable user-visible Factory data."""
 
 
 class ActionConflict(RuntimeError):
-    """Raised when a requested mutable action is already running."""
+    """A requested bounded UI action is already in progress."""
 
 
 def _utc_now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
-def _read_json(path: pathlib.Path, default: Any = None) -> Any:
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _safe_text(value: Any, max_chars: int = 1200) -> str:
+    text = "" if value is None else str(value).replace("\x00", "")
+    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+
+
+def _safe_id(value: Any, label: str = "id") -> str:
+    candidate = str(value or "")
+    if not ID_RE.fullmatch(candidate):
+        raise UIDataError(f"Invalid {label}")
+    return candidate
+
+
+def _first_not_none(*values: Any) -> Any:
+    return next((value for value in values if value is not None), None)
+
+
+def _duration_ms(start: Any, end: Any) -> Optional[float]:
+    if not start or not end:
+        return None
+    try:
+        left = dt.datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        right = dt.datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+        return round((right - left).total_seconds() * 1000.0, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_under(root: pathlib.Path, candidate: pathlib.Path) -> bool:
+    try:
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_child_dir(root: pathlib.Path, name: Any, label: str) -> pathlib.Path:
+    safe_name = _safe_id(name, label)
+    candidate = root / safe_name
+    if not _is_under(root, candidate):
+        raise UIDataError(f"Invalid {label} path")
+    return candidate
+
+
+def _read_json(path: pathlib.Path, default: Any = None, *, root: Optional[pathlib.Path] = None) -> Any:
+    if root is not None and not _is_under(root, path):
+        return default
     try:
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
@@ -84,8 +129,21 @@ def _read_json(path: pathlib.Path, default: Any = None) -> Any:
         return default
 
 
-def _read_jsonl_tail(path: pathlib.Path, limit: int = MAX_JSONL_LINES) -> List[dict]:
-    if limit <= 0:
+def _read_jsonl_tail(
+    path: pathlib.Path,
+    limit: int,
+    predicate: Optional[Callable[[dict], bool]] = None,
+    *,
+    root: Optional[pathlib.Path] = None,
+) -> list[dict]:
+    """Read the last matching JSON objects, filtering before the bounded tail.
+
+    Filtering after truncating a global telemetry file caused older selected runs
+    to appear to have no metrics. This scans sequentially but retains only the
+    bounded matching tail in memory.
+    """
+
+    if limit <= 0 or (root is not None and not _is_under(root, path)):
         return []
     rows: collections.deque[dict] = collections.deque(maxlen=limit)
     try:
@@ -98,53 +156,11 @@ def _read_jsonl_tail(path: pathlib.Path, limit: int = MAX_JSONL_LINES) -> List[d
                     item = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(item, dict):
+                if isinstance(item, dict) and (predicate is None or predicate(item)):
                     rows.append(item)
     except OSError:
         return []
     return list(rows)
-
-
-def _canonical_json_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def _sha256_json(value: Any) -> str:
-    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
-
-
-def _safe_text(value: Any, max_chars: int = 1200) -> str:
-    text = "" if value is None else str(value)
-    text = text.replace("\x00", "")
-    if len(text) > max_chars:
-        return text[: max_chars - 1] + "…"
-    return text
-
-
-def _safe_id(value: str, label: str = "id") -> str:
-    value = str(value or "")
-    if not ID_RE.fullmatch(value):
-        raise UIDataError(f"Invalid {label}")
-    return value
-
-
-def _duration_ms(start: Optional[str], end: Optional[str]) -> Optional[float]:
-    if not start or not end:
-        return None
-    try:
-        a = _dt.datetime.fromisoformat(str(start).replace("Z", "+00:00"))
-        b = _dt.datetime.fromisoformat(str(end).replace("Z", "+00:00"))
-        return round((b - a).total_seconds() * 1000.0, 2)
-    except (TypeError, ValueError):
-        return None
-
-
-def _is_under(root: pathlib.Path, candidate: pathlib.Path) -> bool:
-    try:
-        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
-        return True
-    except ValueError:
-        return False
 
 
 def _referenced_json(project_root: pathlib.Path, value: Any) -> Optional[dict]:
@@ -153,18 +169,13 @@ def _referenced_json(project_root: pathlib.Path, value: Any) -> Optional[dict]:
     path = pathlib.Path(str(value))
     if not path.is_absolute():
         path = project_root / path
-    if not _is_under(project_root, path):
-        return None
-    data = _read_json(path, None)
+    data = _read_json(path, None, root=project_root)
     return data if isinstance(data, dict) else None
 
 
-def _display_state(task: dict) -> str:
-    display = str(task.get("display_state") or "").upper()
-    if display in BOARD_COLUMNS:
-        return display
-    canonical = str(task.get("canonical_state") or task.get("state") or task.get("status") or "PENDING").upper()
-    return CANONICAL_TO_DISPLAY.get(canonical, "FAILED" if canonical.endswith("FAILED") else "BACKLOG")
+def _task_display(task: dict) -> str:
+    canonical = task.get("canonical_state") or task.get("state") or task.get("status") or "PENDING"
+    return display_state(canonical, task.get("display_state"))
 
 
 def _compact_attempt(attempt: dict) -> dict:
@@ -180,71 +191,333 @@ def _compact_attempt(attempt: dict) -> dict:
         "model": attempt.get("model"),
         "effort": attempt.get("effort"),
         "execution_mode": attempt.get("execution_mode") or attempt.get("mode"),
+        "branch": attempt.get("branch") or attempt.get("branch_name"),
         "start_time": attempt.get("start_time"),
         "end_time": attempt.get("end_time"),
-        "duration_ms": attempt.get("duration_ms") or _duration_ms(attempt.get("start_time"), attempt.get("end_time")),
-        "commit_hash": attempt.get("commit_hash"),
+        "duration_ms": _first_not_none(
+            attempt.get("duration_ms"),
+            _duration_ms(attempt.get("start_time"), attempt.get("end_time")),
+        ),
+        "commit_hash": attempt.get("commit_hash") or attempt.get("commit"),
         "changed_paths": list(attempt.get("changed_paths") or []),
         "path_violations": list(attempt.get("path_violations") or []),
         "missing_expected": list(attempt.get("missing_expected") or []),
         "error": _safe_text(attempt.get("error"), 1600) if attempt.get("error") else None,
         "usage": {
-            "input_tokens": usage.get("input_tokens") or attempt.get("provider_input_tokens"),
-            "cached_input_tokens": usage.get("cache_read_tokens") or attempt.get("provider_cached_input_tokens"),
-            "reasoning_tokens": usage.get("thinking_tokens") or usage.get("reasoning_tokens") or attempt.get("provider_reasoning_tokens"),
-            "output_tokens": usage.get("output_tokens") or attempt.get("provider_output_tokens"),
+            "input_tokens": _first_not_none(usage.get("input_tokens"), attempt.get("provider_input_tokens")),
+            "cached_input_tokens": _first_not_none(usage.get("cache_read_tokens"), attempt.get("provider_cached_input_tokens")),
+            "reasoning_tokens": _first_not_none(usage.get("thinking_tokens"), usage.get("reasoning_tokens"), attempt.get("provider_reasoning_tokens")),
+            "output_tokens": _first_not_none(usage.get("output_tokens"), attempt.get("provider_output_tokens")),
         },
     }
 
 
 def _compact_task(task_id: str, task: dict, run_id: str) -> dict:
     attempts = task.get("attempts") if isinstance(task.get("attempts"), list) else []
-    latest = task.get("latest_result") if isinstance(task.get("latest_result"), dict) else (attempts[-1] if attempts else {})
-    compact_latest = _compact_attempt(latest)
+    latest_result = task.get("latest_result") if isinstance(task.get("latest_result"), dict) else None
+    source_attempt = latest_result if latest_result else (attempts[-1] if attempts else {})
+    latest = _compact_attempt(source_attempt)
     return {
         "run_id": run_id,
         "task_id": task_id,
         "name": task.get("name") or task.get("title") or task_id,
         "task_type": task.get("task_type"),
         "execution_class": task.get("execution_class"),
-        "display_state": _display_state(task),
+        "display_state": _task_display(task),
         "canonical_state": task.get("canonical_state") or task.get("state"),
-        "status": task.get("status") or compact_latest.get("status"),
-        "worker_id": task.get("worker_id") or compact_latest.get("worker_id"),
-        "profile_id": task.get("profile_id") or task.get("profile") or compact_latest.get("profile_id"),
-        "harness": task.get("harness") or compact_latest.get("harness") or compact_latest.get("adapter"),
-        "model": task.get("model") or compact_latest.get("model"),
-        "effort": task.get("effort") or compact_latest.get("effort"),
-        "execution_mode": compact_latest.get("execution_mode"),
+        "status": task.get("status") or latest.get("status"),
+        "worker_id": task.get("worker_id") or latest.get("worker_id"),
+        "profile_id": task.get("profile_id") or task.get("profile") or latest.get("profile_id"),
+        "harness": task.get("harness") or latest.get("harness") or latest.get("adapter"),
+        "model": task.get("model") or latest.get("model"),
+        "effort": task.get("effort") or latest.get("effort"),
+        "effort_source": task.get("effort_source"),
+        "escalated_from_profile": task.get("escalated_from_profile"),
+        "escalation_reason": _safe_text(task.get("escalation_reason"), 500) if task.get("escalation_reason") else None,
+        "execution_mode": latest.get("execution_mode"),
+        "retried": len(attempts) > 1,
+        "escalated": bool(task.get("escalated_from_profile") or task.get("escalation_reason")),
         "attempts_count": task.get("attempts_count") if task.get("attempts_count") is not None else len(attempts),
-        "current_attempt_id": task.get("current_attempt_id") or compact_latest.get("attempt_id"),
+        "current_attempt_id": task.get("current_attempt_id") or latest.get("attempt_id"),
         "dependencies": list(task.get("dependencies") or []),
-        "commit_hash": compact_latest.get("commit_hash"),
-        "start_time": compact_latest.get("start_time"),
-        "end_time": compact_latest.get("end_time"),
-        "duration_ms": compact_latest.get("duration_ms"),
-        "changed_paths": compact_latest.get("changed_paths") or [],
-        "error": compact_latest.get("error"),
+        "commit_hash": latest.get("commit_hash"),
+        "branch": latest.get("branch"),
+        "start_time": latest.get("start_time"),
+        "end_time": latest.get("end_time"),
+        "duration_ms": latest.get("duration_ms"),
+        "changed_paths": latest.get("changed_paths") or [],
+        "error": latest.get("error"),
     }
 
 
 def _compact_run(manifest: dict) -> dict:
     tasks = manifest.get("tasks") if isinstance(manifest.get("tasks"), dict) else {}
-    counts = {column: 0 for column in BOARD_COLUMNS}
-    for task_id, task in tasks.items():
-        counts[_display_state(task)] += 1
+    counts = {column: 0 for column in DISPLAY_STATES}
+    for task in tasks.values():
+        counts[_task_display(task)] += 1
     return {
         "run_id": manifest.get("run_id"),
         "goal_id": manifest.get("goal_id"),
         "plan_id": manifest.get("plan_id"),
         "plan_name": manifest.get("plan_name") or manifest.get("name"),
-        "run_state": manifest.get("run_state") or manifest.get("final_status") or "UNKNOWN",
+        "run_state": run_state(manifest),
         "certification_level": manifest.get("certification_level"),
         "contains_mock_execution": bool(manifest.get("contains_mock_execution", False)),
         "start_time": manifest.get("start_time"),
         "end_time": manifest.get("end_time"),
         "task_count": len(tasks),
         "counts": counts,
+    }
+
+
+def _plan_tasks(plan: Any) -> list[dict]:
+    if not isinstance(plan, dict):
+        return []
+    tasks = plan.get("tasks")
+    if isinstance(tasks, list):
+        return [task for task in tasks if isinstance(task, dict)]
+    result: list[dict] = []
+    for wave in plan.get("waves", []) if isinstance(plan.get("waves"), list) else []:
+        if isinstance(wave, dict):
+            result.extend(task for task in wave.get("tasks", []) if isinstance(task, dict))
+    return result
+
+
+def _compact_goal_spec(goal_spec: Any) -> Optional[dict]:
+    """Return only GoalSpec fields the browser needs for traceability."""
+    if not isinstance(goal_spec, dict):
+        return None
+    criteria = []
+    for item in goal_spec.get("acceptance_criteria", []) if isinstance(goal_spec.get("acceptance_criteria"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        criteria.append({
+            "id": item.get("id"),
+            "title": _safe_text(item.get("title"), 320),
+            "description": _safe_text(item.get("description"), 1600),
+            "provenance": item.get("provenance"),
+            "derived_from": list(item.get("derived_from") or []),
+            "rationale": _safe_text(item.get("rationale"), 800) if item.get("rationale") else None,
+        })
+    return {
+        "goal_id": goal_spec.get("goal_id"),
+        "title": _safe_text(goal_spec.get("title"), 320),
+        "acceptance_criteria": criteria,
+        "constraints": [_safe_text(item, 800) for item in (goal_spec.get("constraints") or []) if item is not None][:100],
+        "non_goals": [_safe_text(item, 800) for item in (goal_spec.get("non_goals") or []) if item is not None][:100],
+    }
+
+
+def _compact_plan(plan: Any) -> Optional[dict]:
+    """Project plan structure without worker prompts or other raw semantic payloads."""
+    if not isinstance(plan, dict):
+        return None
+    tasks = []
+    for item in _plan_tasks(plan):
+        tasks.append({
+            "task_id": item.get("task_id"),
+            "name": _safe_text(item.get("name") or item.get("title"), 320),
+            "task_type": item.get("task_type"),
+            "execution_class": item.get("execution_class"),
+            "dependencies": list(item.get("dependencies") or []),
+            "allowed_paths": list(item.get("allowed_paths") or []),
+            "expected_files": list(item.get("expected_files") or []),
+            "context_files": list(item.get("context_files") or []),
+            "satisfies": list(item.get("satisfies") or []),
+            "validations": list(item.get("validations") or []),
+            "requires": list(item.get("requires") or []),
+            "profile": item.get("profile") or item.get("profile_id"),
+            "worker": item.get("worker") or item.get("worker_id"),
+        })
+    traceability = plan.get("requirements_traceability")
+    if not isinstance(traceability, dict):
+        traceability = {}
+    return {
+        "plan_id": plan.get("plan_id"),
+        "version": plan.get("version"),
+        "name": _safe_text(plan.get("name"), 320),
+        "goal_id": plan.get("goal_id"),
+        "requirements_traceability": {str(key): list(value) for key, value in traceability.items() if isinstance(value, list)},
+        "tasks": tasks,
+    }
+
+
+def _compact_validation_result(item: dict, name: Any = None) -> dict:
+    """Project only validation evidence needed by the UI; never expose raw stdout/stderr."""
+
+    command = item.get("command")
+    if isinstance(command, list):
+        command = [str(part) for part in command[:64]]
+    elif command is not None:
+        command = _safe_text(command, 1200)
+    return {
+        "name": _safe_text(item.get("name") or name, 240) if (item.get("name") or name) else None,
+        "task_id": item.get("task_id"),
+        "command": command,
+        "returncode": item.get("returncode"),
+        "passed": bool(item.get("passed")) if item.get("passed") is not None else None,
+        "error": _safe_text(item.get("error"), 500) if item.get("error") else None,
+    }
+
+
+def _normalize_validation_results(raw: Any) -> list[dict]:
+    if isinstance(raw, list):
+        return [_compact_validation_result(item) for item in raw if isinstance(item, dict)]
+    if isinstance(raw, dict):
+        return [_compact_validation_result(item, name) for name, item in raw.items() if isinstance(item, dict)]
+    return []
+
+
+def _safe_context_summary(packet: Any, metrics: list[dict]) -> Optional[dict]:
+    if not isinstance(packet, dict):
+        return None
+    anchors = [item for item in packet.get("required_anchors", []) if isinstance(item, dict)]
+    required_anchors = [item for item in anchors if item.get("required") is not False]
+    anchor_types: dict[str, int] = collections.Counter(str(item.get("type") or item.get("anchor_type") or "unknown") for item in required_anchors)
+    metric = next((item for item in reversed(metrics) if item.get("context_packet_id") == packet.get("packet_id")), metrics[-1] if metrics else {})
+    included_files = []
+    for item in packet.get("included_files", []) if isinstance(packet.get("included_files"), list) else []:
+        if isinstance(item, dict):
+            included_files.append({
+                "path": item.get("path"),
+                "reason": _safe_text(item.get("reason"), 240),
+                "byte_count": item.get("byte_count"),
+            })
+    requirements = []
+    for item in packet.get("requirements", []) if isinstance(packet.get("requirements"), list) else []:
+        if isinstance(item, dict):
+            requirements.append({
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "description": _safe_text(item.get("description") or item.get("text"), 1200),
+                "provenance": item.get("provenance"),
+            })
+    return {
+        "packet_id": packet.get("packet_id"),
+        "packet_role": packet.get("packet_role"),
+        "packet_hash": packet.get("packet_hash"),
+        "packet_bytes": packet.get("packet_bytes"),
+        "compiler_version": packet.get("compiler_version"),
+        "attempt_id": packet.get("attempt_id"),
+        "budget": packet.get("budget") if isinstance(packet.get("budget"), dict) else {},
+        "required_anchor_count": len(required_anchors),
+        "required_anchor_recall": metric.get("required_anchor_recall"),
+        "anchor_types": dict(sorted(anchor_types.items())),
+        "handoff_count": len(packet.get("handoffs", [])) if isinstance(packet.get("handoffs"), list) else 0,
+        "referenced_files": list(packet.get("referenced_files") or []),
+        "included_files": included_files,
+        "requirements": requirements,
+        "validations": list(packet.get("validations") or []),
+    }
+
+
+def _build_traceability(goal_spec: Any, plan: Any, tasks_by_id: dict[str, dict], validation_results: list[dict]) -> list[dict]:
+    if not isinstance(goal_spec, dict):
+        return []
+    criteria = [item for item in goal_spec.get("acceptance_criteria", []) if isinstance(item, dict)]
+    plan_tasks = _plan_tasks(plan)
+    mapping: dict[str, list[str]] = collections.defaultdict(list)
+    explicit = plan.get("requirements_traceability") if isinstance(plan, dict) else None
+    if isinstance(explicit, dict):
+        for criterion_id, task_ids in explicit.items():
+            for task_id in task_ids if isinstance(task_ids, list) else []:
+                if str(task_id) not in mapping[str(criterion_id)]:
+                    mapping[str(criterion_id)].append(str(task_id))
+    for task in plan_tasks:
+        task_id = str(task.get("task_id") or "")
+        for criterion_id in task.get("satisfies", []) if isinstance(task.get("satisfies"), list) else []:
+            if task_id and task_id not in mapping[str(criterion_id)]:
+                mapping[str(criterion_id)].append(task_id)
+
+    validations_by_task: dict[str, list[dict]] = collections.defaultdict(list)
+    for item in validation_results:
+        task_id = str(item.get("task_id") or "")
+        if task_id:
+            validations_by_task[task_id].append(item)
+
+    result = []
+    for criterion in criteria:
+        criterion_id = str(criterion.get("id") or "")
+        task_ids = mapping.get(criterion_id, [])
+        states = [tasks_by_id[task_id].get("display_state") for task_id in task_ids if task_id in tasks_by_id]
+        validations = [item for task_id in task_ids for item in validations_by_task.get(task_id, [])]
+        if not task_ids:
+            outcome = "UNMAPPED"
+        elif any(state in {"FAILED", "BLOCKED"} for state in states):
+            outcome = "FAILED"
+        elif validations and all(bool(item.get("passed")) for item in validations) and states and all(state == "DONE" for state in states):
+            outcome = "PASS"
+        elif states and all(state == "DONE" for state in states):
+            outcome = "DONE"
+        else:
+            outcome = "IN_PROGRESS"
+        result.append({
+            "criterion_id": criterion_id,
+            "title": criterion.get("title") or criterion_id,
+            "description": _safe_text(criterion.get("description") or criterion.get("text"), 1200),
+            "provenance": criterion.get("provenance") or "USER_EXPLICIT",
+            "tasks": task_ids,
+            "validation_count": len(validations),
+            "outcome": outcome,
+        })
+    return result
+
+
+def _compact_telemetry(row: dict) -> dict:
+    """Allowlist telemetry fields useful for observability without leaking provider payloads."""
+
+    allowed = (
+        "run_id", "task_id", "attempt_id", "profile_id", "worker_id", "harness", "model", "effort",
+        "execution_mode", "start_time", "end_time", "duration_ms", "tool_calls",
+        "provider_input_tokens", "provider_cached_input_tokens", "provider_reasoning_tokens",
+        "provider_output_tokens", "factory_supplied_bytes", "required_anchor_recall",
+        "context_packet_id", "context_packet_hash", "session_mode", "session_reused",
+        "native_compaction_used",
+    )
+    return {key: row.get(key) for key in allowed if key in row}
+
+
+def _compact_event(row: dict) -> dict:
+    """Expose event identity/timing only; raw payloads can contain prompts, paths or errors."""
+
+    return {
+        "timestamp": row.get("timestamp"),
+        "event": row.get("event") or row.get("type") or row.get("name"),
+        "task_id": row.get("task_id") or ((row.get("payload") or {}).get("task_id") if isinstance(row.get("payload"), dict) else None),
+        "attempt_id": row.get("attempt_id") or ((row.get("payload") or {}).get("attempt_id") if isinstance(row.get("payload"), dict) else None),
+    }
+
+
+def _compact_goal_state(state: dict) -> dict:
+    allowed = (
+        "goal_id", "phase", "run_id", "plan_revision_count", "remediation_round_count",
+        "created_at", "updated_at", "completed_at", "real_only", "failpoint_hit",
+    )
+    compact = {key: state.get(key) for key in allowed if key in state}
+    compact["raw_goal"] = _safe_text(state.get("raw_goal"), 4000)
+    if state.get("error"):
+        compact["error"] = _safe_text(state.get("error"), 500)
+    return compact
+
+
+def _compact_audit(audit: Any) -> Optional[dict]:
+    if not isinstance(audit, dict):
+        return None
+    findings = []
+    for finding in audit.get("findings", []) if isinstance(audit.get("findings"), list) else []:
+        if not isinstance(finding, dict):
+            continue
+        findings.append({
+            "id": finding.get("id"),
+            "severity": finding.get("severity"),
+            "area": finding.get("area") or finding.get("category"),
+            "criterion_id": finding.get("criterion_id") or finding.get("criterion"),
+            "description": _safe_text(finding.get("description") or finding.get("evidence"), 1000),
+            "required_change": _safe_text(finding.get("required_change") or finding.get("recommendation") or finding.get("suggested_action"), 1000),
+        })
+    return {
+        "verdict": audit.get("verdict") or audit.get("status"),
+        "findings": findings,
     }
 
 
@@ -255,97 +528,107 @@ class FactoryReadModel:
         self.project_root = pathlib.Path(project_root).resolve()
         self.factory_root = pathlib.Path(factory_root).resolve()
         self.runtime_root = self.project_root / ".agy-factory"
+        if self.runtime_root.exists() and not _is_under(self.project_root, self.runtime_root):
+            raise UIDataError("Factory runtime root escapes project")
         self.runs_dir = self.runtime_root / "runs"
         self.goals_dir = self.runtime_root / "goals"
         self.evidence_dir = self.runtime_root / "evidence"
 
     def _load_factory_config(self, filename: str, default: Any) -> Any:
-        return _read_json(self.factory_root / filename, default)
+        return _read_json(self.factory_root / filename, default, root=self.factory_root)
 
-    def _list_run_manifests(self) -> List[dict]:
-        results: List[dict] = []
-        if not self.runs_dir.is_dir():
+    def _run_dir(self, run_id: Any) -> pathlib.Path:
+        return _safe_child_dir(self.runs_dir, run_id, "run id")
+
+    def _goal_dir(self, goal_id: Any) -> pathlib.Path:
+        return _safe_child_dir(self.goals_dir, goal_id, "goal id")
+
+    def _list_run_manifests(self) -> list[dict]:
+        results: list[dict] = []
+        if not self.runs_dir.is_dir() or not _is_under(self.project_root, self.runs_dir):
             return results
-        for run_dir in sorted(self.runs_dir.glob("run-*"), reverse=True)[:MAX_RUNS]:
-            data = _read_json(run_dir / "manifest.json", None)
+        for run_dir in sorted(self.runs_dir.glob("run-*"), reverse=True):
+            if len(results) >= MAX_RUNS or not run_dir.is_dir() or not _is_under(self.runs_dir, run_dir):
+                continue
+            data = _read_json(run_dir / "manifest.json", None, root=self.runs_dir)
             if isinstance(data, dict):
                 data.setdefault("run_id", run_dir.name)
                 results.append(data)
         results.sort(key=lambda item: str(item.get("start_time") or item.get("run_id") or ""), reverse=True)
         return results
 
-    def _list_goal_states(self) -> List[dict]:
-        results: List[dict] = []
-        if not self.goals_dir.is_dir():
+    def _list_goal_states(self) -> list[dict]:
+        results: list[dict] = []
+        if not self.goals_dir.is_dir() or not _is_under(self.project_root, self.goals_dir):
             return results
-        for goal_dir in sorted(self.goals_dir.glob("goal-*"), reverse=True)[:MAX_GOALS]:
-            state = _read_json(goal_dir / "state.json", None)
+        for goal_dir in sorted(self.goals_dir.glob("goal-*"), reverse=True):
+            if len(results) >= MAX_GOALS or not goal_dir.is_dir() or not _is_under(self.goals_dir, goal_dir):
+                continue
+            state = _read_json(goal_dir / "state.json", None, root=self.goals_dir)
             if isinstance(state, dict):
                 state.setdefault("goal_id", goal_dir.name)
                 results.append(state)
         results.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or item.get("goal_id") or ""), reverse=True)
         return results
 
-    def _telemetry(self, run_id: Optional[str] = None, task_id: Optional[str] = None) -> List[dict]:
-        rows = _read_jsonl_tail(self.evidence_dir / "telemetry.jsonl", MAX_JSONL_LINES)
-        if run_id:
-            rows = [row for row in rows if row.get("run_id") == run_id]
-        if task_id:
-            rows = [row for row in rows if row.get("task_id") == task_id]
-        return rows
+    def _telemetry(self, run_id: Optional[str] = None, task_id: Optional[str] = None, limit: int = MAX_TELEMETRY) -> list[dict]:
+        def matches(row: dict) -> bool:
+            return (not run_id or row.get("run_id") == run_id) and (not task_id or row.get("task_id") == task_id)
+        return [_compact_telemetry(row) for row in _read_jsonl_tail(self.evidence_dir / "telemetry.jsonl", limit, matches, root=self.evidence_dir)]
 
-    def _events(self, run_id: str, task_id: Optional[str] = None) -> List[dict]:
-        rows = _read_jsonl_tail(self.runs_dir / run_id / "events.jsonl", 300)
-        if task_id:
-            filtered = []
-            for row in rows:
-                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-                if payload.get("task_id") == task_id or row.get("task_id") == task_id:
-                    filtered.append(row)
-            rows = filtered
-        return rows
+    def _context_telemetry(self, run_id: Optional[str] = None, task_id: Optional[str] = None, limit: int = 200) -> list[dict]:
+        def matches(row: dict) -> bool:
+            return (not run_id or row.get("run_id") == run_id) and (not task_id or row.get("task_id") == task_id)
+        return [_compact_telemetry(row) for row in _read_jsonl_tail(self.evidence_dir / "context-telemetry.jsonl", limit, matches, root=self.evidence_dir)]
 
-    def _provider_summary(self) -> List[dict]:
+    def _events(self, run_id: str, task_id: Optional[str] = None, limit: int = MAX_EVENTS) -> list[dict]:
+        def matches(row: dict) -> bool:
+            if not task_id:
+                return True
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            return payload.get("task_id") == task_id or row.get("task_id") == task_id
+        return [_compact_event(row) for row in _read_jsonl_tail(self._run_dir(run_id) / "events.jsonl", limit, matches, root=self.runs_dir)]
+
+    def _provider_summary(self) -> list[dict]:
         raw = self._load_factory_config("harness_profiles.json", {})
         profiles = raw.get("profiles") if isinstance(raw, dict) and isinstance(raw.get("profiles"), dict) else {}
-        grouped: Dict[str, List[dict]] = collections.defaultdict(list)
+        grouped: dict[str, list[dict]] = collections.defaultdict(list)
         for profile_id, profile in profiles.items():
             if not isinstance(profile, dict):
                 continue
-            harness = str(profile.get("harness") or profile.get("adapter") or "unknown")
             certification = profile.get("certification") if isinstance(profile.get("certification"), dict) else {}
-            grouped[harness].append({
+            grouped[str(profile.get("harness") or profile.get("adapter") or "unknown")].append({
                 "profile_id": profile_id,
                 "model": profile.get("model"),
                 "effort": profile.get("effort"),
                 "status": certification.get("status") or "UNKNOWN",
                 "enabled": bool(profile.get("enabled", True)),
             })
-        precedence = {
-            "REAL_PROVIDER_CERTIFIED": 100,
-            "AVAILABLE": 90,
-            "TRANSPORT_CERTIFIED": 80,
-            "DETERMINISTIC_CERTIFIED": 70,
-            "AUTH_BLOCKED": 40,
-            "PROFILE_UNAVAILABLE": 30,
-            "PROFILE_INVALID": 20,
-            "PROFILE_DRIFT": 10,
-            "UNKNOWN": 0,
-        }
+
         result = []
         for harness in sorted(grouped):
             entries = grouped[harness]
-            status = max((entry["status"] for entry in entries), key=lambda item: precedence.get(str(item), 0), default="UNKNOWN")
-            models = sorted({str(entry.get("model")) for entry in entries if entry.get("model")})
+            enabled = [item for item in entries if item["enabled"]]
+            statuses = [str(item["status"]) for item in enabled]
+            distinct = sorted(set(statuses))
+            aggregate = distinct[0] if len(distinct) == 1 else ("PARTIAL" if distinct else "DISABLED")
+            counts = dict(sorted(collections.Counter(statuses).items()))
+            models = sorted({str(item["model"]) for item in entries if item.get("model")})
+            detail_parts = [", ".join(models[:3])] if models else []
+            if counts:
+                detail_parts.append(", ".join(f"{count} {status.lower()}" for status, count in counts.items()))
             result.append({
                 "id": harness,
                 "harness": harness,
-                "label": harness.upper() if harness in {"agy"} else harness.replace("-", " ").title(),
-                "status": status,
+                "label": "AGY" if harness == "agy" else harness.replace("-", " ").title(),
+                "status": aggregate,
+                "status_counts": counts,
                 "profile_count": len(entries),
-                "detail": ", ".join(models[:3]) if models else f"{len(entries)} profile(s)",
+                "enabled_profile_count": len(enabled),
+                "detail": "; ".join(detail_parts),
                 "profiles": entries,
             })
+
         lock = self._load_factory_config("toolchain.lock.json", {})
         if isinstance(lock, dict):
             for key, status_key in (("freebuff", "feasibility_status"), ("herdr_board", "compatibility_status")):
@@ -357,19 +640,22 @@ class FactoryReadModel:
                         "harness": identifier,
                         "label": "herdr-board" if key == "herdr_board" else "Freebuff",
                         "status": item.get(status_key) or "UNKNOWN",
+                        "status_counts": {},
                         "profile_count": 0,
+                        "enabled_profile_count": 0,
                         "detail": _safe_text(item.get("compatibility_notes") or item.get("notes"), 240),
                         "profiles": [],
                     })
         return result
 
     def _goal_summary(self, state: dict) -> dict:
-        raw_goal = _safe_text(state.get("raw_goal"), 220)
+        raw_goal = _safe_text(state.get("raw_goal"), 500)
         first_line = next((line.strip("# ") for line in raw_goal.splitlines() if line.strip()), state.get("goal_id"))
-        phase = str(state.get("phase") or "UNKNOWN")
+        phase = str(state.get("phase") or "UNKNOWN").upper()
         return {
             "goal_id": state.get("goal_id"),
-            "title": first_line or state.get("goal_id"),
+            "title": state.get("title") or first_line or state.get("goal_id"),
+            "raw_goal_excerpt": raw_goal,
             "phase": phase,
             "run_id": state.get("run_id"),
             "updated_at": state.get("updated_at"),
@@ -382,34 +668,89 @@ class FactoryReadModel:
         }
 
     def _usage_summary(self, run_id: Optional[str], tasks: Iterable[dict]) -> dict:
+        rows = self._telemetry(run_id=run_id)
         fields = ("provider_input_tokens", "provider_cached_input_tokens", "provider_reasoning_tokens", "provider_output_tokens")
         totals = {field: 0 for field in fields}
         observed = {field: False for field in fields}
         duration_ms = 0.0
+        duration_observed = False
         tool_calls = 0
-        for row in self._telemetry(run_id=run_id):
+        for row in rows:
             for field in fields:
                 value = row.get(field)
-                if isinstance(value, (int, float)):
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
                     totals[field] += value
                     observed[field] = True
             value = row.get("duration_ms")
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 duration_ms += float(value)
+                duration_observed = True
             tc = row.get("tool_calls")
-            if isinstance(tc, int):
+            if isinstance(tc, int) and not isinstance(tc, bool):
                 tool_calls += tc
-        for task in tasks:
-            if task.get("duration_ms") and not duration_ms:
-                duration_ms += float(task["duration_ms"] or 0)
+        task_list = list(tasks)
+        if not duration_observed:
+            duration_ms = sum(float(task.get("duration_ms") or 0) for task in task_list)
+
+        context_rows = self._context_telemetry(run_id=run_id)
+        context_bytes = sum(float(row.get("factory_supplied_bytes") or 0) for row in context_rows if isinstance(row.get("factory_supplied_bytes"), (int, float)))
+        if not context_bytes:
+            context_bytes = sum(float(row.get("factory_supplied_bytes") or 0) for row in rows if isinstance(row.get("factory_supplied_bytes"), (int, float)))
+        attempts = sum(int(task.get("attempts_count") or 0) for task in task_list)
         return {
             "input_tokens": totals["provider_input_tokens"] if observed["provider_input_tokens"] else None,
             "cached_input_tokens": totals["provider_cached_input_tokens"] if observed["provider_cached_input_tokens"] else None,
             "reasoning_tokens": totals["provider_reasoning_tokens"] if observed["provider_reasoning_tokens"] else None,
             "output_tokens": totals["provider_output_tokens"] if observed["provider_output_tokens"] else None,
+            "context_bytes": round(context_bytes) if context_bytes else None,
             "duration_ms": round(duration_ms, 2) if duration_ms else None,
             "tool_calls": tool_calls or None,
+            "attempts": attempts,
         }
+
+    def _goal_state_for_run(self, manifest: dict) -> Optional[dict]:
+        goal_id = manifest.get("goal_id")
+        if not goal_id:
+            return None
+        state = _read_json(self._goal_dir(goal_id) / "state.json", None, root=self.goals_dir)
+        return state if isinstance(state, dict) else None
+
+    def _resolve_plan(self, manifest: dict, run_dir: pathlib.Path) -> Optional[dict]:
+        plan = _referenced_json(self.project_root, manifest.get("plan_path"))
+        if plan:
+            return plan
+        direct = _read_json(run_dir / "plan.json", None, root=self.runs_dir)
+        if isinstance(direct, dict):
+            return direct
+        goal_state = self._goal_state_for_run(manifest)
+        if goal_state:
+            return _referenced_json(self.project_root, goal_state.get("approved_plan_path") or goal_state.get("current_plan_path"))
+        return None
+
+    def _resolve_goal_spec(self, manifest: dict) -> Optional[dict]:
+        goal_state = self._goal_state_for_run(manifest)
+        if not goal_state:
+            return None
+        spec = _referenced_json(self.project_root, goal_state.get("goal_spec_path"))
+        if spec:
+            return spec
+        goal_id = goal_state.get("goal_id")
+        candidate = _read_json(self._goal_dir(goal_id) / "goal-spec.json", None, root=self.goals_dir)
+        return candidate if isinstance(candidate, dict) else None
+
+    def _find_context_packet(self, run_id: str, task_id: str, attempt_id: Any) -> Optional[dict]:
+        run_dir = self._run_dir(run_id)
+        candidates: list[pathlib.Path] = []
+        if attempt_id is not None:
+            candidates.append(run_dir / "workers" / task_id / f"att-{attempt_id}" / "context_packet.json")
+        packet_dir = run_dir / "context" / "packets"
+        if packet_dir.is_dir() and _is_under(run_dir, packet_dir):
+            candidates.extend(sorted(packet_dir.glob("*.json"), reverse=True))
+        for candidate in candidates:
+            packet = _read_json(candidate, None, root=run_dir)
+            if isinstance(packet, dict) and (not packet.get("task_id") or packet.get("task_id") == task_id):
+                return packet
+        return None
 
     def snapshot(self) -> dict:
         manifests = self._list_run_manifests()
@@ -417,27 +758,20 @@ class FactoryReadModel:
         runs = [_compact_run(item) for item in manifests]
         goals = [self._goal_summary(item) for item in goals_raw]
 
-        active_manifest = next((item for item in manifests if str(item.get("run_state") or "").upper() not in TERMINAL_RUN_STATES), None)
+        active_manifest = next((item for item in manifests if run_state(item) not in TERMINAL_RUN_STATES), None)
         selected_manifest = active_manifest or (manifests[0] if manifests else None)
         selected_run_id = selected_manifest.get("run_id") if selected_manifest else None
         tasks_raw = selected_manifest.get("tasks", {}) if isinstance(selected_manifest, dict) and isinstance(selected_manifest.get("tasks"), dict) else {}
         tasks = [_compact_task(task_id, task, str(selected_run_id or "")) for task_id, task in tasks_raw.items()]
-        tasks.sort(key=lambda item: (BOARD_COLUMNS.index(item["display_state"]), str(item["task_id"])))
+        tasks.sort(key=lambda item: (DISPLAY_STATES.index(item["display_state"]), str(item["task_id"])))
+        columns = [{"id": name, "label": name.title(), "tasks": [task for task in tasks if task["display_state"] == name]} for name in DISPLAY_STATES]
 
-        columns = []
-        for name in BOARD_COLUMNS:
-            columns.append({"id": name, "label": name.title(), "tasks": [task for task in tasks if task["display_state"] == name]})
-
-        project_policy = _read_json(self.project_root / "factory.project.json", {})
+        project_policy = _read_json(self.project_root / "factory.project.json", {}, root=self.project_root)
         factory_cfg = self._load_factory_config("factory.json", {})
-        project_name = None
-        if isinstance(project_policy, dict):
-            project_name = project_policy.get("project_name") or project_policy.get("project_id")
+        project_name = project_policy.get("project_name") or project_policy.get("project_id") if isinstance(project_policy, dict) else None
         project_name = project_name or self.project_root.name
-
         active_goal = next((goal for goal in goals if goal.get("phase") not in TERMINAL_GOAL_PHASES), None)
-        counts = {column: sum(1 for task in tasks if task["display_state"] == column) for column in BOARD_COLUMNS}
-        usage = self._usage_summary(selected_run_id, tasks)
+        counts = {column: sum(1 for task in tasks if task["display_state"] == column) for column in DISPLAY_STATES}
 
         data = {
             "api_version": "1",
@@ -454,101 +788,219 @@ class FactoryReadModel:
             "runs": runs[:20],
             "board": {"columns": columns, "counts": counts, "task_count": len(tasks)},
             "providers": self._provider_summary(),
-            "metrics": usage,
+            "metrics": self._usage_summary(selected_run_id, tasks),
         }
-        # Keep the revision stable when canonical Factory state is unchanged.
-        # generated_at is response metadata, not state, so it must not defeat ETag/304 caching.
-        revision_basis = {k: v for k, v in data.items() if k != "generated_at"}
-        data["revision"] = _sha256_json(revision_basis)
+        data["revision"] = _sha256_json({key: value for key, value in data.items() if key != "generated_at"})
         return data
 
     def goal_detail(self, goal_id: str) -> dict:
-        goal_id = _safe_id(goal_id, "goal id")
-        goal_dir = self.goals_dir / goal_id
-        if not _is_under(self.goals_dir, goal_dir):
-            raise UIDataError("Invalid goal path")
-        state = _read_json(goal_dir / "state.json", None)
+        goal_dir = self._goal_dir(goal_id)
+        state = _read_json(goal_dir / "state.json", None, root=self.goals_dir)
         if not isinstance(state, dict):
             raise UIDataError("Goal not found")
-        goal_spec = _referenced_json(self.project_root, state.get("goal_spec_path")) or _read_json(goal_dir / "goal-spec.json", None)
+        goal_spec = _referenced_json(self.project_root, state.get("goal_spec_path")) or _read_json(goal_dir / "goal-spec.json", None, root=self.goals_dir)
         plan = _referenced_json(self.project_root, state.get("approved_plan_path") or state.get("current_plan_path"))
+        manifest = None
+        tasks_by_id: dict[str, dict] = {}
+        if state.get("run_id"):
+            manifest = _read_json(self._run_dir(state["run_id"]) / "manifest.json", None, root=self.runs_dir)
+            if isinstance(manifest, dict):
+                tasks_by_id = {task_id: _compact_task(task_id, task, str(state["run_id"])) for task_id, task in (manifest.get("tasks") or {}).items() if isinstance(task, dict)}
+        validations = _normalize_validation_results(state.get("validation_results") or (manifest.get("validation_results") if isinstance(manifest, dict) else None))
         return {
             "summary": self._goal_summary(state),
-            "state": state,
-            "goal_spec": goal_spec if isinstance(goal_spec, dict) else None,
-            "plan": plan if isinstance(plan, dict) else None,
+            "state": _compact_goal_state(state),
+            "goal_spec": _compact_goal_spec(goal_spec),
+            "plan": _compact_plan(plan),
+            "traceability": _build_traceability(goal_spec, plan, tasks_by_id, validations),
+            "validation_results": validations,
+            "final_audit": _compact_audit((state.get("audit_results") or [])[-1]) if isinstance(state.get("audit_results"), list) and state.get("audit_results") else None,
         }
 
     def run_detail(self, run_id: str) -> dict:
-        run_id = _safe_id(run_id, "run id")
-        run_dir = self.runs_dir / run_id
-        manifest = _read_json(run_dir / "manifest.json", None)
+        run_dir = self._run_dir(run_id)
+        manifest = _read_json(run_dir / "manifest.json", None, root=self.runs_dir)
         if not isinstance(manifest, dict):
             raise UIDataError("Run not found")
         tasks_raw = manifest.get("tasks") if isinstance(manifest.get("tasks"), dict) else {}
-        tasks = [_compact_task(task_id, task, run_id) for task_id, task in tasks_raw.items()]
-        plan = _referenced_json(self.project_root, manifest.get("plan_path"))
-        compact_run = _compact_run(manifest)
+        tasks = [_compact_task(task_id, task, run_id) for task_id, task in tasks_raw.items() if isinstance(task, dict)]
+        plan = self._resolve_plan(manifest, run_dir)
+        goal_spec = self._resolve_goal_spec(manifest)
+        goal_state = self._goal_state_for_run(manifest)
+        validations = _normalize_validation_results(
+            manifest.get("validation_results") or (goal_state.get("validation_results") if isinstance(goal_state, dict) else None)
+        )
+        compact = _compact_run(manifest)
         return {
-            "run": compact_run,
-            "summary": compact_run,
+            "run": compact,
             "tasks": tasks,
-            "validation_results": manifest.get("validation_results") or {},
-            "final_audit": manifest.get("final_audit") or {},
+            "traceability": _build_traceability(goal_spec, plan, {task["task_id"]: task for task in tasks}, validations),
+            "validation_results": validations,
+            "final_audit": _compact_audit(manifest.get("final_audit") or ((goal_state.get("audit_results") or [])[-1] if isinstance(goal_state, dict) and isinstance(goal_state.get("audit_results"), list) and goal_state.get("audit_results") else None)),
             "concurrency_evidence": manifest.get("concurrency_evidence") or {},
-            "plan": plan,
-            "events": self._events(run_id)[-150:],
+            "plan": _compact_plan(plan),
+            "events": self._events(run_id, limit=150),
             "metrics": self._usage_summary(run_id, tasks),
         }
 
     def task_detail(self, run_id: str, task_id: str) -> dict:
-        run_id = _safe_id(run_id, "run id")
+        run_dir = self._run_dir(run_id)
         task_id = _safe_id(task_id, "task id")
-        manifest = _read_json(self.runs_dir / run_id / "manifest.json", None)
+        manifest = _read_json(run_dir / "manifest.json", None, root=self.runs_dir)
         if not isinstance(manifest, dict):
             raise UIDataError("Run not found")
         tasks = manifest.get("tasks") if isinstance(manifest.get("tasks"), dict) else {}
         task = tasks.get(task_id)
         if not isinstance(task, dict):
             raise UIDataError("Task not found")
-        attempts = task.get("attempts") if isinstance(task.get("attempts"), list) else []
+        attempts = [item for item in (task.get("attempts") or []) if isinstance(item, dict)]
+        compact_attempts = [_compact_attempt(item) for item in attempts]
+        compact_task = _compact_task(task_id, task, run_id)
+        plan = self._resolve_plan(manifest, run_dir)
+        definition = next((item for item in _plan_tasks(plan) if item.get("task_id") == task_id), {})
+        context_metrics = self._context_telemetry(run_id, task_id)
+        packet = self._find_context_packet(run_id, task_id, compact_task.get("current_attempt_id"))
+        context_summary = _safe_context_summary(packet, context_metrics)
+        goal_spec = self._resolve_goal_spec(manifest)
+        criteria_map = {str(item.get("id")): item for item in (goal_spec.get("acceptance_criteria", []) if isinstance(goal_spec, dict) else []) if isinstance(item, dict)}
+        requirement_ids = list(definition.get("satisfies") or []) if isinstance(definition, dict) else []
+        requirements = context_summary.get("requirements", []) if context_summary else []
+        if not requirements:
+            requirements = [{
+                "id": criterion_id,
+                "title": criteria_map.get(str(criterion_id), {}).get("title") or criterion_id,
+                "description": _safe_text(criteria_map.get(str(criterion_id), {}).get("description") or criteria_map.get(str(criterion_id), {}).get("text"), 1200),
+                "provenance": criteria_map.get(str(criterion_id), {}).get("provenance"),
+            } for criterion_id in requirement_ids]
+
+        goal_state = self._goal_state_for_run(manifest)
+        validation_results = _normalize_validation_results(
+            manifest.get("validation_results") or (goal_state.get("validation_results") if isinstance(goal_state, dict) else None)
+        )
+        validation_results = [item for item in validation_results if not item.get("task_id") or item.get("task_id") == task_id]
+        validations = list(definition.get("validations") or []) if isinstance(definition, dict) else []
+        if not validations and context_summary:
+            validations = context_summary.get("validations", [])
+        changed_paths = sorted({path for attempt in compact_attempts for path in attempt.get("changed_paths", [])} | set(compact_task.get("changed_paths") or []))
+        commits = [
+            {"attempt_id": attempt.get("attempt_id"), "commit_hash": attempt.get("commit_hash"), "branch": attempt.get("branch")}
+            for attempt in compact_attempts if attempt.get("commit_hash") or attempt.get("branch")
+        ]
         return {
-            "task": _compact_task(task_id, task, run_id),
-            "attempts": [_compact_attempt(item) for item in attempts if isinstance(item, dict)],
+            "task": compact_task,
+            "definition": {
+                "satisfies": requirement_ids,
+                "validations": validations,
+                "allowed_paths": list(definition.get("allowed_paths") or []) if isinstance(definition, dict) else [],
+                "dependencies": list(definition.get("dependencies") or compact_task.get("dependencies") or []) if isinstance(definition, dict) else list(compact_task.get("dependencies") or []),
+            },
+            "requirements": requirements,
+            "context": context_summary,
+            "validation": {
+                "commands": validations,
+                "results": validation_results,
+                "path_violations": sorted({path for attempt in compact_attempts for path in attempt.get("path_violations", [])}),
+                "missing_expected": sorted({path for attempt in compact_attempts for path in attempt.get("missing_expected", [])}),
+            },
+            "git": {"commits": commits, "changed_paths": changed_paths, "current_commit": compact_task.get("commit_hash")},
+            "attempts": compact_attempts,
             "retry_info": task.get("retry_info") if isinstance(task.get("retry_info"), dict) else None,
             "routing_provenance": task.get("routing_provenance") if isinstance(task.get("routing_provenance"), dict) else None,
-            "events": self._events(run_id, task_id)[-100:],
-            "telemetry": self._telemetry(run_id, task_id)[-50:],
+            "events": self._events(run_id, task_id, 100),
+            "telemetry": self._telemetry(run_id, task_id, 50),
         }
 
     def system_detail(self) -> dict:
-        profiles = self._load_factory_config("harness_profiles.json", {})
+        raw_profiles = self._load_factory_config("harness_profiles.json", {})
+        profiles = raw_profiles.get("profiles", {}) if isinstance(raw_profiles, dict) else {}
+        compact_profiles = {}
+        for profile_id, profile in profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            certification = profile.get("certification") if isinstance(profile.get("certification"), dict) else {}
+            compact_profiles[profile_id] = {
+                "harness": profile.get("harness"),
+                "adapter": profile.get("adapter"),
+                "model": profile.get("model"),
+                "effort": profile.get("effort"),
+                "enabled": bool(profile.get("enabled", True)),
+                "certification": {
+                    "status": certification.get("status") or "UNKNOWN",
+                    "last_certified_timestamp": certification.get("last_certified_timestamp"),
+                },
+            }
+
+        raw_context = self._load_factory_config("context_policy.json", {})
+        roles = raw_context.get("roles", {}) if isinstance(raw_context, dict) else {}
+        compact_roles = {
+            role: {
+                "soft_budget_bytes": config.get("soft_budget_bytes"),
+                "hard_budget_bytes": config.get("hard_budget_bytes"),
+            }
+            for role, config in roles.items() if isinstance(config, dict)
+        }
+
+        raw_reasoning = self._load_factory_config("reasoning_policy.json", {})
+        escalation = raw_reasoning.get("escalation_policy", {}) if isinstance(raw_reasoning, dict) else {}
+        compact_reasoning = {
+            "policy_version": raw_reasoning.get("policy_version") if isinstance(raw_reasoning, dict) else None,
+            "status": raw_reasoning.get("status") if isinstance(raw_reasoning, dict) else None,
+            "escalation_policy": {
+                "max_effort_escalations_per_task": escalation.get("max_effort_escalations_per_task") if isinstance(escalation, dict) else None,
+            },
+        }
+
+        raw_toolchain = self._load_factory_config("toolchain.lock.json", {})
+        compact_toolchain = {}
+        if isinstance(raw_toolchain, dict):
+            allowed = (
+                "version", "installed_version", "certified_version", "status",
+                "compatibility_status", "feasibility_status", "protocol", "schema_version",
+            )
+            for key, value in raw_toolchain.items():
+                if isinstance(value, dict):
+                    projected = {field: value.get(field) for field in allowed if field in value}
+                    compact_toolchain[key] = projected or "configured"
+                elif isinstance(value, (str, int, float, bool)) or value is None:
+                    compact_toolchain[key] = value
+
+        raw_vendor = self._load_factory_config("ui/vendor.lock.json", {})
+        vendor_packages = []
+        if isinstance(raw_vendor, dict):
+            for package in raw_vendor.get("packages", []) if isinstance(raw_vendor.get("packages"), list) else []:
+                if isinstance(package, dict):
+                    vendor_packages.append({"name": package.get("name"), "version": package.get("version")})
+
         return {
             "providers": self._provider_summary(),
-            "profiles": profiles.get("profiles", {}) if isinstance(profiles, dict) else {},
-            "context_policy": self._load_factory_config("context_policy.json", {}),
-            "reasoning_policy": self._load_factory_config("reasoning_policy.json", {}),
-            "toolchain": self._load_factory_config("toolchain.lock.json", {}),
-            "ui_vendor_lock": self._load_factory_config("ui/vendor.lock.json", {}),
+            "profiles": compact_profiles,
+            "context_policy": {
+                "schema_version": raw_context.get("schema_version") if isinstance(raw_context, dict) else None,
+                "roles": compact_roles,
+            },
+            "reasoning_policy": compact_reasoning,
+            "toolchain": compact_toolchain,
+            "ui_vendor_lock": {"packages": vendor_packages},
         }
 
 
 class GoalActionRunner:
-    """Runs only existing public Factory actions; it owns no scheduler state."""
+    """Delegate stable public Factory actions without owning scheduler state."""
 
     def __init__(self, project_root: pathlib.Path, factory_root: pathlib.Path = FACTORY_ROOT):
         self.project_root = pathlib.Path(project_root).resolve()
         self.factory_root = pathlib.Path(factory_root).resolve()
         self._lock = threading.Lock()
-        self._active: Dict[str, subprocess.Popen] = {}
+        self._active: dict[str, subprocess.Popen] = {}
 
     def resume(self, goal_id: str) -> dict:
         goal_id = _safe_id(goal_id, "goal id")
-        state_path = self.project_root / ".agy-factory" / "goals" / goal_id / "state.json"
-        state = _read_json(state_path, None)
+        goals_root = self.project_root / ".agy-factory" / "goals"
+        goal_dir = _safe_child_dir(goals_root, goal_id, "goal id")
+        state = _read_json(goal_dir / "state.json", None, root=goals_root)
         if not isinstance(state, dict):
             raise UIDataError("Goal not found")
-        if str(state.get("phase") or "") in TERMINAL_GOAL_PHASES:
+        if str(state.get("phase") or "").upper() in TERMINAL_GOAL_PHASES:
             raise UIDataError("Goal is terminal and cannot be resumed")
 
         with self._lock:
@@ -557,10 +1009,14 @@ class GoalActionRunner:
                 raise ActionConflict("Goal resume is already running")
 
             actions_dir = self.project_root / ".agy-factory" / "ui" / "actions"
+            if not _is_under(self.project_root, actions_dir):
+                raise UIDataError("UI action log path escapes project")
             actions_dir.mkdir(parents=True, exist_ok=True)
-            stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            if not _is_under(self.project_root, actions_dir):
+                raise UIDataError("UI action log path escapes project")
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             log_path = actions_dir / f"{stamp}-resume-{goal_id}.log"
-            log_handle = log_path.open("ab")
+            log_handle = log_path.open("xb")
             cmd = [
                 sys.executable,
                 str(self.factory_root / "tools" / "factory.py"),
@@ -586,7 +1042,7 @@ class GoalActionRunner:
                 raise
             self._active[goal_id] = proc
 
-            def _watch() -> None:
+            def watch() -> None:
                 try:
                     proc.wait()
                 finally:
@@ -595,22 +1051,16 @@ class GoalActionRunner:
                         if self._active.get(goal_id) is proc:
                             self._active.pop(goal_id, None)
 
-            threading.Thread(target=_watch, name=f"factory-ui-resume-{goal_id}", daemon=True).start()
-            return {
-                "accepted": True,
-                "goal_id": goal_id,
-                "pid": proc.pid,
-                "log": str(log_path.relative_to(self.project_root)),
-            }
+            threading.Thread(target=watch, name=f"factory-ui-resume-{goal_id}", daemon=True).start()
+            return {"accepted": True, "goal_id": goal_id, "pid": proc.pid, "log": str(log_path.relative_to(self.project_root))}
 
 
 class FactoryUIServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address: Tuple[str, int], handler_cls, *, read_model: FactoryReadModel,
-                 action_runner: GoalActionRunner, ui_root: pathlib.Path = UI_ROOT,
-                 vendor_root: pathlib.Path = DEFAULT_VENDOR_ROOT):
+    def __init__(self, server_address, handler_cls, *, read_model: FactoryReadModel, action_runner: GoalActionRunner,
+                 ui_root: pathlib.Path = UI_ROOT, vendor_root: pathlib.Path = DEFAULT_VENDOR_ROOT):
         super().__init__(server_address, handler_cls)
         self.read_model = read_model
         self.action_runner = action_runner
@@ -619,9 +1069,8 @@ class FactoryUIServer(http.server.ThreadingHTTPServer):
 
 
 class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
-    server_version = "FactoryControlUI/1.0"
+    server_version = "FactoryControlUI/1.1"
     protocol_version = "HTTP/1.1"
-
     CSP = (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; "
@@ -630,6 +1079,10 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("[factory-ui] %s - %s\n" % (self.address_string(), fmt % args))
+
+    def _log_exception(self, context: str, exc: BaseException) -> None:
+        # Exception messages may contain target paths, provider output or secrets.
+        sys.stderr.write(f"[factory-ui] {context}: {type(exc).__name__}\n")
 
     def _security_headers(self) -> None:
         self.send_header("Content-Security-Policy", self.CSP)
@@ -663,8 +1116,7 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_file(self, base: pathlib.Path, relative: str) -> None:
         relative = urllib.parse.unquote(relative).lstrip("/")
-        parts = pathlib.PurePosixPath(relative).parts
-        if not relative or ".." in parts:
+        if not relative or ".." in pathlib.PurePosixPath(relative).parts:
             self._send_json(403, {"error": "Forbidden"})
             return
         path = (base / relative).resolve(strict=False)
@@ -678,9 +1130,8 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             return
         content_type, _ = mimetypes.guess_type(str(path))
         content_type = content_type or "application/octet-stream"
-        if content_type.startswith("text/") or path.suffix in {".js", ".css", ".json", ".svg"}:
-            if "charset=" not in content_type and path.suffix != ".svg":
-                content_type += "; charset=utf-8"
+        if (content_type.startswith("text/") or path.suffix in {".js", ".css", ".json"}) and "charset=" not in content_type:
+            content_type += "; charset=utf-8"
         etag = hashlib.sha256(content).hexdigest()
         if self.headers.get("If-None-Match") == f'"{etag}"':
             self._send_empty(304, etag=etag)
@@ -688,7 +1139,7 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self._security_headers()
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("Cache-Control", "no-cache")
         self.send_header("ETag", f'"{etag}"')
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
@@ -701,15 +1152,14 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             return False
         try:
             parsed = urllib.parse.urlsplit(f"//{host_header}", allow_fragments=False)
-            hostname = parsed.hostname
         except ValueError:
             return False
-        if not hostname:
+        if parsed.username is not None or parsed.password is not None or not parsed.hostname:
             return False
-        if hostname.lower() == "localhost":
+        if parsed.hostname.lower() == "localhost":
             return True
         try:
-            return ipaddress.ip_address(hostname).is_loopback
+            return ipaddress.ip_address(parsed.hostname).is_loopback
         except ValueError:
             return False
 
@@ -721,12 +1171,12 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             parsed = urllib.parse.urlparse(origin)
         except ValueError:
             return False
-        host = self.headers.get("Host", "")
-        return parsed.scheme in {"http", "https"} and parsed.netloc == host
+        return parsed.scheme == "http" and parsed.netloc == self.headers.get("Host", "") and not parsed.username and not parsed.password
 
     def _read_json_body(self) -> dict:
-        content_type = self.headers.get("Content-Type", "")
-        if not content_type.lower().startswith("application/json"):
+        if self.headers.get("Transfer-Encoding"):
+            raise UIDataError("Transfer-Encoding is not supported")
+        if not self.headers.get("Content-Type", "").lower().startswith("application/json"):
             raise UIDataError("Content-Type must be application/json")
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -751,8 +1201,7 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self._send_json(403, {"error": "Host rejected"})
             return
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = urllib.parse.urlparse(self.path).path
         try:
             if path == "/health":
                 self._send_json(200, {"status": "ok", "api_version": "1"})
@@ -768,7 +1217,6 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             if path == f"{API_PREFIX}/system":
                 self._send_json(200, self.server.read_model.system_detail())
                 return
-
             segments = [segment for segment in path.split("/") if segment]
             if len(segments) == 4 and segments[:3] == ["api", "v1", "goals"]:
                 self._send_json(200, self.server.read_model.goal_detail(segments[3]))
@@ -779,7 +1227,6 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             if len(segments) == 6 and segments[:3] == ["api", "v1", "runs"] and segments[4] == "tasks":
                 self._send_json(200, self.server.read_model.task_detail(segments[3], segments[5]))
                 return
-
             if path in {"/", "/index.html"}:
                 self._serve_file(self.server.ui_root, "index.html")
                 return
@@ -789,24 +1236,20 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             if path.startswith("/vendor/"):
                 self._serve_file(self.server.vendor_root, path[len("/vendor/"):])
                 return
-            if path.startswith("/api/"):
-                self._send_json(404, {"error": "Not Found"})
-                return
             self._send_json(404, {"error": "Not Found"})
         except UIDataError as exc:
             self._send_json(404, {"error": str(exc)})
         except Exception as exc:
-            self._send_json(500, {"error": "Internal server error", "detail": _safe_text(exc, 300)})
+            self._log_exception("GET failed", exc)
+            self._send_json(500, {"error": "Internal server error"})
 
     def do_POST(self) -> None:
         if not self._host_allowed():
             self.close_connection = True
             self._send_json(403, {"error": "Host rejected"})
             return
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = urllib.parse.urlparse(self.path).path
         if not self._origin_allowed():
-            # Do not leave an unread request body on an HTTP/1.1 keep-alive connection.
             self.close_connection = True
             self._send_json(403, {"error": "Origin rejected"})
             return
@@ -814,16 +1257,17 @@ class FactoryUIHandler(http.server.BaseHTTPRequestHandler):
             self._read_json_body()
             segments = [segment for segment in path.split("/") if segment]
             if len(segments) == 5 and segments[:3] == ["api", "v1", "goals"] and segments[4] == "resume":
-                result = self.server.action_runner.resume(segments[3])
-                self._send_json(202, result)
+                self._send_json(202, self.server.action_runner.resume(segments[3]))
                 return
             self._send_json(404, {"error": "Not Found"})
         except ActionConflict as exc:
             self._send_json(409, {"error": str(exc)})
         except UIDataError as exc:
+            self.close_connection = True
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:
-            self._send_json(500, {"error": "Action failed", "detail": _safe_text(exc, 300)})
+            self._log_exception("POST failed", exc)
+            self._send_json(500, {"error": "Action failed"})
 
 
 def make_server(project_root: pathlib.Path, host: str = "127.0.0.1", port: int = 8765, *,
@@ -847,21 +1291,19 @@ def _require_loopback(host: str) -> None:
     raise SystemExit("Factory Control UI v1 binds to loopback only. Use an SSH tunnel or trusted reverse proxy for remote access.")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Factory Control UI (local, read-mostly)")
     parser.add_argument("--project-root", default=os.getcwd(), help="Target Factory project root (default: cwd)")
     parser.add_argument("--host", default="127.0.0.1", help="Loopback bind address")
     parser.add_argument("--port", type=int, default=8765, help="HTTP port (default: 8765; use 0 for ephemeral)")
     parser.add_argument("--vendor-root", default=str(DEFAULT_VENDOR_ROOT), help="Self-hosted frontend vendor directory")
     args = parser.parse_args(argv)
-
     _require_loopback(args.host)
     project_root = pathlib.Path(args.project_root).resolve()
     if not project_root.is_dir():
         parser.error(f"Project root does not exist: {project_root}")
     if args.port < 0 or args.port > 65535:
         parser.error("Port must be between 0 and 65535")
-
     server = make_server(project_root, args.host, args.port, vendor_root=pathlib.Path(args.vendor_root))
     bound_host, bound_port = server.server_address[:2]
     print(f"Factory Control UI: http://{bound_host}:{bound_port}")

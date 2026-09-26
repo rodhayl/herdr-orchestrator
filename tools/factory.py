@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AGY-Herdr Software Factory Orchestration Engine (Version 3.0.0)
+AGY-Herdr Software Factory Orchestration Engine (Version 9.0.0)
 
 Generic, brain-agnostic orchestration engine delegating arbitrary DAG workflows
 across isolated Herdr workspaces, Git worktrees, and worker adapters.
@@ -30,14 +30,11 @@ import re
 import secrets
 import shlex
 import shutil
-import sqlite3
 import subprocess
 import sys
 import threading
 import time
-import urllib.request
 import unicodedata
-import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Context Compiler & Efficiency System (Factory v8.0.0)
@@ -168,6 +165,28 @@ except ImportError:
         VALID_EXECUTION_PURPOSES,
     )
 
+# Shared pure contracts used by core and local projections.
+try:
+    from tools.factory_contracts import (
+        FACTORY_ENGINE_VERSION,
+        CANONICAL_TASK_STATES,
+        CANONICAL_RUN_STATES,
+        CANONICAL_TO_DISPLAY_STATE,
+        effective_real_only,
+        has_existing_run,
+        non_runtime_porcelain_lines,
+    )
+except ImportError:
+    from factory_contracts import (  # type: ignore
+        FACTORY_ENGINE_VERSION,
+        CANONICAL_TASK_STATES,
+        CANONICAL_RUN_STATES,
+        CANONICAL_TO_DISPLAY_STATE,
+        effective_real_only,
+        has_existing_run,
+        non_runtime_porcelain_lines,
+    )
+
 # Base paths
 FACTORY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROJECT_ROOT = FACTORY_ROOT
@@ -223,12 +242,7 @@ class ProjectContext:
         if status_res.returncode != 0:
             raise RuntimeError(f"Failed to query git status in '{self.project_root}': {status_res.stderr}")
 
-        dirty_lines = []
-        for line in status_res.stdout.splitlines():
-            line_str = line.strip()
-            if not line_str or ".agy-factory" in line_str:
-                continue
-            dirty_lines.append(line_str)
+        dirty_lines = non_runtime_porcelain_lines(status_res.stdout)
 
         if dirty_lines:
             raise RuntimeError(
@@ -267,56 +281,7 @@ def get_project_context() -> ProjectContext:
     return _CURRENT_CONTEXT
 
 
-# Canonical State Definitions
-CANONICAL_TASK_STATES = [
-    "PENDING",
-    "READY",
-    "DISPATCHING",
-    "RUNNING",
-    "RESULT_RECEIVED",
-    "PATH_VALIDATING",
-    "PATH_VALIDATED",
-    "VALIDATING",
-    "COMMITTING",
-    "COMMITTED",
-    "INTEGRATING",
-    "INTEGRATED",
-    "COMPLETED",
-    "BLOCKED",
-    "TIMED_OUT",
-    "FAILED",
-    "CONFLICTED",
-    "CANCELLED"
-]
-
-CANONICAL_RUN_STATES = [
-    "PENDING",
-    "RUNNING",
-    "COMPLETED",
-    "FAILED",
-    "CANCELLED"
-]
-
-CANONICAL_TO_DISPLAY_STATE = {
-    "PENDING": "BACKLOG",
-    "READY": "READY",
-    "DISPATCHING": "RUNNING",
-    "RUNNING": "RUNNING",
-    "RESULT_RECEIVED": "RUNNING",
-    "PATH_VALIDATING": "RUNNING",
-    "PATH_VALIDATED": "RUNNING",
-    "VALIDATING": "RUNNING",
-    "COMMITTING": "RUNNING",
-    "COMMITTED": "RUNNING",
-    "INTEGRATING": "RUNNING",
-    "INTEGRATED": "DONE",
-    "COMPLETED": "DONE",
-    "BLOCKED": "BLOCKED",
-    "TIMED_OUT": "FAILED",
-    "FAILED": "FAILED",
-    "CONFLICTED": "REVIEW",
-    "CANCELLED": "FAILED"
-}
+# Canonical task/run state contracts are imported from tools.factory_contracts.
 
 # Execution Modes & Certification Levels (v6.1.0)
 EXECUTION_MODES = [
@@ -4950,6 +4915,12 @@ class FactoryOrchestrator:
             (self.run_dir / "context" / "packets").mkdir(parents=True, exist_ok=True)
             with open(self.manifest_path, "r", encoding="utf-8") as f:
                 self.manifest = json.load(f)
+            self.real_only = effective_real_only(
+                self.real_only,
+                self.manifest.get("real_only"),
+                self.plan.get("execution_policy", {}).get("mode"),
+            )
+            self.manifest["real_only"] = bool(self.real_only)
             self.manifest.setdefault("handoffs", {})
             for tid, tinfo in self.manifest.get("tasks", {}).items():
                 if isinstance(tinfo, dict) and tinfo.get("routing_provenance"):
@@ -4994,8 +4965,9 @@ class FactoryOrchestrator:
                 }
 
             self.manifest = {
-                "factory_version": "8.0.0",
+                "factory_version": FACTORY_ENGINE_VERSION,
                 "run_id": self.run_id,
+                "real_only": bool(self.real_only),
                 "plan_path": str(self.plan_path),
                 "plan_name": self.plan.get("name") or self.plan.get("plan_id", "unnamed_plan"),
                 "plan_id": self.plan.get("plan_id") or self.plan.get("name", "unnamed_plan"),
@@ -6449,6 +6421,11 @@ class FailpointTriggered(Exception):
     pass
 
 
+class RealProviderRequiredError(RuntimeError):
+    """Raised when a real-only semantic role cannot produce verified provider output."""
+    pass
+
+
 class ProjectPolicy:
     """Manages project-level governance policy from factory.project.json."""
     DEFAULT_LIMITS = {
@@ -6728,10 +6705,11 @@ Output ONLY the JSON object.
                         return parsed
         except (OrphanDerivedRequirementError, MalformedContextPacketError):
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RealProviderRequiredError("Real-only goal specification planner failed") from exc
+        raise RealProviderRequiredError("Real-only goal specification planner did not return a valid structured GoalSpec")
 
-    # Deterministic parser (used in test harness or when mock allowed or LLM fallback)
+    # Deterministic parser (used only when real-only live-provider execution is not required)
     user_explicit = []
     acceptance_criteria = []
     non_goals = []
@@ -7008,8 +6986,9 @@ Requirements:
                         parsed["plan_id"] = plan_id
                         parsed["goal_id"] = goal_id
                         return parsed
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RealProviderRequiredError("Real-only plan compiler failed") from exc
+        raise RealProviderRequiredError("Real-only plan compiler did not return a valid structured plan")
 
     # Deterministic DAG Plan Generation
     tasks = []
@@ -7138,7 +7117,7 @@ Requirements:
 def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
                 revision_index: int = 0, real_only: bool = False, effort: str = None) -> dict:
     """Independent pre-execution plan review verifying completeness, scope bounds, and testability."""
-    sim_verdict = os.environ.get("PLAN_REVIEW_TEST_VERDICT")
+    sim_verdict = os.environ.get("PLAN_REVIEW_TEST_VERDICT") if os.environ.get("FACTORY_TEST_HARNESS") == "1" else None
     if sim_verdict:
         if sim_verdict == "REVISE" and revision_index > 0:
             return {"verdict": "APPROVED", "revision_index": revision_index, "findings": []}
@@ -7203,8 +7182,9 @@ def review_plan(plan: dict, goal_spec: dict, project_policy: ProjectPolicy,
                     if "verdict" in parsed:
                         parsed["revision_index"] = revision_index
                         return parsed
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RealProviderRequiredError("Real-only plan reviewer failed") from exc
+        raise RealProviderRequiredError("Real-only plan reviewer did not return a valid structured verdict")
 
     return {
         "verdict": "APPROVED",
@@ -7236,7 +7216,7 @@ def revise_plan(plan: dict, review_findings: list, goal_spec: dict,
 def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: ProjectPolicy,
                   real_only: bool = False, effort: str = None) -> dict:
     """Independent final code audit verifying implementation against GoalSpec."""
-    test_verdict = os.environ.get("AUDIT_TEST_VERDICT")
+    test_verdict = os.environ.get("AUDIT_TEST_VERDICT") if os.environ.get("FACTORY_TEST_HARNESS") == "1" else None
     if test_verdict:
         if test_verdict == "REMEDIATION_REQUIRED":
             return {
@@ -7294,8 +7274,9 @@ def audit_project(project_root: pathlib.Path, goal_spec: dict, project_policy: P
                     parsed = json.loads(m.group(0))
                     if "verdict" in parsed:
                         return parsed
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RealProviderRequiredError("Real-only final auditor failed") from exc
+        raise RealProviderRequiredError("Real-only final auditor did not return a valid structured verdict")
 
     return {
         "verdict": "ACCEPTED",
@@ -7317,19 +7298,23 @@ class GoalController:
         self.plan_only = plan_only
 
         self.project_policy = ProjectPolicy.load(self.project_context.project_policy_path)
-        if not self.real_only and self.project_policy.execution_policy.get("mode") == "real_only":
-            self.real_only = True
+        requested_real_only = bool(self.real_only)
+        policy_mode = self.project_policy.execution_policy.get("mode")
 
         if goal_id:
-            self.goal_id = goal_id
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,160}", str(goal_id)):
+                raise ValueError("Invalid goal_id")
+            self.goal_id = str(goal_id)
             self.goal_dir = self.project_context.goals_dir / self.goal_id
             self.state_file = self.goal_dir / "state.json"
-            if self.state_file.exists():
-                with open(self.state_file, "r", encoding="utf-8") as f:
-                    self.state = json.load(f)
-            else:
-                self.state = self._init_state(goal_text)
+            if not self.state_file.exists():
+                raise FileNotFoundError(f"Goal state not found: {self.goal_id}")
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                self.state = json.load(f)
+            self.real_only = effective_real_only(requested_real_only, self.state.get("real_only"), policy_mode)
+            self.state["real_only"] = bool(self.real_only)
         else:
+            self.real_only = effective_real_only(requested_real_only, False, policy_mode)
             self.goal_id = f"goal-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}"
             self.goal_dir = self.project_context.goals_dir / self.goal_id
             self.goal_dir.mkdir(parents=True, exist_ok=True)
@@ -7355,6 +7340,7 @@ class GoalController:
             "current_plan_path": None,
             "approved_plan_path": None,
             "run_id": None,
+            "real_only": bool(self.real_only),
             "validation_results": [],
             "audit_results": [],
             "created_at": now,
@@ -7362,6 +7348,7 @@ class GoalController:
         }
 
     def save_state(self):
+        self.state["real_only"] = bool(self.real_only)
         self.state["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.goal_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.state_file, self.state)
@@ -7463,15 +7450,16 @@ class GoalController:
         if self.state["phase"] == "READY":
             approved_path = pathlib.Path(self.state["approved_plan_path"])
             self.update_phase("EXECUTING")
+            existing_run_id = self.state.get("run_id")
             orch = FactoryOrchestrator(
                 approved_path,
-                run_id=self.state.get("run_id"),
+                run_id=existing_run_id,
                 real_only=self.real_only,
                 routing_overrides=self.project_policy.routing_overrides
             )
             self.state["run_id"] = orch.run_id
             self.save_state()
-            manifest = orch.execute_plan(resume_mode=(self.state.get("run_id") is not None))
+            manifest = orch.execute_plan(resume_mode=has_existing_run(existing_run_id))
             if manifest.get("final_status") != "COMPLETED":
                 self.update_phase("FAILED", error=f"Orchestration run failed with status: {manifest.get('final_status')}")
                 raise RuntimeError(f"Orchestration execution failed: {manifest.get('final_status')}")
@@ -7546,7 +7534,7 @@ class GoalController:
 
         for task in plan.get("tasks", []):
             for vcmd in task.get("validations", []):
-                cmd = vcmd if isinstance(vcmd, list) else vcmd.split()
+                cmd = vcmd if isinstance(vcmd, list) else shlex.split(vcmd)
                 try:
                     proc = subprocess.run(cmd, cwd=str(self.project_root), capture_output=True, text=True, timeout=60)
                     passed = (proc.returncode == 0)
@@ -7614,6 +7602,7 @@ class GoalController:
             "plan_revisions": self.state.get("plan_revision_count"),
             "remediation_rounds": self.state.get("remediation_round_count"),
             "run_id": self.state.get("run_id"),
+            "real_only": bool(self.real_only),
             "validations_summary": {
                 "total": len(self.state.get("validation_results", [])),
                 "passed": sum(1 for v in self.state.get("validation_results", []) if v.get("passed")),
@@ -7899,7 +7888,7 @@ def main():
         else:
             herdr = HerdrClient(PROJECT_ROOT)
             res_mgr = ResourceManager(herdr)
-            print("=== AGY-Herdr Software Factory Status (v6.1.0) ===")
+            print(f"=== AGY-Herdr Software Factory Status (v{FACTORY_ENGINE_VERSION}) ===")
             print(f"Project Root: {PROJECT_ROOT}")
             print(f"Control Plane Context: {json.dumps(res_mgr.state['control_plane'], indent=2)}")
             print(f"Owned Resources: {json.dumps(res_mgr.state['owned'], indent=2)}")

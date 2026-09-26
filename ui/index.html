@@ -18,390 +18,153 @@
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand-block">
         <div class="brand-mark" aria-hidden="true">HF</div>
-        <div>
-          <strong>Factory</strong>
-          <small x-text="'v' + factoryVersion"></small>
-        </div>
+        <div><strong>Factory</strong><small x-text="'v' + factoryVersion"></small></div>
       </div>
-
       <nav class="nav-list">
         <wa-button appearance="plain" class="nav-button" :class="view === 'overview' ? 'active' : ''" @click="setView('overview')">Overview</wa-button>
         <wa-button appearance="plain" class="nav-button" :class="view === 'board' ? 'active' : ''" @click="setView('board')">Board</wa-button>
         <wa-button appearance="plain" class="nav-button" :class="view === 'goals' ? 'active' : ''" @click="setView('goals')">Goals / Runs</wa-button>
         <wa-button appearance="plain" class="nav-button" :class="view === 'system' ? 'active' : ''" @click="setView('system')">System</wa-button>
       </nav>
-
       <div class="sidebar-footer">
-        <div class="live-row">
-          <span class="live-dot" :class="error ? 'offline' : (isActive ? 'active' : '')"></span>
-          <span x-text="error ? 'Disconnected' : (isActive ? 'Active' : 'Idle')"></span>
-        </div>
+        <div class="live-row"><span class="live-dot" :class="error ? 'offline' : (isActive ? 'active' : '')"></span><span x-text="error ? 'Disconnected' : (isActive ? 'Active' : 'Idle')"></span></div>
         <small x-text="lastUpdatedAt ? 'Updated ' + relativeTime(lastUpdatedAt) : 'Waiting for snapshot'"></small>
       </div>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Project</p>
-          <h1 x-text="projectName"></h1>
-        </div>
-        <div class="topbar-actions">
-          <wa-badge pill :variant="isActive ? 'brand' : 'neutral'" x-text="isActive ? 'LIVE' : 'IDLE'"></wa-badge>
-          <wa-button size="small" appearance="outlined" @click="refresh">Refresh</wa-button>
-        </div>
+        <div><p class="eyebrow">Project</p><h1 x-text="projectName"></h1></div>
+        <div class="topbar-actions"><wa-badge pill :variant="isActive ? 'brand' : 'neutral'" x-text="isActive ? 'LIVE' : 'IDLE'"></wa-badge><wa-button size="small" appearance="outlined" @click="refresh">Refresh</wa-button></div>
       </header>
 
-      <div class="alert error" x-show="error">
-        <strong>Unable to refresh Factory state.</strong>
-        <span x-text="error"></span>
-      </div>
-      <div class="alert success" x-show="notice">
-        <span x-text="notice"></span>
-        <button type="button" @click="clearNotice" aria-label="Dismiss">×</button>
-      </div>
+      <div class="alert error" x-show="error"><strong>Unable to refresh Factory state.</strong><span x-text="error"></span></div>
+      <div class="alert success" x-show="notice"><span x-text="notice"></span><button type="button" @click="clearNotice" aria-label="Dismiss">×</button></div>
+      <section class="loading-state" x-show="loading"><wa-spinner></wa-spinner><span>Loading Factory state…</span></section>
 
-      <section class="loading-state" x-show="loading">
-        <wa-spinner></wa-spinner>
-        <span>Loading Factory state…</span>
-      </section>
-
-      <!-- Overview -->
       <section x-show="view === 'overview' && !loading" aria-labelledby="overview-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Operations</p>
-            <h2 id="overview-title">Overview</h2>
-          </div>
-          <span class="muted" x-text="selectedRunLabel"></span>
-        </div>
-
+        <div class="section-heading"><div><p class="eyebrow">Operations</p><h2 id="overview-title">Overview</h2></div><span class="muted" x-text="selectedRunLabel"></span></div>
         <div class="metric-grid">
-          <template x-for="metric in overviewMetrics" :key="metric.label">
-            <article class="metric-card">
-              <span class="metric-label" x-text="metric.label"></span>
-              <strong class="metric-value" x-text="metric.value"></strong>
-              <small x-text="metric.hint"></small>
-            </article>
-          </template>
+          <template x-for="metric in overviewMetrics" :key="metric.label"><article class="metric-card"><span class="metric-label" x-text="metric.label"></span><strong class="metric-value" x-text="metric.value"></strong><small x-text="metric.hint"></small></article></template>
         </div>
-
         <div class="overview-grid">
           <section class="panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Current work</p>
-                <h3>Goal & progress</h3>
-              </div>
-              <wa-badge x-show="hasActiveGoal" :variant="statusVariant(activeGoal.phase)" x-text="activeGoal.phase || ''"></wa-badge>
-            </div>
+            <div class="panel-header"><div><p class="eyebrow">Current work</p><h3>Goal & progress</h3></div><wa-badge x-show="hasActiveGoal" :variant="statusVariant(activeGoal.phase)" x-text="activeGoal.phase || ''"></wa-badge></div>
             <div x-show="hasActiveGoal" class="stack gap-md">
-              <div>
-                <strong x-text="activeGoal.title || activeGoal.goal_id"></strong>
-                <p class="muted clamp-3" x-text="activeGoal.raw_goal || 'Goal is active.'"></p>
-              </div>
-              <div class="progress-row">
-                <wa-progress-bar :value="boardProgress"></wa-progress-bar>
-                <span x-text="boardProgress + '%' "></span>
-              </div>
-              <div class="inline-actions">
-                <wa-button size="small" appearance="outlined" @click="setView('board')">Open board</wa-button>
-                <wa-button size="small" appearance="outlined" @click="setView('goals')">Goal details</wa-button>
-                <wa-button x-show="activeGoal.resumable" size="small" variant="brand" @click="resumeGoal(activeGoal)">Resume</wa-button>
-              </div>
+              <div><strong x-text="activeGoal.title || activeGoal.goal_id"></strong><p class="muted clamp-3" x-text="activeGoal.raw_goal_excerpt || 'Goal is active.'"></p></div>
+              <div class="progress-row"><wa-progress-bar :value="boardProgress"></wa-progress-bar><span x-text="boardProgress + '%'"></span></div>
+              <div class="inline-actions"><wa-button size="small" appearance="outlined" @click="setView('board')">Open board</wa-button><wa-button size="small" appearance="outlined" @click="setView('goals')">Goal details</wa-button><wa-button x-show="activeGoal.resumable" size="small" variant="brand" @click="resumeGoal(activeGoal)">Resume</wa-button></div>
             </div>
-            <div x-show="!hasActiveGoal" class="empty-state">
-              <strong>No active goal</strong>
-              <span>Completed runs remain available under Goals / Runs.</span>
-            </div>
+            <div x-show="!hasActiveGoal" class="empty-state"><strong>No active goal</strong><span>Completed runs remain available under Goals / Runs.</span></div>
           </section>
-
           <section class="panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Execution</p>
-                <h3>Provider status</h3>
-              </div>
-            </div>
+            <div class="panel-header"><div><p class="eyebrow">Execution</p><h3>Provider/profile evidence</h3></div></div>
             <div class="provider-list compact">
-              <template x-for="provider in providers" :key="provider.id">
-                <div class="provider-row">
-                  <div>
-                    <strong x-text="provider.label || provider.id"></strong>
-                    <small x-text="provider.detail || provider.profile_count + ' profile(s)'"></small>
-                  </div>
-                  <wa-badge :variant="statusVariant(provider.status)" x-text="provider.status"></wa-badge>
-                </div>
-              </template>
+              <template x-for="provider in providers" :key="provider.id"><div class="provider-row"><div><strong x-text="provider.label || provider.id"></strong><small x-text="provider.detail || provider.profile_count + ' profile(s)'"></small></div><wa-badge :variant="statusVariant(provider.status)" x-text="provider.status"></wa-badge></div></template>
             </div>
           </section>
         </div>
       </section>
 
-      <!-- Board -->
       <section x-show="view === 'board' && !loading" aria-labelledby="board-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Scheduler projection</p>
-            <h2 id="board-title">Kanban board</h2>
-          </div>
-          <p class="muted">Read-only state projection. Factory remains authoritative.</p>
-        </div>
-
-        <div class="kanban-scroll">
-          <div class="kanban-grid">
-            <template x-for="column in boardColumns" :key="column.id">
-              <section class="kanban-column">
-                <header>
-                  <div class="column-title">
-                    <span class="state-dot" :data-state="column.id"></span>
-                    <strong x-text="column.label"></strong>
-                  </div>
-                  <wa-badge pill variant="neutral" x-text="column.tasks.length"></wa-badge>
-                </header>
-                <div class="task-list">
-                  <template x-for="task in column.tasks" :key="task.run_id + ':' + task.task_id">
-                    <button type="button" class="task-card" @click="openTask(task)">
-                      <span class="task-title" x-text="task.name || task.task_id"></span>
-                      <span class="task-id" x-text="task.task_id"></span>
-                      <div class="task-meta">
-                        <span x-text="task.profile_id || task.worker_id || 'unrouted'"></span>
-                        <span x-show="task.effort" x-text="task.effort"></span>
-                      </div>
-                      <div class="task-footer">
-                        <wa-badge :variant="statusVariant(task.execution_mode)" x-show="task.execution_mode" x-text="task.execution_mode"></wa-badge>
-                        <span x-text="task.attempts_count ? 'attempt ' + task.attempts_count : ''"></span>
-                      </div>
-                    </button>
-                  </template>
-                  <div class="column-empty" x-show="column.tasks.length === 0">No tasks</div>
-                </div>
-              </section>
-            </template>
-          </div>
-        </div>
+        <div class="section-heading"><div><p class="eyebrow">Scheduler projection</p><h2 id="board-title">Kanban board</h2></div><p class="muted">Read-only. Factory remains authoritative; cards cannot mutate scheduler state.</p></div>
+        <div class="kanban-scroll"><div class="kanban-grid">
+          <template x-for="column in boardColumns" :key="column.id">
+            <section class="kanban-column">
+              <header><div class="column-title"><span class="state-dot" :data-state="column.id"></span><strong x-text="column.label"></strong></div><wa-badge pill variant="neutral" x-text="column.tasks.length"></wa-badge></header>
+              <div class="task-list">
+                <template x-for="task in column.tasks" :key="task.run_id + ':' + task.task_id">
+                  <button type="button" class="task-card" @click="openTask(task)">
+                    <span class="task-title" x-text="task.name || task.task_id"></span><span class="task-id" x-text="task.task_id"></span>
+                    <div class="task-meta"><span x-text="task.profile_id || task.worker_id || 'unrouted'"></span><span x-text="task.model || '—'"></span></div>
+                    <div class="task-meta"><span x-text="task.effort || '—'"></span><span x-text="durationOrDash(task.duration_ms)"></span></div>
+                    <div class="task-footer"><span class="tag-list"><wa-badge :variant="statusVariant(task.execution_mode)" x-show="task.execution_mode" x-text="task.execution_mode"></wa-badge><wa-badge variant="warning" x-show="task.retried">RETRY</wa-badge><wa-badge variant="brand" x-show="task.escalated">ESCALATED</wa-badge><wa-badge variant="warning" x-show="task.display_state === 'BLOCKED'">BLOCKED</wa-badge></span><span x-text="task.attempts_count ? 'attempt ' + task.attempts_count : 'not attempted'"></span></div>
+                  </button>
+                </template>
+                <div class="column-empty" x-show="column.tasks.length === 0">No tasks</div>
+              </div>
+            </section>
+          </template>
+        </div></div>
       </section>
 
-      <!-- Goals / Runs -->
       <section x-show="view === 'goals' && !loading" aria-labelledby="goals-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Durable state</p>
-            <h2 id="goals-title">Goals / Runs</h2>
-          </div>
-          <p class="muted">Inspect durable goal, requirement, run and validation evidence.</p>
-        </div>
-
+        <div class="section-heading"><div><p class="eyebrow">Durable state</p><h2 id="goals-title">Goals / Runs</h2></div><p class="muted">Requirements, traceability, validation and audit evidence.</p></div>
         <div class="master-detail">
           <aside class="master-list">
             <h3>Goals</h3>
-            <div class="selection-list">
-              <template x-for="goal in goals" :key="goal.goal_id">
-                <button type="button" :class="selectedGoalId === goal.goal_id ? 'selected' : ''" @click="selectGoal(goal)">
-                  <span><strong x-text="goal.title || goal.goal_id"></strong><small x-text="goal.goal_id"></small></span>
-                  <wa-badge :variant="statusVariant(goal.phase)" x-text="goal.phase"></wa-badge>
-                </button>
-              </template>
-              <div class="empty-state small" x-show="goals.length === 0">No goals found.</div>
-            </div>
+            <div class="selection-list"><template x-for="goal in goals" :key="goal.goal_id"><button type="button" :class="selectedGoalId === goal.goal_id ? 'selected' : ''" @click="selectGoal(goal)"><span><strong x-text="goal.title || goal.goal_id"></strong><small x-text="goal.goal_id"></small></span><wa-badge :variant="statusVariant(goal.phase)" x-text="goal.phase"></wa-badge></button></template><div class="empty-state small" x-show="goals.length === 0">No goals found.</div></div>
             <h3>Runs</h3>
-            <div class="selection-list">
-              <template x-for="run in runs" :key="run.run_id">
-                <button type="button" :class="selectedRunId === run.run_id ? 'selected' : ''" @click="selectRun(run)">
-                  <span><strong x-text="run.plan_name || run.run_id"></strong><small x-text="run.run_id"></small></span>
-                  <wa-badge :variant="statusVariant(run.run_state)" x-text="run.run_state"></wa-badge>
-                </button>
-              </template>
-            </div>
+            <div class="selection-list"><template x-for="run in runs" :key="run.run_id"><button type="button" :class="selectedRunId === run.run_id ? 'selected' : ''" @click="selectRun(run)"><span><strong x-text="run.plan_name || run.run_id"></strong><small x-text="run.run_id"></small></span><wa-badge :variant="statusVariant(run.run_state)" x-text="run.run_state"></wa-badge></button></template></div>
           </aside>
 
           <div class="detail-panel">
             <section class="panel" x-show="selectedDetailType === 'goal'">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">Goal</p>
-                  <h3 x-text="goalDetail.state.title || goalDetail.state.goal_id"></h3>
-                </div>
-                <div class="inline-actions">
-                  <wa-badge :variant="statusVariant(goalDetail.state.phase)" x-text="goalDetail.state.phase || ''"></wa-badge>
-                  <wa-button x-show="goalDetail.summary.resumable" size="small" variant="brand" @click="resumeGoal(goalDetail.summary)">Resume</wa-button>
-                </div>
-              </div>
+              <div class="panel-header"><div><p class="eyebrow">Goal</p><h3 x-text="goalDetailTitle"></h3></div><div class="inline-actions"><wa-badge :variant="statusVariant(goalDetail.state.phase)" x-text="goalDetail.state.phase || ''"></wa-badge><wa-button x-show="goalDetail.summary.resumable" size="small" variant="brand" @click="resumeGoal(goalDetail.summary)">Resume</wa-button></div></div>
               <p class="goal-text" x-text="goalDetail.state.raw_goal || ''"></p>
-              <h4>Acceptance criteria</h4>
-              <div class="criteria-list">
-                <template x-for="criterion in goalCriteria" :key="criterion.id">
-                  <div class="criterion-row">
-                    <wa-badge pill variant="neutral" x-text="criterion.id"></wa-badge>
-                    <span><strong x-text="criterion.title || criterion.id"></strong><small x-text="criterion.description || criterion.text || ''"></small></span>
-                    <wa-badge x-show="criterion.provenance" :variant="criterion.provenance === 'USER_EXPLICIT' ? 'brand' : 'neutral'" x-text="criterion.provenance"></wa-badge>
-                  </div>
-                </template>
-                <div class="empty-state small" x-show="goalCriteria.length === 0">No persisted GoalSpec criteria available.</div>
-              </div>
+              <h4>Requirement traceability</h4>
+              <div class="table-wrap"><table><thead><tr><th>Criterion</th><th>Provenance</th><th>Tasks</th><th>Validations</th><th>Outcome</th></tr></thead><tbody>
+                <template x-for="row in goalTraceability" :key="row.criterion_id"><tr><td><strong x-text="row.criterion_id"></strong><small class="table-note" x-text="row.title"></small></td><td x-text="row.provenance"></td><td class="mono" x-text="joinOrDash(row.tasks)"></td><td x-text="row.validation_count"></td><td><wa-badge :variant="statusVariant(row.outcome)" x-text="row.outcome"></wa-badge></td></tr></template>
+              </tbody></table></div>
+              <div class="empty-state small" x-show="goalTraceability.length === 0">No persisted GoalSpec traceability available.</div>
             </section>
 
             <section class="panel" x-show="selectedDetailType === 'run'">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">Run</p>
-                  <h3 x-text="runDetail.run.plan_name || runDetail.run.run_id"></h3>
-                </div>
-                <wa-badge :variant="statusVariant(runDetail.run.run_state)" x-text="runDetail.run.run_state || ''"></wa-badge>
-              </div>
-              <div class="key-grid">
-                <div><span>Run ID</span><strong x-text="runDetail.run.run_id || '—'"></strong></div>
-                <div><span>Started</span><strong x-text="relativeTime(runDetail.run.start_time)"></strong></div>
-                <div><span>Tasks</span><strong x-text="selectedRunTasks.length"></strong></div>
-                <div><span>Mock present</span><strong x-text="yesNoUnknown(runDetail.run.contains_mock_execution)"></strong></div>
-              </div>
+              <div class="panel-header"><div><p class="eyebrow">Run</p><h3 x-text="runDetail.run.plan_name || runDetail.run.run_id"></h3></div><wa-badge :variant="statusVariant(runDetail.run.run_state)" x-text="runDetail.run.run_state || ''"></wa-badge></div>
+              <div class="key-grid"><div><span>Run ID</span><strong x-text="runDetail.run.run_id || '—'"></strong></div><div><span>Started</span><strong x-text="relativeTime(runDetail.run.start_time)"></strong></div><div><span>Tasks</span><strong x-text="selectedRunTasks.length"></strong></div><div><span>Mock present</span><strong x-text="yesNoUnknown(runDetail.run.contains_mock_execution)"></strong></div></div>
               <h4>Tasks</h4>
-              <div class="run-task-list">
-                <template x-for="task in selectedRunTasks" :key="task.task_id">
-                  <button type="button" @click="openTask(task)">
-                    <span><strong x-text="task.name || task.task_id"></strong><small x-text="task.profile_id || task.worker_id || ''"></small></span>
-                    <wa-badge :variant="statusVariant(task.display_state)" x-text="task.display_state"></wa-badge>
-                  </button>
-                </template>
-              </div>
+              <div class="run-task-list"><template x-for="task in selectedRunTasks" :key="task.task_id"><button type="button" @click="openTask(task)"><span><strong x-text="task.name || task.task_id"></strong><small x-text="taskDescriptor(task)"></small><small class="mono" x-show="task.dependencies && task.dependencies.length" x-text="'depends: ' + task.dependencies.join(', ')"></small></span><wa-badge :variant="statusVariant(task.display_state)" x-text="task.display_state"></wa-badge></button></template></div>
+              <h4>Requirement traceability</h4>
+              <div class="table-wrap"><table><thead><tr><th>Criterion</th><th>Tasks</th><th>Evidence</th><th>Outcome</th></tr></thead><tbody><template x-for="row in runTraceability" :key="row.criterion_id"><tr><td x-text="row.criterion_id"></td><td class="mono" x-text="joinOrDash(row.tasks)"></td><td x-text="row.validation_count + ' validation(s)'"></td><td><wa-badge :variant="statusVariant(row.outcome)" x-text="row.outcome"></wa-badge></td></tr></template></tbody></table></div>
+              <h4>Deterministic validation</h4>
+              <div class="validation-list"><template x-for="item in runValidationResults" :key="(item.task_id || '') + (item.name || '') + formatCommand(item.command)"><div class="validation-row"><span><strong x-text="item.name || item.task_id || 'validation'"></strong><small class="mono" x-text="formatCommand(item.command)"></small></span><wa-badge :variant="item.passed ? 'success' : 'danger'" x-text="item.passed ? 'PASS' : 'FAIL'"></wa-badge></div></template><div class="empty-state small" x-show="runValidationResults.length === 0">No persisted validation evidence.</div></div>
+              <h4>Final audit</h4>
+              <div class="key-grid single" x-show="runDetail.final_audit"><div><span>Verdict</span><strong x-text="runAuditVerdict"></strong></div></div>
+              <div class="empty-state small" x-show="!runDetail.final_audit">No final audit record on this run.</div>
             </section>
 
-            <div class="empty-state" x-show="!selectedDetailType">
-              <strong>Select a goal or run</strong>
-              <span>Details load only when requested to keep the snapshot small.</span>
-            </div>
+            <div class="empty-state" x-show="!selectedDetailType"><strong>Select a goal or run</strong><span>Details load only when requested to keep the snapshot small.</span></div>
           </div>
         </div>
       </section>
 
-      <!-- System -->
       <section x-show="view === 'system' && !loading" aria-labelledby="system-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Configuration</p>
-            <h2 id="system-title">System</h2>
-          </div>
-          <p class="muted">Read-only view of committed policies and provider/profile state.</p>
-        </div>
-
+        <div class="section-heading"><div><p class="eyebrow">Configuration</p><h2 id="system-title">System</h2></div><p class="muted">Committed policy/certification evidence; live auth can drift.</p></div>
         <div x-show="!systemLoaded" class="loading-state"><wa-spinner></wa-spinner><span>Loading system configuration…</span></div>
         <div x-show="systemLoaded" class="stack gap-lg">
-          <section class="panel">
-            <div class="panel-header"><h3>Execution profiles</h3><span class="muted" x-text="systemProfiles.length + ' profiles'"></span></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Profile</th><th>Harness</th><th>Model</th><th>Effort</th><th>Status</th></tr></thead>
-                <tbody>
-                  <template x-for="profile in systemProfiles" :key="profile.profile_id">
-                    <tr>
-                      <td><strong x-text="profile.profile_id"></strong></td>
-                      <td x-text="profile.harness || profile.adapter || '—'"></td>
-                      <td x-text="profile.model || '—'"></td>
-                      <td x-text="profile.effort || '—'"></td>
-                      <td><wa-badge :variant="statusVariant(profile.certification_status)" x-text="profile.certification_status"></wa-badge></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
+          <section class="panel"><div class="panel-header"><h3>Execution profiles</h3><span class="muted" x-text="systemProfiles.length + ' profiles'"></span></div><div class="table-wrap"><table><thead><tr><th>Profile</th><th>Harness</th><th>Model</th><th>Effort</th><th>Status</th></tr></thead><tbody><template x-for="profile in systemProfiles" :key="profile.profile_id"><tr><td><strong x-text="profile.profile_id"></strong></td><td x-text="profile.harness || profile.adapter || '—'"></td><td x-text="profile.model || '—'"></td><td x-text="profile.effort || '—'"></td><td><wa-badge :variant="statusVariant(profile.certification_status)" x-text="profile.certification_status"></wa-badge></td></tr></template></tbody></table></div></section>
           <div class="system-grid">
-            <section class="panel">
-              <div class="panel-header"><h3>Context policy</h3></div>
-              <div class="policy-list">
-                <template x-for="entry in systemContextRoles" :key="entry.role">
-                  <div><strong x-text="entry.role"></strong><span x-text="bytesOrDash(entry.soft_budget_bytes) + ' / ' + bytesOrDash(entry.hard_budget_bytes)"></span></div>
-                </template>
-              </div>
-            </section>
-            <section class="panel">
-              <div class="panel-header"><h3>Reasoning policy</h3></div>
-              <div class="key-grid single">
-                <div><span>Version</span><strong x-text="reasoningPolicyVersion"></strong></div>
-                <div><span>Status</span><strong x-text="reasoningPolicyStatus"></strong></div>
-                <div><span>Escalations/task</span><strong x-text="reasoningEscalationLimit"></strong></div>
-              </div>
-            </section>
+            <section class="panel"><div class="panel-header"><h3>Context policy</h3></div><div class="policy-list"><template x-for="entry in systemContextRoles" :key="entry.role"><div><strong x-text="entry.role"></strong><span x-text="bytesOrDash(entry.soft_budget_bytes) + ' / ' + bytesOrDash(entry.hard_budget_bytes)"></span></div></template></div></section>
+            <section class="panel"><div class="panel-header"><h3>Reasoning policy</h3></div><div class="key-grid single"><div><span>Version</span><strong x-text="reasoningPolicyVersion"></strong></div><div><span>Status</span><strong x-text="reasoningPolicyStatus"></strong></div><div><span>Escalations/task</span><strong x-text="reasoningEscalationLimit"></strong></div></div></section>
           </div>
-
-          <section class="panel">
-            <div class="panel-header"><h3>External compatibility</h3></div>
-            <div class="provider-list">
-              <template x-for="provider in providers" :key="'system-' + provider.id">
-                <div class="provider-row"><div><strong x-text="provider.label || provider.id"></strong><small x-text="provider.detail || ''"></small></div><wa-badge :variant="statusVariant(provider.status)" x-text="provider.status"></wa-badge></div>
-              </template>
-            </div>
-          </section>
+          <section class="panel"><div class="panel-header"><h3>Certified toolchain</h3></div><div class="table-wrap"><table><thead><tr><th>Component</th><th>Committed baseline</th></tr></thead><tbody><template x-for="entry in systemToolchain" :key="entry.key"><tr><td x-text="entry.key"></td><td class="mono" x-text="entry.value"></td></tr></template></tbody></table></div></section>
+          <section class="panel"><div class="panel-header"><h3>UI dependencies</h3></div><div class="table-wrap"><table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody><template x-for="pkg in uiVendorPackages" :key="pkg.name"><tr><td x-text="pkg.name"></td><td x-text="pkg.version"></td></tr></template></tbody></table></div></section>
+          <section class="panel"><div class="panel-header"><h3>External compatibility / provider evidence</h3></div><div class="provider-list"><template x-for="provider in providers" :key="'system-' + provider.id"><div class="provider-row"><div><strong x-text="provider.label || provider.id"></strong><small x-text="provider.detail || ''"></small></div><wa-badge :variant="statusVariant(provider.status)" x-text="provider.status"></wa-badge></div></template></div></section>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- Task detail drawer -->
   <wa-drawer label="Task details" placement="end" :open="detailOpen" @wa-hide="closeTask" class="task-drawer">
     <div x-show="detailLoading" class="loading-state"><wa-spinner></wa-spinner><span>Loading task evidence…</span></div>
     <div x-show="taskDetail && !detailLoading" class="task-detail">
-      <div class="task-detail-head">
-        <div>
-          <p class="eyebrow" x-text="selectedTask.task_id || 'Task'"></p>
-          <h2 x-text="selectedTask.name || selectedTask.task_id || 'Task'"></h2>
-        </div>
-        <wa-badge :variant="statusVariant(selectedTask.display_state)" x-text="selectedTask.display_state || 'UNKNOWN'"></wa-badge>
-      </div>
-
+      <div class="task-detail-head"><div><p class="eyebrow" x-text="selectedTask.task_id || 'Task'"></p><h2 x-text="selectedTask.name || selectedTask.task_id || 'Task'"></h2></div><wa-badge :variant="statusVariant(selectedTask.display_state)" x-text="selectedTask.display_state || 'UNKNOWN'"></wa-badge></div>
       <wa-tab-group>
-        <wa-tab panel="overview">Overview</wa-tab>
-        <wa-tab panel="attempts">Attempts</wa-tab>
-        <wa-tab panel="evidence">Evidence</wa-tab>
-        <wa-tab panel="events">Events</wa-tab>
+        <wa-tab panel="overview">Overview</wa-tab><wa-tab panel="requirements">Requirements</wa-tab><wa-tab panel="context">Context</wa-tab><wa-tab panel="validation">Validation</wa-tab><wa-tab panel="git">Git</wa-tab><wa-tab panel="attempts">Attempts</wa-tab><wa-tab panel="events">Events</wa-tab>
 
-        <wa-tab-panel name="overview">
-          <div class="key-grid single">
-            <div><span>Profile</span><strong x-text="selectedTask.profile_id || '—'"></strong></div>
-            <div><span>Harness</span><strong x-text="selectedTask.harness || selectedTask.adapter || '—'"></strong></div>
-            <div><span>Model</span><strong x-text="selectedTask.model || '—'"></strong></div>
-            <div><span>Effort</span><strong x-text="selectedTask.effort || '—'"></strong></div>
-            <div><span>Execution</span><strong x-text="selectedTask.execution_mode || '—'"></strong></div>
-            <div><span>Attempts</span><strong x-text="selectedTask.attempts_count || 0"></strong></div>
-            <div><span>Commit</span><strong class="mono" x-text="selectedTask.commit_hash || '—'"></strong></div>
-          </div>
-        </wa-tab-panel>
+        <wa-tab-panel name="overview"><div class="key-grid single"><div><span>Profile</span><strong x-text="selectedTask.profile_id || '—'"></strong></div><div><span>Harness</span><strong x-text="selectedTask.harness || '—'"></strong></div><div><span>Model</span><strong x-text="selectedTask.model || '—'"></strong></div><div><span>Effort</span><strong x-text="selectedTask.effort || '—'"></strong></div><div><span>Effort source</span><strong x-text="selectedTask.effort_source || '—'"></strong></div><div><span>Escalated from</span><strong x-text="selectedTask.escalated_from_profile || '—'"></strong></div><div><span>Execution</span><strong x-text="selectedTask.execution_mode || '—'"></strong></div><div><span>Attempts</span><strong x-text="selectedTask.attempts_count || 0"></strong></div><div><span>Duration</span><strong x-text="durationOrDash(selectedTask.duration_ms)"></strong></div><div><span>Dependencies</span><strong class="mono" x-text="joinOrDash(selectedTaskDefinition.dependencies)"></strong></div></div></wa-tab-panel>
 
-        <wa-tab-panel name="attempts">
-          <div class="timeline">
-            <template x-for="attempt in selectedTaskAttempts" :key="attempt.attempt_id">
-              <article>
-                <div><strong x-text="'Attempt ' + attempt.attempt_id"></strong><wa-badge :variant="statusVariant(attempt.status || attempt.state)" x-text="attempt.status || attempt.state || 'UNKNOWN'"></wa-badge></div>
-                <small x-text="attemptDescriptor(attempt)"></small>
-                <small x-text="attempt.start_time ? relativeTime(attempt.start_time) : ''"></small>
-                <p x-show="attempt.error" x-text="attempt.error"></p>
-              </article>
-            </template>
-            <div class="empty-state small" x-show="selectedTaskAttempts.length === 0">No attempts persisted.</div>
-          </div>
-        </wa-tab-panel>
+        <wa-tab-panel name="requirements"><div class="criteria-list"><template x-for="criterion in selectedTaskRequirements" :key="criterion.id"><div class="criterion-row"><wa-badge pill variant="neutral" x-text="criterion.id"></wa-badge><span><strong x-text="criterion.title || criterion.id"></strong><small x-text="criterion.description || ''"></small></span><wa-badge x-show="criterion.provenance" :variant="criterion.provenance === 'USER_EXPLICIT' ? 'brand' : 'neutral'" x-text="criterion.provenance"></wa-badge></div></template><div class="empty-state small" x-show="selectedTaskRequirements.length === 0">No task-scoped requirements persisted.</div></div></wa-tab-panel>
 
-        <wa-tab-panel name="evidence">
-          <h4>Telemetry</h4>
-          <div class="table-wrap">
-            <table><thead><tr><th>Attempt</th><th>Input</th><th>Reasoning</th><th>Output</th><th>Context</th></tr></thead>
-              <tbody><template x-for="item in selectedTaskTelemetry" :key="String(item.attempt_id) + String(item.end_time || '')"><tr><td x-text="item.attempt_id || '—'"></td><td x-text="numberOrDash(item.provider_input_tokens)"></td><td x-text="numberOrDash(item.provider_reasoning_tokens)"></td><td x-text="numberOrDash(item.provider_output_tokens)"></td><td x-text="bytesOrDash(item.factory_supplied_bytes)"></td></tr></template></tbody>
-            </table>
-          </div>
-          <wa-details summary="Changed paths" x-show="hasChangedPaths">
-            <ul class="mono-list"><template x-for="path in selectedTask.changed_paths || []" :key="path"><li x-text="path"></li></template></ul>
-          </wa-details>
-        </wa-tab-panel>
+        <wa-tab-panel name="context"><div x-show="hasTaskContext" class="stack gap-md"><div class="key-grid single"><div><span>Packet</span><strong class="mono" x-text="selectedTaskContext.packet_id || '—'"></strong></div><div><span>Hash</span><strong class="mono" x-text="selectedTaskContext.packet_hash || '—'"></strong></div><div><span>Bytes</span><strong x-text="bytesOrDash(selectedTaskContext.packet_bytes)"></strong></div><div><span>Required anchors</span><strong x-text="numberOrDash(selectedTaskContext.required_anchor_count)"></strong></div><div><span>Anchor recall</span><strong x-text="percentageOrDash(selectedTaskContext.required_anchor_recall)"></strong></div><div><span>Handoffs</span><strong x-text="numberOrDash(selectedTaskContext.handoff_count)"></strong></div></div><h4>Referenced files</h4><ul class="mono-list"><template x-for="path in selectedTaskContext.referenced_files || []" :key="path"><li x-text="path"></li></template></ul><h4>Anchor classes</h4><div class="tag-list"><template x-for="(count, type) in selectedTaskContext.anchor_types || {}" :key="type"><wa-badge variant="neutral" x-text="type + ': ' + count"></wa-badge></template></div></div><div class="empty-state small" x-show="!hasTaskContext">No persisted ContextPacket found for this task/attempt.</div></wa-tab-panel>
 
-        <wa-tab-panel name="events">
-          <div class="event-list">
-            <template x-for="event in selectedTaskEvents" :key="(event.timestamp || '') + (event.event || '')">
-              <div><span class="mono" x-text="event.event || 'EVENT'"></span><small x-text="relativeTime(event.timestamp)"></small></div>
-            </template>
-            <div class="empty-state small" x-show="selectedTaskEvents.length === 0">No task-scoped events found.</div>
-          </div>
-        </wa-tab-panel>
+        <wa-tab-panel name="validation"><h4>Commands</h4><ul class="mono-list"><template x-for="command in selectedTaskValidation.commands || []" :key="formatCommand(command)"><li x-text="formatCommand(command)"></li></template></ul><h4>Results</h4><div class="validation-list"><template x-for="item in selectedTaskValidation.results || []" :key="(item.task_id || '') + (item.name || '') + formatCommand(item.command)"><div class="validation-row"><span><strong x-text="item.name || item.task_id || 'validation'"></strong><small class="mono" x-text="formatCommand(item.command)"></small></span><wa-badge :variant="item.passed ? 'success' : 'danger'" x-text="item.passed ? 'PASS' : 'FAIL'"></wa-badge></div></template></div><div x-show="(selectedTaskValidation.path_violations || []).length"><h4>Path violations</h4><ul class="mono-list"><template x-for="path in selectedTaskValidation.path_violations" :key="path"><li x-text="path"></li></template></ul></div><div x-show="(selectedTaskValidation.missing_expected || []).length"><h4>Missing expected paths</h4><ul class="mono-list"><template x-for="path in selectedTaskValidation.missing_expected" :key="path"><li x-text="path"></li></template></ul></div></wa-tab-panel>
+
+        <wa-tab-panel name="git"><div class="key-grid single"><div><span>Current commit</span><strong class="mono" x-text="selectedTaskGit.current_commit || '—'"></strong></div></div><h4>Attempt commits / branches</h4><div class="timeline"><template x-for="entry in selectedTaskGit.commits || []" :key="entry.attempt_id + ':' + (entry.commit_hash || entry.branch || '')"><article><div><strong x-text="'Attempt ' + entry.attempt_id"></strong><span class="mono" x-text="entry.commit_hash || '—'"></span></div><small class="mono" x-text="entry.branch || ''"></small></article></template></div><h4>Changed paths</h4><ul class="mono-list"><template x-for="path in selectedTaskGit.changed_paths || []" :key="path"><li x-text="path"></li></template></ul></wa-tab-panel>
+
+        <wa-tab-panel name="attempts"><div class="timeline"><template x-for="attempt in selectedTaskAttempts" :key="attempt.attempt_id"><article><div><strong x-text="'Attempt ' + attempt.attempt_id"></strong><wa-badge :variant="statusVariant(attempt.status || attempt.state)" x-text="attempt.status || attempt.state || 'UNKNOWN'"></wa-badge></div><small x-text="attemptDescriptor(attempt)"></small><small x-text="attempt.start_time ? relativeTime(attempt.start_time) : ''"></small><p x-show="attempt.error" x-text="attempt.error"></p></article></template><div class="empty-state small" x-show="selectedTaskAttempts.length === 0">No attempts persisted.</div></div><h4>Observed usage</h4><div class="table-wrap"><table><thead><tr><th>Attempt</th><th>Input</th><th>Reasoning</th><th>Output</th><th>Context</th></tr></thead><tbody><template x-for="item in selectedTaskTelemetry" :key="item.attempt_id + ':' + (item.end_time || '')"><tr><td x-text="item.attempt_id || '—'"></td><td x-text="numberOrDash(item.provider_input_tokens)"></td><td x-text="numberOrDash(item.provider_reasoning_tokens)"></td><td x-text="numberOrDash(item.provider_output_tokens)"></td><td x-text="bytesOrDash(item.factory_supplied_bytes)"></td></tr></template></tbody></table></div></wa-tab-panel>
+
+        <wa-tab-panel name="events"><div class="event-list"><template x-for="event in selectedTaskEvents" :key="(event.timestamp || '') + (event.event || '')"><div><span class="mono" x-text="event.event || 'EVENT'"></span><small x-text="relativeTime(event.timestamp)"></small></div></template><div class="empty-state small" x-show="selectedTaskEvents.length === 0">No task-scoped events found.</div></div></wa-tab-panel>
       </wa-tab-group>
     </div>
   </wa-drawer>
