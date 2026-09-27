@@ -1,0 +1,101 @@
+name: Provider-free validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install provider-call tripwires
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/factory-ci-bin"
+          marker="$RUNNER_TEMP/provider-cli-called"
+          mkdir -p "$bin"
+          for cli in agy droid codex claude opencode freebuff; do
+            cat > "$bin/$cli" <<'EOF'
+          #!/usr/bin/env bash
+          printf '%s\n' "$0" >> "${PROVIDER_MARKER:?}"
+          exit 97
+          EOF
+            chmod +x "$bin/$cli"
+          done
+          cat > "$bin/herdr" <<'EOF'
+          #!/usr/bin/env bash
+          case "$*" in
+            "--version")
+              echo "herdr 0.9.1"
+              ;;
+            "api snapshot")
+              printf '%s\n' '{"result":{"snapshot":{"protocol":22,"workspaces":[]}}}'
+              ;;
+            "api schema --json")
+              printf '%s\n' '{}'
+              ;;
+            *)
+              echo "unexpected herdr invocation: $*" >&2
+              exit 98
+              ;;
+          esac
+          EOF
+          chmod +x "$bin/herdr"
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "PROVIDER_MARKER=$marker" >> "$GITHUB_ENV"
+          echo "FACTORY_PROVIDER_PROBES=0" >> "$GITHUB_ENV"
+
+      - name: Static and syntax gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q tools factory_tests tests examples
+          find scripts -maxdepth 1 -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          node --check ui/app.js
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          for path in pathlib.Path(".").rglob("*.json"):
+              if ".git" in path.parts or ".agy-factory" in path.parts or ".tools" in path.parts:
+                  continue
+              with path.open("r", encoding="utf-8") as handle:
+                  json.load(handle)
+          PY
+
+      - name: Strict provider-free diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/doctor.sh
+          ./scripts/update-package.sh --check
+          test ! -e "$PROVIDER_MARKER"
+
+      - name: Deterministic verification across hash seeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for seed in 0 1 42; do
+            echo "=== PYTHONHASHSEED=$seed ==="
+            PYTHONHASHSEED="$seed" ./scripts/verify.sh
+          done
+          test ! -e "$PROVIDER_MARKER"
+
+      - name: Portable clean-checkout smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/portable-smoke.sh
+          test ! -e "$PROVIDER_MARKER"
