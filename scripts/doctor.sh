@@ -151,14 +151,14 @@ if board_status == "BLOCKED_EXTERNAL_COMPATIBILITY":
         required = board_info.get("required_herdr_version")
         supported = [required] if required else []
     supported_text = ", ".join(str(v) for v in supported) if supported else "unknown"
-    print(f"  [INFO] herdr-board Compatibility (certified lock): {board_status}")
+    print(f"  [INFO] herdr-board Compatibility: {board_status} (certified lock)")
     print(
         f"         {board_info.get('selected_release', 'unknown')} supports/requires Herdr "
         f"{supported_text} / protocol {board_info.get('required_herdr_protocol', 'unknown')}."
     )
     print("         Run scripts/update-package.sh --check to evaluate current upstream compatibility; do not patch/downgrade silently.")
 else:
-    print(f"  [OK] herdr-board Compatibility (certified lock): {board_status}")
+    print(f"  [OK] herdr-board Compatibility: {board_status} (certified lock)")
 
 # Harness Profiles Validation
 print("\n[3. HARNESS PROFILES GOVERNANCE]")

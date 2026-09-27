@@ -28,6 +28,11 @@ Default to:
 
 Use `./scripts/verify-real.sh`, calibration scripts, AGY audits, or other real-provider certification only when the task explicitly requires new real-provider evidence. Do not spend provider quota merely to reconfirm an already-certified invariant.
 
+## Test and execution discipline
+
+- Do not poll or query status repeatedly while background test suites or commands are executing.
+- Always wait for tests and processes to finish completely before inspecting results or proceeding.
+
 ## Safety invariants
 
 - Never mutate unrelated Herdr resources.

@@ -24,12 +24,14 @@ if FACTORY_PATH.exists():
         compile_plan_from_goal,
         review_plan,
         set_project_context,
+        _CURRENT_CONTEXT,
     )
 
 
 @unittest.skipUnless(FACTORY_PATH.exists(), "requires full repository checkout")
 class CoreHardeningTests(unittest.TestCase):
     def setUp(self):
+        self.orig_ctx = _CURRENT_CONTEXT
         self.temp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temp.name)
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
@@ -47,6 +49,7 @@ class CoreHardeningTests(unittest.TestCase):
         os.environ["FACTORY_TEST_HARNESS"] = "1"
 
     def tearDown(self):
+        set_project_context(self.orig_ctx)
         if self.old_harness is None:
             os.environ.pop("FACTORY_TEST_HARNESS", None)
         else:

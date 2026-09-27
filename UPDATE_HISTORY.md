@@ -346,3 +346,12 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Provider-Free Validation Executed Here**: 32 UI/contracts/vendor tests passed under `PYTHONHASHSEED=0,1,42`; Python compileall, Bash syntax for the local UI launcher, JavaScript syntax, JSON parsing and static UI CSP/no-drag checks passed.
 - **Full-Checkout Validation Boundary**: This execution environment could not materialize the full private repository checkout. New runtime/source-contract tests for the core and active maintenance scripts are committed so the repository's normal `./scripts/verify.sh` executes them on the actual checkout. Full Factory/MiniBoard/MiniLinks/portable-smoke execution remains the final host-side validation step; no false claim of having run it is made here.
 
+## [2026-09-27] Final Provider-Free Validation & Test Isolation Hardening
+
+- **Scope**: Final host-side verification of AGY-Herdr Software Factory v9 repository. Provider-free and deterministic; zero model/provider calls made.
+- **Doctor Diagnostic Output Alignment**: Formatted herdr-board compatibility diagnostic in `scripts/doctor.sh` to preserve the prefix `herdr-board Compatibility: {board_status} (certified lock)` to satisfy deterministic regression assertions while keeping clear lock context.
+- **Plan Review Harness Isolation**: Updated `factory_tests/test_v7_plan_review_and_revision.py` to set and restore `FACTORY_TEST_HARNESS=1` when testing simulated review verdicts, adhering to the fail-closed test override security boundary.
+- **Project Context Test Isolation**: Preserved and restored `_CURRENT_CONTEXT` in `factory_tests/test_v9_core_hardening.py` tearDown to prevent `RUNS_DIR` path corruption across sequential test suites.
+- **Autonomous Agent Guidance**: Documented passive test execution discipline in `AGENTS.md` (no aggressive polling loops while long test suites run).
+
+

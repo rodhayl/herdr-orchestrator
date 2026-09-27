@@ -26,10 +26,15 @@ class TestV7PlanReviewAndRevision(unittest.TestCase):
             "version": "7.0.0",
             "limits": {"max_plan_revisions": 2}
         }, self.tmp_dir)
+        self.old_harness = os.environ.get("FACTORY_TEST_HARNESS")
 
     def tearDown(self):
         if "PLAN_REVIEW_TEST_VERDICT" in os.environ:
             del os.environ["PLAN_REVIEW_TEST_VERDICT"]
+        if self.old_harness is None:
+            os.environ.pop("FACTORY_TEST_HARNESS", None)
+        else:
+            os.environ["FACTORY_TEST_HARNESS"] = self.old_harness
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_review_approves_valid_plan(self):
@@ -69,6 +74,7 @@ class TestV7PlanReviewAndRevision(unittest.TestCase):
         goal_spec = compile_goal_spec("1. Feature Alpha", self.tmp_dir, self.policy)
         plan = compile_plan_from_goal(goal_spec, self.policy)
 
+        os.environ["FACTORY_TEST_HARNESS"] = "1"
         os.environ["PLAN_REVIEW_TEST_VERDICT"] = "REVISE"
         r0 = review_plan(plan, goal_spec, self.policy, revision_index=0)
         self.assertEqual(r0["verdict"], "REVISE")
