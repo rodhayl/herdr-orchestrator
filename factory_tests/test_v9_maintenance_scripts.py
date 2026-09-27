@@ -55,6 +55,19 @@ class MaintenanceScriptContractsTests(unittest.TestCase):
         self.assertIn('SMOKE_RC=$?', source)
         self.assertIn('OPENCODE_RC=$?', source)
 
+    def test_portable_smoke_disables_provider_cli_probes(self):
+        portable = self._source("scripts/portable-smoke.sh")
+        doctor = self._source("scripts/doctor.sh")
+        updater = self._source("scripts/update-package.sh")
+
+        self.assertIn("export FACTORY_PROVIDER_PROBES=0", portable)
+        self.assertIn('"${FACTORY_PROVIDER_PROBES:-1}"', doctor)
+        self.assertIn('"${FACTORY_PROVIDER_PROBES:-1}"', updater)
+        self.assertIn("Provider CLI version probes skipped", doctor)
+        self.assertIn("Provider auth/catalog probes skipped", doctor)
+        self.assertIn("AGY CLI not invoked", updater)
+        self.assertIn("--apply requires provider CLI probes", updater)
+
 
 if __name__ == "__main__":
     unittest.main()

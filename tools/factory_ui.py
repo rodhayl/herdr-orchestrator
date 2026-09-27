@@ -833,6 +833,7 @@ class FactoryReadModel:
         compact = _compact_run(manifest)
         return {
             "run": compact,
+            "goal_state": _compact_goal_state(goal_state) if isinstance(goal_state, dict) else {},
             "tasks": tasks,
             "traceability": _build_traceability(goal_spec, plan, {task["task_id"]: task for task in tasks}, validations),
             "validation_results": validations,

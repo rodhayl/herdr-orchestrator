@@ -5,6 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Clean-room validation must not invoke provider CLIs, including metadata/auth probes.
+export FACTORY_PROVIDER_PROBES=0
+
 echo "================================================================================"
 echo "AGY-Herdr Software Factory (v9.0.0) — Portable Clean-Checkout Smoke Test"
 echo "================================================================================"

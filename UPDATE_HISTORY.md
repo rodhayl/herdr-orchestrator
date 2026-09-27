@@ -355,3 +355,12 @@ Append-only historical ledger tracking toolchain inspections, compatibility audi
 - **Autonomous Agent Guidance**: Documented passive test execution discipline in `AGENTS.md` (no aggressive polling loops while long test suites run).
 
 
+
+
+## [2026-09-27] v9 Freeze Closure — Strict Provider-Free Routine & UI Evidence Completion
+
+- **Scope**: Minimal v9 closure only; no scheduler/routing/state-machine redesign and no model/provider inference calls.
+- **Strict Provider-Free Routine**: Added `FACTORY_PROVIDER_PROBES=0` handling to `doctor.sh` and `update-package.sh --check`; `portable-smoke.sh` exports it automatically so clean-room validation does not invoke AGY, Droid, Codex, Claude, OpenCode or Freebuff CLIs even for metadata/auth probes.
+- **Apply Safety**: `update-package.sh --apply` fails closed when provider probes are disabled, preventing a certified lock refresh from placeholder/stale provider versions.
+- **UI Evidence Completion**: Goals/Runs expose GoalSpec criterion provenance, remediation counters and final-audit findings; Context shows safe packet role/compiler/budget and included-file metadata without inline content or source hashes.
+- **Report Accuracy**: Corrected the final host report to reflect actual Host rejection status, IPv4 default bind/IPv6 evidence boundary, the blocked v0.17.0 herdr-board certified lock versus compatible upstream v0.18.0, and the distinction between zero inference/quota and read-only provider CLI metadata probes in the original run.

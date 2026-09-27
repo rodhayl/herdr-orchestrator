@@ -14,11 +14,15 @@ if [[ -z "$MODE" || ("$MODE" != "--check" && "$MODE" != "--apply") ]]; then
     exit 1
 fi
 
-python3 - << 'EOF' "$PROJECT_ROOT" "$MODE"
+python3 - << 'EOF' "$PROJECT_ROOT" "$MODE" "${FACTORY_PROVIDER_PROBES:-1}"
 import sys, os, json, subprocess, pathlib, urllib.request, hashlib, datetime
 
 project_root = pathlib.Path(sys.argv[1])
 mode = sys.argv[2]
+provider_probes = sys.argv[3] != "0"
+if mode == "--apply" and not provider_probes:
+    print("ERROR: --apply requires provider CLI probes; unset FACTORY_PROVIDER_PROBES=0 and retry.", file=sys.stderr)
+    raise SystemExit(2)
 lock_file = project_root / "toolchain.lock.json"
 history_file = project_root / "UPDATE_HISTORY.md"
 profiles_file = project_root / "harness_profiles.json"
@@ -55,33 +59,30 @@ try:
 except Exception:
     pass
 
-# AGY
-agy_ver, _, _ = run_cmd(["agy", "--version"])
-agy_ver = agy_ver.strip() if agy_ver else "not_installed"
+# Provider harness CLI metadata. Strict provider-free validation skips every
+# provider executable invocation; --apply refuses that mode to avoid certifying stale versions.
+if provider_probes:
+    agy_ver, _, _ = run_cmd(["agy", "--version"])
+    agy_ver = agy_ver.strip() if agy_ver else "not_installed"
 
-# Droid
-droid_ver, _, _ = run_cmd(["droid", "--version"])
-droid_ver = droid_ver.strip() if droid_ver else "not_installed"
+    droid_ver, _, _ = run_cmd(["droid", "--version"])
+    droid_ver = droid_ver.strip() if droid_ver else "not_installed"
 
-# Codex
-codex_ver, _, _ = run_cmd(["codex", "--version"])
-codex_ver = codex_ver.replace("codex-cli", "").strip() if codex_ver else "not_installed"
+    codex_ver, _, _ = run_cmd(["codex", "--version"])
+    codex_ver = codex_ver.replace("codex-cli", "").strip() if codex_ver else "not_installed"
 
-# Claude Code
-claude_ver, _, _ = run_cmd(["claude", "--version"])
-claude_ver = claude_ver.replace("Claude Code", "").strip().replace("(", "").replace(")", "").strip() if claude_ver else "not_installed"
+    claude_ver, _, _ = run_cmd(["claude", "--version"])
+    claude_ver = claude_ver.replace("Claude Code", "").strip().replace("(", "").replace(")", "").strip() if claude_ver else "not_installed"
 
-# OpenCode
-opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
-opencode_ver, _, _ = run_cmd([opencode_cmd, "--version"])
-opencode_ver = opencode_ver.strip() if opencode_ver else "not_installed"
+    opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
+    opencode_ver, _, _ = run_cmd([opencode_cmd, "--version"])
+    opencode_ver = opencode_ver.strip() if opencode_ver else "not_installed"
 
-# Freebuff
-freebuff_cmd = "/usr/local/bin/freebuff" if os.path.exists("/usr/local/bin/freebuff") else "freebuff"
-fb_out, _, fb_code = run_cmd([freebuff_cmd, "--version"])
-freebuff_ver = "not_installed"
-if fb_code == 0 and fb_out:
-    freebuff_ver = fb_out.splitlines()[-1].strip()
+    freebuff_cmd = "/usr/local/bin/freebuff" if os.path.exists("/usr/local/bin/freebuff") else "freebuff"
+    fb_out, _, fb_code = run_cmd([freebuff_cmd, "--version"])
+    freebuff_ver = fb_out.splitlines()[-1].strip() if fb_code == 0 and fb_out else "not_installed"
+else:
+    agy_ver = droid_ver = codex_ver = claude_ver = opencode_ver = freebuff_ver = "probe_skipped"
 
 # Toolchain
 
@@ -156,7 +157,7 @@ matrix = [
         "installed": agy_ver,
         "latest_stable": agy_ver,
         "action": "Check Only",
-        "evidence": f"agy --version ({agy_ver})"
+        "evidence": f"agy --version ({agy_ver})" if provider_probes else "FACTORY_PROVIDER_PROBES=0; AGY CLI not invoked"
     },
     {
         "component": "Droid CLI",
@@ -164,7 +165,7 @@ matrix = [
         "installed": droid_ver,
         "latest_stable": droid_ver,
         "action": "Check Only",
-        "evidence": f"droid --version ({droid_ver})"
+        "evidence": f"droid --version ({droid_ver})" if provider_probes else "FACTORY_PROVIDER_PROBES=0; Droid CLI not invoked"
     },
     {
         "component": "Codex CLI",
@@ -172,7 +173,7 @@ matrix = [
         "installed": codex_ver,
         "latest_stable": codex_ver,
         "action": "Check Only",
-        "evidence": f"codex --version ({codex_ver})"
+        "evidence": f"codex --version ({codex_ver})" if provider_probes else "FACTORY_PROVIDER_PROBES=0; Codex CLI not invoked"
     },
     {
         "component": "Claude Code",
@@ -180,7 +181,7 @@ matrix = [
         "installed": claude_ver,
         "latest_stable": claude_ver,
         "action": "Check Only",
-        "evidence": f"claude --version ({claude_ver})"
+        "evidence": f"claude --version ({claude_ver})" if provider_probes else "FACTORY_PROVIDER_PROBES=0; Claude CLI not invoked"
     },
     {
         "component": "OpenCode CLI",
@@ -188,7 +189,7 @@ matrix = [
         "installed": opencode_ver,
         "latest_stable": opencode_ver,
         "action": "Check Only",
-        "evidence": f"opencode --version ({opencode_ver})"
+        "evidence": f"opencode --version ({opencode_ver})" if provider_probes else "FACTORY_PROVIDER_PROBES=0; OpenCode CLI not invoked"
     },
     {
         "component": "Freebuff CLI",
@@ -196,7 +197,7 @@ matrix = [
         "installed": freebuff_ver,
         "latest_stable": freebuff_ver,
         "action": "FREEBUFF_HEADLESS_BLOCKED",
-        "evidence": "Requires interactive TUI; lacks non-interactive/headless CLI execution mode"
+        "evidence": "Requires interactive TUI; lacks non-interactive/headless CLI execution mode" if provider_probes else "FACTORY_PROVIDER_PROBES=0; Freebuff CLI not invoked"
     },
     {
 

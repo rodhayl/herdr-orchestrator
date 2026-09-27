@@ -258,6 +258,7 @@ class FactoryUITestCase(unittest.TestCase):
         self.assertEqual(goal["goal_spec"]["acceptance_criteria"][0]["id"], "R1")
         run = model.run_detail("run-001")
         self.assertEqual(run["run"]["run_id"], "run-001")
+        self.assertEqual(run["goal_state"]["remediation_round_count"], 0)
         self.assertEqual(run["plan"]["tasks"][0]["task_id"], "task_run")
         task = model.task_detail("run-001", "task_run")
         self.assertEqual(task["task"]["execution_mode"], "REAL")
@@ -267,6 +268,11 @@ class FactoryUITestCase(unittest.TestCase):
         self.assertEqual([item["id"] for item in task["requirements"]], ["R1", "R2"])
         self.assertEqual(task["context"]["packet_id"], "ctx-task-task_run-att1-test")
         self.assertEqual(task["context"]["packet_bytes"], 3000)
+        self.assertEqual(task["context"]["packet_role"], "task")
+        self.assertEqual(task["context"]["compiler_version"], "8.0.0")
+        self.assertEqual(task["context"]["budget"]["final_bytes"], 3000)
+        self.assertEqual(task["context"]["included_files"][0]["path"], "src/app.py")
+        self.assertNotIn("inline_content", task["context"]["included_files"][0])
         self.assertEqual(task["context"]["required_anchor_recall"], 1.0)
         self.assertEqual(task["context"]["required_anchor_count"], 2)
         self.assertEqual(task["validation"]["commands"][0][:3], ["python3", "-m", "unittest"])
@@ -474,7 +480,7 @@ class FactoryUITestCase(unittest.TestCase):
             self.assertIn(f'>{tab}<', text)
         self.assertIn("Requirement traceability", text)
         self.assertIn("Certified toolchain", text)
-        for marker in ("RETRY", "ESCALATED", "Dependencies", "Effort source"):
+        for marker in ("RETRY", "ESCALATED", "Dependencies", "Effort source", "GoalSpec criteria", "Remediation rounds", "Included files"):
             self.assertIn(marker, text)
         self.assertNotIn("draggable=", text)
         self.assertNotIn("ondrag", text.lower())

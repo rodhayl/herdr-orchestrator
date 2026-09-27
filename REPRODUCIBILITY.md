@@ -5,21 +5,21 @@ The default reproducibility workflow is **provider-free**. It should verify repo
 ## Clean-checkout workflow
 
 ```bash
-./scripts/doctor.sh
-./scripts/update-package.sh --check
+FACTORY_PROVIDER_PROBES=0 ./scripts/doctor.sh
+FACTORY_PROVIDER_PROBES=0 ./scripts/update-package.sh --check
 ./scripts/bootstrap.sh
 ./scripts/verify.sh
 ./scripts/portable-smoke.sh
 ```
 
-`doctor.sh` and `update-package.sh --check` are read-only diagnostics. `bootstrap.sh` initializes only project-local runtime state.
+`doctor.sh` and `update-package.sh --check` are read-only diagnostics. Set `FACTORY_PROVIDER_PROBES=0` when a strict provider-free run must not invoke AGY, Droid, Codex, Claude, OpenCode, or Freebuff CLIs even for version/auth/catalog metadata. `portable-smoke.sh` exports that mode automatically. `bootstrap.sh` initializes only project-local runtime state.
 
 ## Script roles
 
 | Script | Purpose | Provider usage |
 | --- | --- | --- |
-| `scripts/doctor.sh` | environment/tool/profile diagnostics | none |
-| `scripts/update-package.sh --check` | lock/profile/policy compatibility and drift | none |
+| `scripts/doctor.sh` | environment/tool/profile diagnostics | provider CLI metadata/auth probes by default; none with `FACTORY_PROVIDER_PROBES=0` |
+| `scripts/update-package.sh --check` | lock/profile/policy compatibility and drift | provider CLI version probes by default; none with `FACTORY_PROVIDER_PROBES=0` |
 | `scripts/bootstrap.sh` | project-local runtime preparation | none |
 | `scripts/verify.sh` | deterministic regression matrix | none |
 | `scripts/portable-smoke.sh` | clean-room portability rehearsal | none |

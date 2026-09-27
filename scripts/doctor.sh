@@ -5,10 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-python3 - << 'EOF' "$PROJECT_ROOT"
+python3 - << 'EOF' "$PROJECT_ROOT" "${FACTORY_PROVIDER_PROBES:-1}"
 import sys, os, json, subprocess, pathlib, hashlib
 
 project_root = pathlib.Path(sys.argv[1])
+provider_probes = sys.argv[2] != "0"
 lock_file = project_root / "toolchain.lock.json"
 profiles_file = project_root / "harness_profiles.json"
 
@@ -81,46 +82,25 @@ try:
 except Exception:
     pass
 
-# AGY CLI
-agy_ver, _, agy_code = run_cmd(["agy", "--version"])
-if agy_code == 0:
-    print(f"  [OK] AGY CLI: Version {agy_ver}")
+# Provider harness CLIs. Strict provider-free validation can disable every
+# provider CLI invocation while retaining local/core structural diagnostics.
+if provider_probes:
+    provider_commands = (
+        ("AGY", ["agy", "--version"]),
+        ("Droid", ["droid", "--version"]),
+        ("Codex", ["codex", "--version"]),
+        ("Claude Code", ["claude", "--version"]),
+        ("OpenCode", ["/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode", "--version"]),
+    )
+    for label, command in provider_commands:
+        version, _, code = run_cmd(command)
+        if code == 0:
+            print(f"  [OK] {label} CLI: Version {version}")
+        else:
+            print(f"  [FAIL] {label} CLI not found")
+            structural_ok = False
 else:
-    print(f"  [FAIL] AGY CLI not found")
-    structural_ok = False
-
-# Droid CLI
-droid_ver, _, droid_code = run_cmd(["droid", "--version"])
-if droid_code == 0:
-    print(f"  [OK] Droid CLI: Version {droid_ver}")
-else:
-    print(f"  [FAIL] Droid CLI not found")
-    structural_ok = False
-
-# Codex CLI
-codex_ver, _, codex_code = run_cmd(["codex", "--version"])
-if codex_code == 0:
-    print(f"  [OK] Codex CLI: Version {codex_ver}")
-else:
-    print(f"  [FAIL] Codex CLI not found")
-    structural_ok = False
-
-# Claude Code CLI
-claude_ver, _, claude_code = run_cmd(["claude", "--version"])
-if claude_code == 0:
-    print(f"  [OK] Claude Code CLI: Version {claude_ver}")
-else:
-    print(f"  [FAIL] Claude Code CLI not found")
-    structural_ok = False
-
-# OpenCode CLI
-opencode_cmd = "/root/.opencode/bin/opencode" if os.path.exists("/root/.opencode/bin/opencode") else "opencode"
-opencode_ver, _, opencode_code = run_cmd([opencode_cmd, "--version"])
-if opencode_code == 0:
-    print(f"  [OK] OpenCode CLI: Version {opencode_ver}")
-else:
-    print(f"  [FAIL] OpenCode CLI not found")
-    structural_ok = False
+    print("  [INFO] Provider CLI version probes skipped (FACTORY_PROVIDER_PROBES=0)")
 
 # Rust / Cargo
 rust_ver, _, rcode = run_cmd(["rustc", "--version"])
@@ -192,20 +172,24 @@ else:
 # 4. Authenticated Real-Provider Prerequisites
 print("\n[4. AUTHENTICATED REAL-PROVIDER PREREQUISITES]")
 
-# Use canonical read-only harness auth discovery from factory
-sys.path.insert(0, str(project_root))
-from tools.factory import probe_harness_auth
+if provider_probes:
+    # Canonical read-only auth discovery. These are metadata/status probes only,
+    # but they still invoke provider CLIs, so strict provider-free runs skip them.
+    sys.path.insert(0, str(project_root))
+    from tools.factory import probe_harness_auth
 
-for h in ["agy", "droid", "codex", "claude", "opencode"]:
-    probe = probe_harness_auth(h)
-    if probe["authenticated"]:
-        print(f"  [OK] {h.upper()} Provider Authentication: {probe['auth_source']} ({probe['evidence']})")
-    else:
-        print(f"  [WARN] {h.upper()} Provider Authentication: AUTH_BLOCKED ({probe['evidence']})")
-        auth_warnings.append(f"{h.upper()} AUTH_BLOCKED")
+    for h in ["agy", "droid", "codex", "claude", "opencode"]:
+        probe = probe_harness_auth(h)
+        if probe["authenticated"]:
+            print(f"  [OK] {h.upper()} Provider Authentication: {probe['auth_source']} ({probe['evidence']})")
+        else:
+            print(f"  [WARN] {h.upper()} Provider Authentication: AUTH_BLOCKED ({probe['evidence']})")
+            auth_warnings.append(f"{h.upper()} AUTH_BLOCKED")
 
-fb_probe = probe_harness_auth("freebuff")
-print(f"  [INFO] FREEBUFF Feasibility Gate: {fb_probe['auth_source']} ({fb_probe['evidence']})")
+    fb_probe = probe_harness_auth("freebuff")
+    print(f"  [INFO] FREEBUFF Feasibility Gate: {fb_probe['auth_source']} ({fb_probe['evidence']})")
+else:
+    print("  [INFO] Provider auth/catalog probes skipped (FACTORY_PROVIDER_PROBES=0)")
 
 
 # 5. Final Verdict

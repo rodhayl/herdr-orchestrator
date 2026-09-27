@@ -3,7 +3,7 @@
 **Date:** 2026-09-27  
 **Factory Version:** v9.0.0  
 **Repository:** `rodhayl/herdr-orchestrator` (`agy-herdr-factory-poc`)  
-**Validation Mode:** Exhaustive, deterministic, 100% provider-free (0 model/LLM calls, 0 quota spent)
+**Validation Mode:** Exhaustive and deterministic. No model/LLM inference calls or quota-consuming provider execution were made. Note: the original host run did invoke provider CLIs for read-only version/auth/catalog metadata through `doctor.sh` / `update-package.sh --check`; the subsequent v9 freeze closure added `FACTORY_PROVIDER_PROBES=0` so routine strict provider-free validation can make zero provider-CLI calls.
 
 ---
 
@@ -103,7 +103,7 @@ Executed the official multi-suite verification across all three seeds:
 ## 6. Portable Smoke Verification (`portable-smoke.sh`)
 
 - Command: `./scripts/portable-smoke.sh`
-- **Sandbox Environment:** Fresh temporary directory (`/tmp/agy-portable-*`) without provider credentials.
+- **Sandbox Environment:** Fresh temporary directory (`/tmp/factory-portable-smoke-*`) without provider credentials.
 - **Steps Verified:**
   1. Clean checkout initialization.
   2. Environment and dependency isolation check.
@@ -125,7 +125,7 @@ Executed the official multi-suite verification across all three seeds:
   - Toolchain lock: clean, valid SHA-256 digests.
   - Policy hashes: Reasoning policy and Context policy verified against lockfile.
   - Freebuff status: Inactive (provider-free safe).
-  - herdr-board compatibility: `v0.18.0` recognized as compatible with Herdr `0.9.1` / protocol `22`.
+  - Certified lock remains herdr-board `v0.17.0` with `BLOCKED_EXTERNAL_COMPATIBILITY`; `scripts/update-package.sh --check` separately recognizes upstream `v0.18.0` as compatible with Herdr `0.9.1` / protocol `22`.
 
 ### `scripts/update-package.sh --check`
 - Executed read-only check mode.
@@ -167,7 +167,7 @@ Launched UI server on loopback using a deterministic fixture project:
   - `GET /api/v1/system` -> `200 OK` (System, profile, policy state)
 - Verified Browser Views:
   - **Overview:** System status, project root, active run stats.
-  - **Board:** Kanban columns (Backlog, Ready, Running, Review, Done, Failed).
+  - **Board:** Canonical Kanban columns (Backlog, Ready, Running, Blocked, Review, Done, Failed).
   - **Goals / Runs:** Historical runs, execution states, attempt metadata.
   - **System:** Policies, harness profiles, effort baseline, toolchain lock status.
 - Verified Task Drawer Tabs:
@@ -180,10 +180,10 @@ Launched UI server on loopback using a deterministic fixture project:
 ## 10. HTTP Security Hardening
 
 Validated network security controls against the UI server:
-- **Loopback Enforcement:** Server strictly binds to `127.0.0.1` / `::1`. Public binds (e.g. `0.0.0.0`) are refused.
+- **Loopback Enforcement:** The shipped/default server binds to `127.0.0.1`; loopback-address policy accepts loopback literals and refuses public binds such as `0.0.0.0`. IPv6 `::1` policy acceptance is tested, but an IPv6 server socket was not established by this report.
 - **Host Header Validation:**
   - `Host: 127.0.0.1:8765` -> `200 OK`.
-  - Spoofed/foreign `Host: malicious.com` -> `400 Bad Request` / Rejected.
+  - Spoofed/foreign `Host: malicious.com` -> `403 Forbidden` / Rejected.
 - **Origin Validation:**
   - Same-origin POST requests accepted.
   - Foreign `Origin: http://evil.com` rejected with `403 Forbidden`.
@@ -273,12 +273,13 @@ Provider-free tests proved:
 
 ---
 
-## 18. Zero Provider Verification
+## 18. Provider-Usage Verification
 
-- **Real Provider Calls:** 0
-- **Model Invocations:** 0
-- **Quota Consumed:** 0
-- **Harness Mode:** Deterministic mocks and test harness only.
+- **Model/LLM Inference Invocations:** 0
+- **Quota-Consuming Provider Execution:** 0
+- **Provider CLI Metadata/Auth Probes:** present in the original host validation via routine diagnostics; these were read-only but violate a literal “zero provider CLI calls” requirement.
+- **Post-Report Freeze Closure:** routine strict validation now sets `FACTORY_PROVIDER_PROBES=0`, and regression tests require portable smoke to preserve that boundary.
+- **Harness Mode:** deterministic mocks and test harness only for execution tests.
 
 ---
 
@@ -302,3 +303,16 @@ Updated `AGENTS.md` to document strict test execution discipline:
    - Fixed `factory_tests/test_v9_core_hardening.py` context leak.
    - Added test execution discipline note to `AGENTS.md`.
 2. Follow-up commit recording this final host-side validation report.
+
+
+---
+
+## 20. Post-Report v9 Freeze Closure
+
+A final repository audit after this report identified and closed three documentation/operational gaps without changing Factory scheduling semantics:
+
+1. Routine clean-room validation now exports `FACTORY_PROVIDER_PROBES=0`; `doctor.sh` and `update-package.sh --check` honor it and skip AGY/Droid/Codex/Claude/OpenCode/Freebuff CLI probes. `--apply` refuses this mode so a dependency lock cannot be refreshed from stale provider versions.
+2. Goals/Runs now surface persisted GoalSpec criteria/provenance, remediation-round state and final-audit findings; the task Context drawer surfaces safe packet role/compiler/budget/included-file provenance already present in the read model.
+3. This report was corrected to distinguish the certified herdr-board v0.17.0 blocked lock from the v0.18.0 compatibility discovered by the update checker, and to record actual Host-status/IPv6 evidence accurately.
+
+No new Factory release was created; these are v9 freeze/accuracy fixes.

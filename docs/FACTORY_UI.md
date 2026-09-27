@@ -81,13 +81,13 @@ The board is read-only. There is no drag/drop mutation of scheduler state.
 
 ### Goals / Runs
 
-Inspects durable GoalController state, persisted GoalSpec criteria, run/task state, validation/audit summaries and task evidence.
+Inspects durable GoalController state, persisted GoalSpec criteria (including provenance/derived-from links), plan/requirement traceability, remediation-round counters, run/task state, deterministic validation evidence, final-audit findings and task evidence.
 
 ### System
 
 Shows committed execution profiles, context policy, reasoning policy and external compatibility status.
 
-Task details open in a drawer rather than creating a separate navigation surface. The drawer provides Overview, Requirements, Context, Validation, Git, Attempts and Events tabs. It shows routing/reasoning provenance (profile, model, effort, effort source, escalation), ContextPacket metadata/anchor recall, deterministic validation evidence, commits/changed paths and bounded event/usage summaries. Raw prompts, raw provider outputs, validation stdout/stderr and arbitrary event payloads are deliberately not exposed.
+Task details open in a drawer rather than creating a separate navigation surface. The drawer provides Overview, Requirements, Context, Validation, Git, Attempts and Events tabs. It shows routing/reasoning provenance (profile, model, effort, effort source, escalation), ContextPacket identity/role/compiler/budget metadata, safe included/referenced-file provenance, anchor recall, deterministic validation evidence, commits/changed paths and bounded event/usage summaries. Raw inline file content, raw prompts, raw provider outputs, validation stdout/stderr, source hashes and arbitrary event payloads are deliberately not exposed.
 
 ## API
 
