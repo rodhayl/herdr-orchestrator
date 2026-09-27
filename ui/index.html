@@ -112,7 +112,7 @@
               </tbody></table></div>
               <div class="empty-state small" x-show="goalTraceability.length === 0">No persisted GoalSpec traceability available.</div>
               <h4>Final audit</h4>
-              <div class="key-grid single" x-show="goalDetail.final_audit"><div><span>Verdict</span><strong x-text="goalDetail.final_audit.verdict || 'recorded'"></strong></div></div>
+              <div class="key-grid single" x-show="goalDetail.final_audit"><div><span>Verdict</span><strong x-text="goalAuditVerdict"></strong></div></div>
               <div class="criteria-list" x-show="goalAuditFindings.length"><template x-for="finding in goalAuditFindings" :key="(finding.id || '') + (finding.description || '')"><div class="criterion-row"><wa-badge :variant="statusVariant(finding.severity)" x-text="finding.severity || 'FINDING'"></wa-badge><span><strong x-text="finding.area || finding.criterion_id || 'Audit finding'"></strong><small x-text="finding.description || finding.required_change || ''"></small></span></div></template></div>
               <div class="empty-state small" x-show="!goalDetail.final_audit">No final audit record on this goal.</div>
             </section>

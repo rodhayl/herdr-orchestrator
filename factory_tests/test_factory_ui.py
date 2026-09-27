@@ -480,7 +480,7 @@ class FactoryUITestCase(unittest.TestCase):
             self.assertIn(f'>{tab}<', text)
         self.assertIn("Requirement traceability", text)
         self.assertIn("Certified toolchain", text)
-        for marker in ("RETRY", "ESCALATED", "Dependencies", "Effort source", "GoalSpec criteria", "Remediation rounds", "Included files"):
+        for marker in ("RETRY", "ESCALATED", "Dependencies", "Effort source", "GoalSpec criteria", "Remediation rounds", "Included files", "goalAuditVerdict"):
             self.assertIn(marker, text)
         self.assertNotIn("draggable=", text)
         self.assertNotIn("ondrag", text.lower())

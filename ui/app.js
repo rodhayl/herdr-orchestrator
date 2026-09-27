@@ -124,6 +124,7 @@
       },
       get goalCriteria() { return this.goalDetail.goal_spec?.acceptance_criteria || []; },
       get goalDetailTitle() { return (this.goalDetail.goal_spec && this.goalDetail.goal_spec.title) || this.goalDetail.state.goal_id || 'Goal'; },
+      get goalAuditVerdict() { const audit = this.goalDetail.final_audit || {}; return audit.verdict || audit.status || 'recorded'; },
       get goalAuditFindings() { return this.goalDetail.final_audit?.findings || []; },
       get runAuditVerdict() { const audit = this.runDetail.final_audit || {}; return audit.verdict || audit.status || 'recorded'; },
       get runAuditFindings() { return this.runDetail.final_audit?.findings || []; },
