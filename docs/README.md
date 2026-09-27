@@ -9,6 +9,7 @@ This directory separates **current operational truth**, **application contracts*
 - [../ORCHESTRATOR.md](../ORCHESTRATOR.md) — integration contract for external brains/orchestrators.
 - [../REPRODUCIBILITY.md](../REPRODUCIBILITY.md) — provider-free bootstrap and verification workflow.
 - [FACTORY_UI.md](FACTORY_UI.md) — local browser control surface, API, security and dependency contract.
+- [FINAL_HOST_VALIDATION_REPORT.md](FINAL_HOST_VALIDATION_REPORT.md) — exhaustive host-side validation report.
 
 ## Current operational documentation
 
