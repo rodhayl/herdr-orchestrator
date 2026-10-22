@@ -20,4 +20,4 @@ Do not report secrets in a public issue. If credentials are exposed, revoke or r
 
 ## Licensing
 
-No project license is specified. Public visibility alone does not grant reuse rights. Generated frontend dependencies are not committed; anyone redistributing them must review and preserve the upstream license and notice requirements. SRI verification checks integrity, not licensing compliance.
+Original project code and documentation are licensed under the [MIT License](LICENSE), including its copyright-notice requirement and warranty disclaimer. This does not relicense third-party components. Generated frontend dependencies are not committed; anyone redistributing them must review and preserve the upstream license and notice requirements. SRI verification checks integrity, not licensing compliance.

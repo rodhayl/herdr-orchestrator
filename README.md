@@ -81,4 +81,8 @@ See [Context and usage analysis](CONTEXT_EFFICIENCY.md), [Certification evidence
 
 Generated `.agy-factory/`, UI vendor files, local databases and environment files are not source artifacts. Versioned v3–v9 tests are retained because they still exercise active invariants; their names are not release-support promises.
 
-Start with the [documentation map](docs/README.md). See [Security](SECURITY.md) before execution or disclosure. No project license is specified in this repository; public visibility alone does not grant reuse rights.
+Start with the [documentation map](docs/README.md). See [Security](SECURITY.md) before execution or disclosure.
+
+## License
+
+Original project code and documentation are licensed under the [MIT License](LICENSE). Third-party dependencies and assets retain their own licenses and notices; see the [licensing boundaries](SECURITY.md#licensing).

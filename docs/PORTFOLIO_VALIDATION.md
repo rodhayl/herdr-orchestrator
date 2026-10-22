@@ -38,6 +38,6 @@ These are local deterministic and HTTP checks, not a visual-browser acceptance r
 
 No real provider inference, authentication change, generated vendor redistribution, deployment or repository visibility change is part of this validation. Herdr is unavailable here, so the live-Herdr test is skipped and `portable-smoke.sh` is not claimed PASS. Browser/live-provider acceptance and production readiness are not established by offline tests.
 
-No usable credentials or unrelated private-project content were detected in the reviewed source snapshot; that is a bounded inspection result, not a guarantee of absence. A project license has not been chosen. No existing license or notice was removed; future vendor redistribution needs its own license/notice review.
+No usable credentials or unrelated private-project content were detected in the reviewed source snapshot; that is a bounded inspection result, not a guarantee of absence. The original project code and documentation are now licensed under the [MIT License](../LICENSE). This documentation-only follow-up did not change runtime code or rerun the test matrix above. No existing third-party license or notice was removed or replaced; future vendor redistribution needs its own license/notice review.
 
 This review does not certify or purge old Git objects, pull-request references, caches, forks or attachments. Repository visibility remains a separate owner decision.
