@@ -1,0 +1,1 @@
+"""MiniBoard test suite package."""

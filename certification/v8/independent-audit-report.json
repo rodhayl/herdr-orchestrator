@@ -1,0 +1,77 @@
+{
+  "findings": [
+    {
+      "area": "security",
+      "evidence": "In `execute_attempt`, `active_packet` is captured inside the `_packet_lock` context but then passed to `_record_telemetry(context_packet=active_packet)` and the timed-out path uses `active_packet` that was set inside the lock scope. However, the timed-out branch references `active_packet` which is a local variable\u2014this is safe. The more subtle concern: `_packet_lock` is a plain `threading.Lock()` (not `NonReentrantLock`), so while `_collect_task_handoffs` acquires `_manifest_lock` (a `NonReentrantLock`) under `commit_work`, the packet lock and manifest lock have no documented ordering. No actual deadlock path is visible in the provided code, but the asymmetry between the two lock types is undocumented.",
+      "recommendation": "Document the lock acquisition order for `_packet_lock` and `_manifest_lock` in comments, and consider promoting `_packet_lock` to `NonReentrantLock` for consistency and reentrant deadlock detection.",
+      "severity": "MINOR"
+    },
+    {
+      "area": "security",
+      "evidence": "In `save_manifest`, the guard `if self._manifest_lock.is_owned(): raise RuntimeError(...)` is checked before entering the `with self._manifest_lock:` block\u2014correct. However, the second guard immediately after `atomic_write_json` checks `if self._manifest_lock.is_owned(): raise RuntimeError(...)` while *still inside* the `with self._manifest_lock:` block. Since `NonReentrantLock.is_owned()` returns True while the lock is held, this guard unconditionally raises at that point. This appears to be a logic error: the intent is to call `board_projector.sync()` *outside* the lock, but the check after `atomic_write_json` fires while the lock is still held (at end of the `with` block, before `__exit__`). The comment says 'outside _manifest_lock critical section' but the raise is inside it. This would cause `save_manifest` to always raise after writing the manifest.",
+      "recommendation": "Move the second `is_owned()` guard and the `board_projector.sync()` call to *after* the `with self._manifest_lock:` block exits, not inside it. The current placement causes an unconditional RuntimeError on every `save_manifest` invocation.",
+      "severity": "MINOR"
+    },
+    {
+      "area": "security",
+      "evidence": "In `create_task_handoff`, `synthesis_source` is authoritatively set from `self.routing_provenance[task_id]['mode']`, which is correct. However, the code also reads `raw_mode` from `attempt_result.get('provenance', {}).get('mode')` or `attempt_result.get('routing_provenance', {}).get('mode')` for discrepancy logging only. The discrepancy is logged but not blocking. This is acceptable. The only concern is that `synthesis_source` defaults to `'MOCK'` with a CRITICAL log event when orchestrator routing provenance is absent, which is conservative and correct.",
+      "recommendation": "No change required. Provenance laundering defense is sound.",
+      "severity": "MINOR"
+    },
+    {
+      "area": "security",
+      "evidence": "In the reconciliation Case D path, `executor.commit_work(att_id, context_packet=getattr(executor, 'current_context_packet', None))` is called. At this point, the newly constructed executor has never executed an attempt (`execute_attempt` was not called), so `current_context_packet` is `None`. `commit_work` then falls back to loading the packet from `pkt_file` on disk. If `pkt_file` does not exist (crash before packet was saved), `commit_work` raises `ContextError: MISSING_CONTEXT_PACKET`. This is the safe fail-closed path, but it means a crash-recovery commit will fail even for a worker that completed successfully if the packet file was not fsynced before the crash. This may cause unnecessary FAILED states for otherwise valid work products.",
+      "recommendation": "Document this as a known conservative fail-closed behavior. Consider adding a reconciliation warning log noting that missing context_packet.json files on crash-recovery cause the attempt to be re-queued rather than silently accepted.",
+      "severity": "MINOR"
+    },
+    {
+      "area": "security",
+      "evidence": "In `_collect_task_handoffs`, the stat-based drift check uses `(ho_file.stat().st_ino, ho_file.stat().st_mtime_ns)` captured at load time and then rechecked after git reachability verification. Two separate `ho_file.stat()` calls appear inside the loop: `ho_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns)` at line capturing, and `curr_stat = (ho_file.stat().st_ino, ho_file.stat().st_mtime_ns)` at recheck. There is a TOCTOU window between the original stat and the recheck\u2014a concurrent writer could swap the file in between. However this is mitigated by the `disk_ho.handoff_hash != ho.handoff_hash` check which performs cryptographic comparison, making the TOCTOU window inconsequential for integrity.",
+      "recommendation": "No urgent change required. The cryptographic hash comparison provides strong integrity even under TOCTOU. Add a comment documenting why the hash check subsumes the TOCTOU risk.",
+      "severity": "MINOR"
+    },
+    {
+      "area": "implementation",
+      "evidence": "Token count metrics are reported as `None` (not 0) when unavailable (`valid_in_tokens = None`), a WARNING_TOKEN_METRICS_UNAVAILABLE event is logged, and `token_count_estimation_method` is set to `'unavailable'`. The `_valid_token_int` helper correctly rejects booleans, non-finite values, and negative numbers. `ContextPacket.token_count` is typed `Optional[int]` and defaults to `None`. Byte measurements use `len(...encode('utf-8'))` canonically throughout.",
+      "recommendation": "Token metric handling is honest and canonical. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "implementation",
+      "evidence": "Secret redaction uses a load-time frozen snapshot (`_INITIAL_SECRET_ENV`), is sorted by secret length (longest first to prevent partial-match shadowing), covers JSON-embedded credential subkeys via `_extract_json_secrets`, and is applied idempotently (checked via `redact_secrets(clean_prompt) != clean_prompt` gate). The `ENV_SECRET_KEY_PATTERN` and `KNOWN_SECRET_ENV_VARS` lists are expanded in v8 to cover AWS, GCP, GitHub, GitLab, Vault, and DATABASE_URL.",
+      "recommendation": "Secret redaction architecture is sound. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "implementation",
+      "evidence": "Anchor recall is checked twice: once inside `build_prompt` (pre-write) and once after redaction inside `execute_attempt` (post-write). Both gates call `verify_required_anchors` which raises `ContextAnchorMissingError` on any missing required anchor. The fallback `last_anchor_recall = 1.0` is only set when verification passes. Budget pruning in `compile_task_packet` preserves `handoff_required_paths` as required anchors with `required=True` and refuses to drop them. The pruning loop operates only on `extra_files` after core files are protected.",
+      "recommendation": "Anchor recall bypass paths are closed. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "implementation",
+      "evidence": "Handoff free-text fields (consumer_notes, contracts, decisions, known_risks) are each individually bounded to `MAX_SEMANTIC_HANDOFF_BYTES`, then proportionally scaled down across all four fields to a `ft_budget` computed as `max(512, max_bytes - 768)`, with a 200-iteration convergence loop, a hard fallback at `ft_budget // 4` per field, and a final `raise ContextError` if convergence fails. The `retry_info` dict in the orchestrator is hard-capped at 4096 bytes with excess trimmed from `error_excerpt`.",
+      "recommendation": "Free-text growth is bounded at every insertion point. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "traceability",
+      "evidence": "Staleness is verified at three distinct gates: (1) inside `build_prompt` after compilation, (2) after redaction inside `execute_attempt` before packet persistence, and (3) inside `commit_work` after re-reading authoritative goal-spec and plan from disk. The `source_hashes` dict includes `secret_env` fingerprint, `stable_prefix` hash, `goal-spec`, `plan`, `task_def`, and `retry_info`. `ContextPacket.from_dict` detects stable-prefix drift and secret-env drift during reload. Reconciliation re-reads plan and goal-spec from disk before constructing executors.",
+      "recommendation": "Stale context packet reuse is prevented at all critical boundaries. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "implementation",
+      "evidence": "`atomic_write_json` uses `secrets.token_hex(16)` combined with `os.getpid()` and `threading.get_ident()` for the temp file name, then `os.replace` (atomic on POSIX), then `os.fsync(dir_fd)` for durability. `HandoffPacket` and `ContextPacket` are saved via `save_context_packet`/`save_handoff_packet` which must use this primitive (not visible but imported from context.py). Integrity is verified post-save by reloading and comparing canonical hashes.",
+      "recommendation": "Atomic write path is sound. No action required.",
+      "severity": "INFO"
+    },
+    {
+      "area": "implementation",
+      "evidence": "`sanitize_env_info` projects `env_info` to an explicit allowlist of safe metadata keys (`workspace_id`, `pane_id`, `worktree`, `worktree_path`, `label`, `profile_home`, `status`) before passing to the adapter and embedding in attempt records. Raw `env_info` from the adapter is never passed outside the executor. `_sanitize_worker_text` applies HTML stripping, ANSI removal, NFKC normalization, Cf/Cc control char stripping (including U+202E RTL override), homoglyph normalization, and INJECTION_PATTERN filtering to all worker-supplied free-text.",
+      "recommendation": "Foreign host mutation surface and prompt injection via worker-supplied text are effectively contained. No action required.",
+      "severity": "INFO"
+    }
+  ],
+  "verdict": "ACCEPTED"
+}

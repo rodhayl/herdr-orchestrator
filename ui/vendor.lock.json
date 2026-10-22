@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "policy": "Exact npm versions; npm registry SRI verified; browser assets self-hosted under .tools/ui/vendor; no Node/npm runtime required.",
+  "packages": [
+    {
+      "name": "@alpinejs/csp",
+      "version": "3.17.4",
+      "files": [
+        {"source": "dist/cdn.min.js", "target": "alpine/csp.min.js"}
+      ]
+    },
+    {
+      "name": "@awesome.me/webawesome",
+      "version": "3.14.0",
+      "prefixes": [
+        {"source": "dist-cdn/", "target": "webawesome/"}
+      ]
+    }
+  ]
+}

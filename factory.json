@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "project_name": "Herdr Orchestrator",
+  "version": "9.0.0",
+  "default_model": "gemini-3.8-flash-high",
+  "worker_registry": {
+    "agy": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy",
+      "enabled": true,
+      "capabilities": [
+        "implementation",
+        "review",
+        "planning",
+        "testing"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": true,
+      "description": "Primary AGY instance (reserved when orchestrator is agy)"
+    },
+    "agy2": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy2",
+      "enabled": true,
+      "capabilities": [
+        "planning",
+        "specification",
+        "review"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Product Specification and Planning Worker"
+    },
+    "agy3": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy3",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "backend",
+        "debugging"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Backend & Storage Implementation Worker"
+    },
+    "agy4": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy4",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "frontend"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Frontend UI & Client Implementation Worker"
+    },
+    "agy5": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy5",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "testing"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Test Suite & Smoke Harness Worker"
+    },
+    "agy6": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy6",
+      "enabled": true,
+      "capabilities": [
+        "integration",
+        "debugging",
+        "conflict_resolution"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Integration Quality & Repair Worker"
+    },
+    "agy7": {
+      "family": "antigravity",
+      "command": "/root/.local/bin/agy7",
+      "enabled": true,
+      "capabilities": [
+        "review",
+        "audit"
+      ],
+      "adapter": "agy",
+      "default_model": "gemini-3.8-flash-high",
+      "concurrency_eligibility": false,
+      "description": "Independent Final Audit Worker"
+    },
+    "droid": {
+      "family": "droid",
+      "command": "/root/.local/bin/droid",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "backend",
+        "testing",
+        "debugging",
+        "mechanical_change"
+      ],
+      "adapter": "droid",
+      "default_model": "qwen3.8-max",
+      "reasoning_effort": "xhigh",
+      "autonomy": "low",
+      "concurrency_eligibility": false,
+      "description": "Production Droid Worker (Qwen3.8 Max, Low Autonomy)"
+    },
+    "codex": {
+      "family": "openai",
+      "command": "/usr/local/bin/codex",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "frontend",
+        "debugging",
+        "testing",
+        "review"
+      ],
+      "adapter": "codex",
+      "default_model": "gpt-5.6-luna",
+      "reasoning_effort": "high",
+      "concurrency_eligibility": false,
+      "description": "Production OpenAI Codex CLI Worker (GPT-5.6 Luna High)"
+    },
+    "claude": {
+      "family": "anthropic",
+      "command": "/root/.local/bin/claude",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "testing",
+        "specification",
+        "review"
+      ],
+      "adapter": "claude",
+      "default_model": "claude-sonnet-5",
+      "reasoning_effort": "high",
+      "concurrency_eligibility": false,
+      "description": "Production Anthropic Claude Code CLI Worker"
+    },
+    "opencode": {
+      "family": "opencode",
+      "command": "/root/.opencode/bin/opencode",
+      "enabled": true,
+      "capabilities": [
+        "coding",
+        "testing",
+        "support",
+        "fixture",
+        "mechanical_change"
+      ],
+      "adapter": "opencode",
+      "default_model": "google/gemini-3.8-flash",
+      "reasoning_effort": "high",
+      "concurrency_eligibility": false,
+      "description": "Production OpenCode CLI Worker"
+    }
+  }
+}

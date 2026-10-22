@@ -1,0 +1,90 @@
+{
+  "factory": {
+    "version": "9.0.0",
+    "schema_version": "9.0.0"
+  },
+  "certified_environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "kernel": "6.8.0-139-generic"
+  },
+  "herdr": {
+    "version": "0.9.1",
+    "protocol": 22,
+    "relevant_api_schema_hash": "dfc5451a8c0e690ccea360935cf413ddafb7908660c6e32b8fcc839374e00418"
+  },
+  "agy": {
+    "cli_version": "1.2.10",
+    "worker_profiles": [
+      "agy",
+      "agy2",
+      "agy3",
+      "agy4",
+      "agy5",
+      "agy6",
+      "agy7"
+    ],
+    "certified_model": "gemini-3.8-flash-high",
+    "certified_effort": "high"
+  },
+  "droid": {
+    "cli_version": "0.226.2",
+    "certified_model": "qwen3.8-max",
+    "certified_effort": "xhigh",
+    "certified_autonomy": "low",
+    "catalog_status": "Installed droid CLI v0.226.2 verified. Requires FACTORY_API_KEY environment variable for live execution. DroidAdapter is fully implemented and deterministically tested via mock harness."
+  },
+  "codex": {
+    "cli_version": "0.155.1",
+    "certified_model": "gpt-5.6-luna",
+    "certified_effort": "high",
+    "certified_sandbox": "workspace-write",
+    "catalog_status": "Installed codex CLI v0.155.1 verified. Requires OPENAI_API_KEY environment variable for live execution. CodexAdapter is fully implemented and deterministically tested via mock harness."
+  },
+  "claude": {
+    "cli_version": "2.1.263",
+    "certified_model": "claude-sonnet-5",
+    "certified_effort": "high",
+    "permission_mode": "acceptEdits",
+    "catalog_status": "Installed claude CLI (2.1.263) verified. ClaudeAdapter is fully implemented and deterministically tested via test harness. Requires CLAUDE_CODE_TOKEN / /login for live execution."
+  },
+  "opencode": {
+    "cli_version": "1.18.31",
+    "certified_model": "openrouter/openrouter/free",
+    "certified_effort": "free",
+    "catalog_status": "Installed opencode CLI (1.18.31) verified. Genuine execution certified via OPENROUTER_API_KEY with openrouter/openrouter/free."
+  },
+  "certified_profiles": [
+    "agy-spec-high",
+    "agy-backend-high",
+    "agy-backend-medium",
+    "agy-frontend-high",
+    "agy-frontend-medium",
+    "agy-tests-medium",
+    "agy-integration-high",
+    "agy-audit-high",
+    "droid-backend-medium",
+    "droid-backend-xhigh",
+    "codex-luna-medium",
+    "codex-luna-high",
+    "codex-luna-xhigh",
+    "claude-sonnet5-high",
+    "claude-sonnet5-medium",
+    "opencode-gemini-high",
+    "opencode-mimo-free"
+  ],
+  "python": {
+    "version": "3.12.3",
+    "implementation": "CPython",
+    "policy": "stdlib_only"
+  },
+  "git": {
+    "version": "2.43.0"
+  },
+  "freebuff": {
+    "cli_version": "0.0.195",
+    "feasibility_status": "FREEBUFF_HEADLESS_BLOCKED",
+    "notes": "Freebuff v0.0.195 provides interactive TUI only; non-interactive headless prompt execution is unsupported."
+  },
+  "certified_at": "2026-09-25T00:50:00.000000+00:00"
+}

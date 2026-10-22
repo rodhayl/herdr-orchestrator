@@ -1,0 +1,39 @@
+{
+  "seeded_defects": [
+    {
+      "id": "SEEDED_MISSING_REQ_R4",
+      "severity": "CRITICAL",
+      "category": "MISSING_REQUIREMENT",
+      "description": "Explicit requirement R4 (CLI Interface) is omitted from plan",
+      "match_patterns": ["r4", "missing requirement", "cli interface", "uncovered"]
+    },
+    {
+      "id": "SEEDED_EMPTY_VALIDATIONS",
+      "severity": "MAJOR",
+      "category": "INADEQUATE_VALIDATION",
+      "description": "Task task_cli declares empty validation commands",
+      "match_patterns": ["empty validation", "task_cli", "validations", "no validation"]
+    },
+    {
+      "id": "SEEDED_UNSAFE_PATH",
+      "severity": "CRITICAL",
+      "category": "UNSAFE_PATH",
+      "description": "Task task_core declares unsafe allowed_path '/'",
+      "match_patterns": ["allowed_paths", "unsafe", "root", "/", "path traversal"]
+    },
+    {
+      "id": "SEEDED_ORPHAN_DERIVED_REQ",
+      "severity": "MAJOR",
+      "category": "ORPHAN_REQUIREMENT",
+      "description": "Task references derived requirement R99 not present in GoalSpec",
+      "match_patterns": ["r99", "orphan", "derived", "unknown requirement"]
+    },
+    {
+      "id": "SEEDED_IMPOSSIBLE_CAPABILITY",
+      "severity": "MAJOR",
+      "category": "UNSUPPORTED_CAPABILITY",
+      "description": "Task requires capability distributed_consensus not satisfied by profiles",
+      "match_patterns": ["distributed_consensus", "capability", "no profile", "unsupported"]
+    }
+  ]
+}

@@ -1,0 +1,299 @@
+{
+  "schema_version": "9.0.0",
+  "policy_version": "9.0.0",
+  "calibrated_at": "2026-09-25T06:37:14Z",
+  "status": "VALID",
+  "provenance_hashes": {
+    "context_policy_hash": "ca3f4db1bcaa19f3402d8317a03b79abd2ddb3988726818936b7bca460a0cf59",
+    "toolchain_lock_hash": "3e1e58715307e91ed3874108fb2bf55bf82b0e8b37a2831e6544b2d58a8dccc7",
+    "harness_profiles_hash": "410284f7202b1db804501e58ca0be0a274a9b066538a2c59ede73dd75943cb65",
+    "calibration_evidence_hash": "6ab21b8c6cd2076e253e091b9588a3df432608586a26d7f51dd84c5a53214780"
+  },
+  "model_ladders": {
+    "gemini-3.8-flash": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "claude-sonnet-4-6": [
+      "high"
+    ],
+    "qwen3.8-max": [
+      "low",
+      "medium",
+      "xhigh"
+    ],
+    "gpt-5.6-luna": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "claude-sonnet-5": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "openrouter/openrouter/free": [
+      "free"
+    ]
+  },
+  "role_policy": {
+    "planner": {
+      "initial_effort": "medium",
+      "escalation_ceiling": "high"
+    },
+    "plan_reviewer": {
+      "initial_effort": "medium",
+      "escalation_ceiling": "high"
+    },
+    "worker": {
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "final_auditor": {
+      "initial_effort": "high",
+      "escalation_ceiling": "high"
+    },
+    "remediation_planner": {
+      "initial_effort": "medium",
+      "escalation_ceiling": "high"
+    },
+    "remediation_worker": {
+      "initial_effort": "high",
+      "escalation_ceiling": "high"
+    }
+  },
+  "task_policy": {
+    "backend": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "frontend": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "testing": {
+      "default_execution_class": "routine",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "mechanical_change": {
+      "default_execution_class": "routine",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "fixture": {
+      "default_execution_class": "routine",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "support": {
+      "default_execution_class": "routine",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "coding": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "low",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "integration": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "debugging": {
+      "default_execution_class": "deep",
+      "initial_effort_by_class": {
+        "routine": "medium",
+        "standard": "high",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "conflict_resolution": {
+      "default_execution_class": "deep",
+      "initial_effort_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "specification": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "medium",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "review": {
+      "default_execution_class": "standard",
+      "initial_effort_by_class": {
+        "routine": "medium",
+        "standard": "medium",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    },
+    "audit": {
+      "default_execution_class": "deep",
+      "initial_effort_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      },
+      "escalation_ceiling_by_class": {
+        "routine": "high",
+        "standard": "high",
+        "deep": "high"
+      }
+    }
+  },
+  "escalation_policy": {
+    "enabled": true,
+    "max_effort_escalations_per_task": 1,
+    "eligible_failure_categories": [
+      "AUDIT_REQUIRED_REMEDIATION",
+      "DETERMINISTIC_TEST_FAILED",
+      "INCOMPLETE_RESULT",
+      "MISSING_EXPECTED_FILES",
+      "REQUIREMENT_VALIDATION_FAILED",
+      "SCHEMA_VIOLATION",
+      "WORKER_RESULT_INVALID"
+    ],
+    "non_eligible_failure_categories": [
+      "AUTH_BLOCKED",
+      "BINARY_NOT_FOUND",
+      "CANCELLED",
+      "CONFLICTED",
+      "CONTEXT_ANCHOR_MISSING",
+      "CONTEXT_BUDGET_EXCEEDED",
+      "CONTEXT_COMPILATION_FAILED",
+      "CONTEXT_PACKET_STALE",
+      "EXECUTABLE_MISSING",
+      "GIT_CONFLICT",
+      "PATH_VALIDATION_FAILED",
+      "INVALID_CLI_FLAG",
+      "INVALID_MODEL",
+      "NETWORK_FAILURE",
+      "ORPHAN_DERIVED_REQUIREMENT",
+      "PROVIDER_UNAVAILABLE",
+      "RATE_LIMIT",
+      "TIMED_OUT",
+      "TIMEOUT",
+      "UNEXPECTED_COMPILATION_ERROR",
+      "WORKTREE_FAILURE"
+    ]
+  },
+  "calibration_evidence": {
+    "summary": "Initial evidence-backed defaults calibrated across Fixtures A-F. These are conservative production starting points, not universal optima across repositories, task distributions, providers, or future model versions.",
+    "baseline_ref": "certification/v9/effort-baseline.json",
+    "capabilities_ref": "certification/v9/effort-capabilities.json",
+    "calibration_runs_ref": "certification/v9/calibration-runs.jsonl",
+    "certification_ref": "certification/v9/reasoning-policy-certification.json",
+    "calibrated_roles": [
+      "worker",
+      "planner",
+      "plan_reviewer",
+      "final_auditor",
+      "remediation_planner",
+      "remediation_worker"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+# Ephemeral and virtual environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test artifacts and caches
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Factory runtime state is always local/ephemeral.
+.agy-factory/
+
+# Herdr Orchestrator UI generated vendor assets
+.tools/ui/
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local environment files (keep deliberate public templates eligible for review)
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Reference application databases and SQLite sidecars
+miniboard.db
+miniboard.db-journal
+miniboard.db-wal
+miniboard.db-shm
+minilinks.db
+minilinks.db-journal
+minilinks.db-wal
+minilinks.db-shm

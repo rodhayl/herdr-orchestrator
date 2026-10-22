@@ -1,0 +1,26 @@
+{
+  "certification_id": "v8-autopilot-treehash-real",
+  "certified_at": "2026-09-24T12:28:36Z",
+  "target_project": "/home/example/treehash-v8-project",
+  "goal_id": "goal-20260924-121513",
+  "run_id": "run-20260924-121555",
+  "status": "REAL_PROVIDER_CERTIFIED",
+  "phase": "COMPLETE",
+  "report": {
+    "goal_id": "goal-20260924-121513",
+    "project_root": "/home/example/treehash-v8-project",
+    "phase": "COMPLETE",
+    "plan_revisions": 0,
+    "remediation_rounds": 0,
+    "run_id": "run-20260924-121555",
+    "validations_summary": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "final_audit_verdict": "ACCEPTED",
+    "created_at": "2026-09-24T12:15:13.895053+00:00",
+    "updated_at": "2026-09-24T12:28:34.801703+00:00"
+  },
+  "_portfolio_redaction": "Host paths redacted; historical measurements unchanged. Not a new certification."
+}

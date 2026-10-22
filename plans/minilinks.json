@@ -1,0 +1,157 @@
+{
+  "plan_id": "minilinks",
+  "name": "MiniLinks Bookmark Manager Software Factory Orchestration Plan",
+  "version": "2.0.0",
+  "target_application": {
+    "name": "MiniLinks",
+    "description": "Local single-user bookmark manager using Python 3 stdlib, SQLite, and vanilla HTML/CSS/JS",
+    "root_directory": "examples/minilinks"
+  },
+  "tasks": [
+    {
+      "task_id": "wave0_spec",
+      "worker_id": "agy2",
+      "description": "Create the complete MiniLinks product specification in examples/minilinks/SPEC.md using write_to_file. Document the exact SQLite schema for table 'bookmarks' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, notes TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL). Document the exact REST API contract: GET /health (returns 200 {'status': 'ok'}), GET /api/bookmarks (accepts optional ?q=searchterm query parameter filtering title, url, or notes, returns 200 array of bookmarks), POST /api/bookmarks (accepts JSON with 'title', 'url', optional 'notes', returns 201 created bookmark, 400 on error), PATCH /api/bookmarks/<id> (accepts optional 'title', 'url', 'notes', returns 200 updated bookmark, 400 on invalid payload, 404 if not found), DELETE /api/bookmarks/<id> (returns 200 {'status': 'deleted', 'id': id}, 404 if not found), and static file serving for web/ (index.html, style.css, app.js with directory traversal protection). Document the Python backend interface: create_server(host='127.0.0.1', port=0, db_path='minilinks.db') returning an HTTPServer running in a daemon thread. Document the testing requirements: unittest suites in tests/ and a 12-step standalone smoke test script in scripts/smoke_test.py. Document frontend requirements: vanilla HTML/CSS/JS responsive bookmark manager with search bar, bookmark creation form, cards list, and edit/delete actions.",
+      "allowed_paths": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "expected_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "review_only": false,
+      "timeout": 180
+    },
+    {
+      "task_id": "wave1_backend",
+      "worker_id": "agy3",
+      "dependencies": [
+        "wave0_spec"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "description": "Implement the MiniLinks backend in examples/minilinks/app/server.py and examples/minilinks/app/database.py using Python 3 stdlib only (http.server, sqlite3, json, urllib.parse). Support create_server(host, port, db_path) returning server instance running in a daemon thread for testability. Implement GET /health, GET /api/bookmarks (with ?q= filtering across title, url, notes), POST /api/bookmarks, PATCH /api/bookmarks/<id>, DELETE /api/bookmarks/<id>, and static file serving for examples/minilinks/web/ directory with directory traversal protection. Store bookmarks in SQLite with columns id, title, url, notes, created_at, updated_at. Validate inputs (title non-empty, url valid format starting with http:// or https://) and return proper HTTP status codes.",
+      "allowed_paths": [
+        "examples/minilinks/app/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/app/server.py",
+        "examples/minilinks/app/database.py"
+      ],
+      "review_only": false,
+      "timeout": 240
+    },
+    {
+      "task_id": "wave1_frontend",
+      "worker_id": "agy4",
+      "dependencies": [
+        "wave0_spec"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "description": "Implement the MiniLinks web frontend in examples/minilinks/web/index.html, examples/minilinks/web/style.css, and examples/minilinks/web/app.js. Responsive single-user bookmark manager. Allow creating bookmarks (title, url, notes), search input to filter bookmarks dynamically, edit modal/form to update bookmarks, delete action with confirmation, and notification feedback. Interface directly with /api/bookmarks endpoints using standard fetch API.",
+      "allowed_paths": [
+        "examples/minilinks/web/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/web/index.html",
+        "examples/minilinks/web/style.css",
+        "examples/minilinks/web/app.js"
+      ],
+      "review_only": false,
+      "timeout": 240
+    },
+    {
+      "task_id": "wave1_tests",
+      "worker_id": "agy5",
+      "dependencies": [
+        "wave0_spec"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "description": "Implement comprehensive stdlib tests in examples/minilinks/tests/test_api.py, examples/minilinks/tests/test_persistence.py, and standalone smoke script in examples/minilinks/scripts/smoke_test.py. Tests must use unittest, tempfile, urllib, sqlite3, threading. Ensure sys.path includes examples/minilinks or project root so modules can be imported. Verify /health, CRUD on /api/bookmarks, ?q= query filtering, invalid payload error handling, and database persistence across server restart on ephemeral port.",
+      "allowed_paths": [
+        "examples/minilinks/tests/**",
+        "examples/minilinks/scripts/**"
+      ],
+      "expected_files": [
+        "examples/minilinks/tests/test_api.py",
+        "examples/minilinks/tests/test_persistence.py",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "review_only": false,
+      "timeout": 240
+    },
+    {
+      "task_id": "wave2_review",
+      "worker_id": "agy6",
+      "dependencies": [
+        "wave1_backend",
+        "wave1_frontend",
+        "wave1_tests"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "is_repair": true,
+      "description": "Perform focused integration and quality verification of the merged MiniLinks codebase in examples/minilinks/. Ensure consistency between app/server.py routes, web/app.js API calls, and tests/ suites. Remedy any minor edge cases or integration defects while keeping code minimal and stdlib-only. Ensure all unit tests and the smoke test pass.",
+      "allowed_paths": [
+        "examples/minilinks/**"
+      ],
+      "expected_files": [],
+      "review_only": false,
+      "timeout": 360
+    },
+    {
+      "task_id": "wave3_audit",
+      "worker_id": "agy7",
+      "dependencies": [
+        "wave2_review"
+      ],
+      "context_files": [
+        "examples/minilinks/SPEC.md"
+      ],
+      "description": "Conduct an objective, independent audit of the completed MiniLinks repository in examples/minilinks/ against examples/minilinks/SPEC.md using view_file. Evaluate feature completeness, API contract compliance, SQLite persistence, frontend/backend integration, security (SQL injection protection, directory traversal protection), and test quality. Provide structured findings with severity, area, evidence, and recommendations. Do NOT modify any code.",
+      "allowed_paths": [],
+      "expected_files": [],
+      "review_only": true,
+      "timeout": 300
+    }
+  ],
+  "post_validation": [
+    {
+      "name": "compilation",
+      "command": [
+        "python3",
+        "-m",
+        "compileall",
+        "examples/minilinks/app",
+        "examples/minilinks/tests"
+      ],
+      "timeout": 30
+    },
+    {
+      "name": "unittest",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "examples/minilinks/tests",
+        "-v"
+      ],
+      "timeout": 60
+    },
+    {
+      "name": "smoke_test",
+      "command": [
+        "python3",
+        "examples/minilinks/scripts/smoke_test.py"
+      ],
+      "timeout": 60
+    }
+  ]
+}

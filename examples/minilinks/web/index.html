@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MiniLinks - Bookmark Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Operational Status / Notification Banner -->
+  <div id="notification-banner" class="notification-banner hidden" role="status" aria-live="polite">
+    <div class="notification-content">
+      <span id="notification-icon" class="notification-icon" aria-hidden="true"></span>
+      <span id="notification-message" class="notification-message"></span>
+    </div>
+    <button type="button" id="notification-close" class="notification-close" aria-label="Dismiss notification">&times;</button>
+  </div>
+
+  <!-- Header with Branding, Search Bar, and Filter Controls -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="branding">
+        <svg class="logo-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <h1 class="app-title">MiniLinks</h1>
+      </div>
+      <div class="search-filter-controls">
+        <div class="search-container">
+          <div class="search-input-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="search"
+              id="search-input"
+              class="search-input"
+              placeholder="Search bookmarks by title, URL, or notes..."
+              aria-label="Search bookmarks"
+              autocomplete="off"
+            >
+            <button type="button" id="search-clear-btn" class="search-clear-btn hidden" aria-label="Clear search input">&times;</button>
+          </div>
+        </div>
+        <div class="filter-bar">
+          <button
+            type="button"
+            id="filter-favorites-btn"
+            class="filter-favorites-btn"
+            aria-pressed="false"
+            title="Filter by favorites"
+          >
+            <span class="filter-star-icon" aria-hidden="true">☆</span>
+            <span class="filter-btn-label">Favorites</span>
+          </button>
+          <button
+            type="button"
+            id="filter-archived-btn"
+            class="filter-archived-btn"
+            aria-pressed="false"
+            title="Show archived bookmarks"
+          >
+            <span class="filter-archive-icon" aria-hidden="true">📦</span>
+            <span class="filter-btn-label">Archived</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="main-container">
+    <!-- Bookmark Creation Section -->
+    <section class="form-section" aria-labelledby="form-section-title">
+      <div class="card form-card">
+        <h2 id="form-section-title" class="section-title">Save a New Bookmark</h2>
+        <form id="bookmark-form" class="bookmark-form" novalidate>
+          <div class="form-row">
+            <div class="form-group form-group-flex">
+              <label for="bookmark-title">Title <span class="required" aria-hidden="true">*</span></label>
+              <input
+                type="text"
+                id="bookmark-title"
+                name="title"
+                class="form-input"
+                placeholder="e.g. Python Documentation"
+                required
+                autocomplete="off"
+              >
+            </div>
+            <div class="form-group form-group-flex">
+              <label for="bookmark-url">URL <span class="required" aria-hidden="true">*</span></label>
+              <input
+                type="url"
+                id="bookmark-url"
+                name="url"
+                class="form-input"
+                placeholder="https://docs.python.org/3/"
+                required
+                autocomplete="off"
+              >
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="bookmark-notes">Notes</label>
+            <textarea
+              id="bookmark-notes"
+              name="notes"
+              class="form-input form-textarea"
+              rows="2"
+              placeholder="Optional notes, annotations, or description..."
+            ></textarea>
+          </div>
+          <div class="form-group">
+            <label for="bookmark-tags">Tags</label>
+            <input
+              type="text"
+              id="bookmark-tags"
+              name="tags"
+              class="form-input"
+              placeholder="Optional tags (comma-separated, e.g. dev, python, docs)"
+              autocomplete="off"
+            >
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="bookmark-submit-btn" class="btn btn-primary">
+              <svg class="btn-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Bookmark
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Bookmarks Listing Section -->
+    <section class="bookmarks-section" aria-labelledby="bookmarks-section-title">
+      <div class="section-header">
+        <h2 id="bookmarks-section-title" class="section-title">Bookmarks</h2>
+        <span id="bookmarks-count" class="bookmarks-count" aria-live="polite"></span>
+      </div>
+      <div id="bookmarks-list" class="bookmarks-list" role="feed" aria-busy="false">
+        <!-- Rendered dynamically via JavaScript -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Edit Bookmark Modal Dialog -->
+  <div id="edit-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="edit-modal-title" class="modal-title">Edit Bookmark</h3>
+        <button type="button" id="edit-modal-close" class="modal-close" aria-label="Close edit modal">&times;</button>
+      </div>
+      <form id="edit-bookmark-form" novalidate>
+        <input type="hidden" id="edit-bookmark-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="edit-title">Title <span class="required" aria-hidden="true">*</span></label>
+            <input
+              type="text"
+              id="edit-title"
+              name="title"
+              class="form-input"
+              required
+              autocomplete="off"
+            >
+          </div>
+          <div class="form-group">
+            <label for="edit-url">URL <span class="required" aria-hidden="true">*</span></label>
+            <input
+              type="url"
+              id="edit-url"
+              name="url"
+              class="form-input"
+              required
+              autocomplete="off"
+            >
+          </div>
+          <div class="form-group">
+            <label for="edit-notes">Notes</label>
+            <textarea
+              id="edit-notes"
+              name="notes"
+              class="form-input form-textarea"
+              rows="3"
+              placeholder="Optional notes, annotations, or description..."
+            ></textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-tags">Tags</label>
+            <input
+              type="text"
+              id="edit-tags"
+              name="tags"
+              class="form-input"
+              placeholder="Optional tags (comma-separated, e.g. dev, python, docs)"
+              autocomplete="off"
+            >
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="edit-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="edit-save-btn" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Bookmark Confirmation Modal Dialog -->
+  <div id="delete-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="delete-modal-title" class="modal-title">Delete Bookmark</h3>
+        <button type="button" id="delete-modal-close" class="modal-close" aria-label="Close delete modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-prompt">Are you sure you want to delete this bookmark?</p>
+        <p id="delete-bookmark-title" class="delete-target-title"></p>
+        <p class="delete-warning">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="delete-cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="delete-confirm-btn" class="btn btn-danger">Delete Bookmark</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>MiniLinks &bull; Zero-dependency lightweight bookmark manager</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

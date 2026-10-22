@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlanReviewResult",
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "APPROVED",
+        "REVISE",
+        "BLOCKED"
+      ]
+    },
+    "revision_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "CRITICAL",
+              "MAJOR",
+              "MINOR",
+              "INFO"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "traceability",
+              "scope",
+              "verification",
+              "security"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "suggested_action": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "category",
+          "description",
+          "suggested_action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "verdict",
+    "findings"
+  ],
+  "additionalProperties": false
+}

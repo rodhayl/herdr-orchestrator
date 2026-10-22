@@ -1,0 +1,60 @@
+{
+  "scope": "reasoning policy and usage aggregation; not full Factory certification",
+  "base_commit": "6f5937744cb21367ea923ddda4da3f053b9dcd13",
+  "python_version": "3.13.5",
+  "provider_inference_calls": 0,
+  "baseline_source_blob": "65ab4c92535e04f1daab7283d3955644bb5f5fce",
+  "baseline_test_blob": "fb61802faf3889b8e95cb0915a2a6fa44e6ef3af",
+  "committed_policy_blob": "78c534993295d9ee33bfab8d6235ce3e483b2449",
+  "tested_blobs": {
+    "tools/reasoning.py": "319dbe9b872c90c49ced02e663b22a054783a003",
+    "factory_tests/test_v9_reasoning_boundaries.py": "af7bba54208d023933b55aa03cbdff9e4c0da957",
+    "factory_tests/test_v9_reasoning_efficiency.py": "5f341ae055bbcaf418bda80d4f1a06508e912725"
+  },
+  "new_boundary_tests": {
+    "count": 34,
+    "baseline": "FAIL",
+    "baseline_subtest_failures": 94,
+    "baseline_errors": 24,
+    "after": "PASS",
+    "python_hash_seeds": [
+      0,
+      1,
+      42,
+      1337
+    ]
+  },
+  "existing_pure_policy_tests": {
+    "count": 21,
+    "result": "PASS",
+    "method": "AST-selected existing test bodies, not the complete integration test module",
+    "excluded_methods": [
+      "test_provenance_validation_current_repo",
+      "test_provenance_drift_detected_on_tampering",
+      "test_project_policy_v9_fields_parsing"
+    ],
+    "integration_class_not_run": "TestV9FailpointsAndResume"
+  },
+  "additional_checks": {
+    "python_compilation": "PASS",
+    "committed_policy_load": "PASS",
+    "project_cap_cases": 126,
+    "project_cap_valid_resolutions": 94,
+    "project_cap_explicit_conflicts": 32,
+    "escalation_combinations": 2856,
+    "randomized_usage_sequences": 2000,
+    "strict_json_serialization": "PASS"
+  },
+  "not_run": [
+    "Full factory_tests, MiniBoard, MiniLinks, browser and Herdr integration suites",
+    "scripts/update-package.sh --check",
+    "scripts/doctor.sh",
+    "scripts/verify.sh",
+    "scripts/portable-smoke.sh"
+  ],
+  "limitations": [
+    "Only the tested modules and committed reasoning policy were reconstructed, with Git blob hashes verified against GitHub.",
+    "The full private checkout could not be downloaded into the execution container.",
+    "No whole-repository, production-readiness or merge certification is claimed."
+  ]
+}

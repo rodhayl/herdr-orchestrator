@@ -1,0 +1,12 @@
+{
+  "fixture_id": "fixture_c",
+  "name": "Deep Debugging: Transaction Isolation and Canonical Hash Chain",
+  "execution_class": "deep",
+  "task_type": "debugging",
+  "prompt": "Diagnose and resolve two subtle defects in transactional_cache.py and hash_chain.py:\nR1: In transactional_cache.py, ensure rollback fully isolates nested dictionary mutations made during an uncommitted transaction.\nR2: In hash_chain.py, enforce canonical serialization (sort_keys=True, compact separators, and NFC unicode normalization) so block verification remains tamper-evident and invariant across key ordering and unicode representations.\nR3: Preserve thread safety and test invariants; all unit tests in test_deep_debug.py must pass.\nAllowed paths: transactional_cache.py, hash_chain.py, test_deep_debug.py.",
+  "satisfies": ["R1", "R2", "R3"],
+  "allowed_paths": ["transactional_cache.py", "hash_chain.py", "test_deep_debug.py"],
+  "validations": [
+    ["python3", "-m", "unittest", "discover", "-s", ".", "-v"]
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "schema_version": "9.0.0",
+  "baseline_id": "v8-effort-baseline",
+  "recorded_at": "2026-09-25T08:18:00Z",
+  "source_run_id": "run-20260924-121555",
+  "source_goal_id": "goal-20260924-121513",
+  "factory_version": "8.0.0",
+  "target_project": "/home/example/treehash-v8-project",
+  "summary": {
+    "total_worker_input_tokens": 1095534,
+    "total_worker_reasoning_tokens": 90703,
+    "total_worker_output_tokens": 136950,
+    "total_worker_duration_ms": 661324.18,
+    "total_worker_attempts": 3,
+    "total_escalations": 0,
+    "total_context_bytes": 12723,
+    "anchor_recall": 1.0
+  },
+  "roles": {
+    "planner": {
+      "role": "planner",
+      "profile": "agy-spec-high",
+      "model": "gemini-3.8-flash",
+      "requested_effort": "high",
+      "resolved_native_effort": "high",
+      "attempts": 1,
+      "result": "SUCCESS",
+      "provider_usage": {
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "reasoning_tokens": null,
+        "output_tokens": null
+      },
+      "duration_ms": null
+    },
+    "plan_reviewer": {
+      "role": "plan_reviewer",
+      "profile": "agy-spec-high",
+      "model": "gemini-3.8-flash",
+      "requested_effort": "high",
+      "resolved_native_effort": "high",
+      "attempts": 1,
+      "result": "SUCCESS",
+      "verdict": "APPROVED",
+      "findings_count": 0,
+      "provider_usage": {
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "reasoning_tokens": null,
+        "output_tokens": null
+      },
+      "duration_ms": null
+    },
+    "task_core_impl": {
+      "role": "worker",
+      "task_id": "task_core_impl",
+      "task_type": "backend",
+      "execution_class": "standard",
+      "profile": "agy-backend-high",
+      "model": "gemini-3.8-flash",
+      "requested_effort": "high",
+      "resolved_native_effort": "high",
+      "attempts": 1,
+      "result": "SUCCESS",
+      "context_packet_id": "ctx-task-task_core_impl-att1-c6cc02b7",
+      "context_packet_hash": "c6cc02b746c029beee356c2fe7a3976e91374ee1b7c2b9b97c56153e05092f6c",
+      "context_bytes": 1943,
+      "anchor_recall": 1.0,
+      "provider_usage": {
+        "input_tokens": 337336,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 49960,
+        "output_tokens": 66977
+      },
+      "duration_ms": 258107.72
+    },
+    "task_cli_impl": {
+      "role": "worker",
+      "task_id": "task_cli_impl",
+      "task_type": "backend",
+      "execution_class": "standard",
+      "profile": "agy-backend-high",
+      "model": "gemini-3.8-flash",
+      "requested_effort": "high",
+      "resolved_native_effort": "high",
+      "attempts": 1,
+      "result": "SUCCESS",
+      "context_packet_id": "ctx-task-task_cli_impl-att1-32dca277",
+      "context_packet_hash": "32dca2777c07bb71fd49937283919e113e4dfda7276dfef09c5c2532cf991125",
+      "context_bytes": 2332,
+      "anchor_recall": 1.0,
+      "provider_usage": {
+        "input_tokens": 483210,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 29722,
+        "output_tokens": 47619
+      },
+      "duration_ms": 257112.45
+    },
+    "task_unit_tests": {
+      "role": "worker",
+      "task_id": "task_unit_tests",
+      "task_type": "tests",
+      "execution_class": "standard",
+      "profile": "agy-tests-medium",
+      "model": "gemini-3.8-flash",
+      "requested_effort": "medium",
+      "resolved_native_effort": "medium",
+      "attempts": 1,
+      "result": "SUCCESS",
+      "context_packet_id": "ctx-task-task_unit_tests-att1-c37ac82c",
+      "context_packet_hash": "c37ac82cc8c779425822c81958754bfa491ec0af7af69fbba4460c1a6f9ff2d9",
+      "context_bytes": 2634,
+      "anchor_recall": 1.0,
+      "provider_usage": {
+        "input_tokens": 274988,
+        "cached_input_tokens": null,
+        "reasoning_tokens": 11021,
+        "output_tokens": 22354
+      },
+      "duration_ms": 146104.01
+    },
+    "final_auditor": {
+      "role": "final_auditor",
+      "profile": "agy-audit-high",
+      "model": "claude-sonnet-4-6",
+      "requested_effort": "high",
+      "resolved_native_effort": "high",
+      "attempts": 1,
+      "result": "ACCEPTED",
+      "critical_findings": 0,
+      "major_findings": 0,
+      "minor_findings": 0,
+      "provider_usage": {
+        "input_tokens": null,
+        "cached_input_tokens": null,
+        "reasoning_tokens": null,
+        "output_tokens": null
+      },
+      "duration_ms": null
+    }
+  },
+  "_portfolio_redaction": "Host paths redacted; historical measurements unchanged. Not a new certification."
+}

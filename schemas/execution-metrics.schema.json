@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FactoryExecutionMetrics",
+  "description": "Standardized schema for recording task execution telemetry and git churn in the Herdr Orchestrator",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task_id",
+    "attempt_id",
+    "profile_id",
+    "harness",
+    "adapter",
+    "execution_class",
+    "status",
+    "duration_ms"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "harness": {
+      "type": "string"
+    },
+    "adapter": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "effort": {
+      "type": "string"
+    },
+    "execution_class": {
+      "type": "string",
+      "enum": [
+        "routine",
+        "standard",
+        "deep"
+      ]
+    },
+    "task_type": {
+      "type": "string"
+    },
+    "start_time": {
+      "type": "string"
+    },
+    "end_time": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "churn": {
+      "type": "object",
+      "properties": {
+        "lines_added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines_deleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_changed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      }
+    },
+    "turns": {
+      "type": "integer"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "REAL",
+        "MOCK",
+        "TRANSPORT_ONLY",
+        "UNKNOWN"
+      ]
+    },
+    "certification_level": {
+      "type": "string",
+      "enum": [
+        "DETERMINISTIC_CERTIFIED",
+        "TRANSPORT_CERTIFIED",
+        "REAL_PROVIDER_CERTIFIED",
+        "AUTH_BLOCKED",
+        "PROFILE_INVALID",
+        "PROFILE_UNAVAILABLE",
+        "EXTERNAL_COMPATIBILITY_BLOCKED",
+        "FAILED"
+      ]
+    },
+    "auth_source": {
+      "type": "string",
+      "enum": [
+        "stored_oauth",
+        "subscription_login",
+        "api_key_env",
+        "provider_credentials",
+        "local_free",
+        "unauthenticated",
+        "unknown"
+      ]
+    },
+    "raw_result_hash": {
+      "type": "string"
+    },
+    "execution_purpose": {
+      "type": "string",
+      "enum": [
+        "PRODUCTION",
+        "CALIBRATION",
+        "CERTIFICATION",
+        "DETERMINISTIC_TEST"
+      ]
+    },
+    "requested_effort": {
+      "type": ["string", "null"]
+    },
+    "resolved_effort": {
+      "type": ["string", "null"]
+    },
+    "effort_policy_version": {
+      "type": ["string", "null"]
+    },
+    "effort_source": {
+      "type": ["string", "null"],
+      "enum": [
+        "explicit_plan",
+        "reasoning_policy",
+        "escalation",
+        "legacy",
+        null
+      ]
+    },
+    "effort_attempt_index": {
+      "type": ["integer", "null"]
+    },
+    "escalated_from_profile": {
+      "type": ["string", "null"]
+    },
+    "escalation_reason": {
+      "type": ["string", "null"]
+    },
+    "provider_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_cached_input_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_output_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_reasoning_tokens": {
+      "type": ["integer", "null"]
+    },
+    "provider_credits_or_units": {
+      "type": ["number", "null"]
+    },
+    "provider_usage_source": {
+      "type": ["string", "null"]
+    },
+    "total_model_duration_ms": {
+      "type": ["number", "null"]
+    }
+  }
+}

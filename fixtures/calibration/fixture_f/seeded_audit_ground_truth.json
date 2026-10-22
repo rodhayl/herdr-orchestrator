@@ -1,0 +1,41 @@
+{
+  "goal_spec": {
+    "title": "Secure File Server",
+    "acceptance_criteria": [
+      {"id": "R1", "title": "File Serving", "description": "Serve files strictly inside DATA_DIR without path traversal"},
+      {"id": "R2", "title": "Directory Listing", "description": "Safely list directory contents returning empty list if empty"},
+      {"id": "R3", "title": "Token Auth", "description": "Mandatory Authorization token validation on all requests"},
+      {"id": "R4", "title": "Test Coverage", "description": "Comprehensive tests for error cases and traversal attacks"}
+    ]
+  },
+  "seeded_defects": [
+    {
+      "id": "SEEDED_PATH_TRAVERSAL",
+      "severity": "CRITICAL",
+      "category": "SECURITY_VULNERABILITY",
+      "description": "Path traversal in serve_file via os.path.join without containment check",
+      "match_patterns": ["traversal", "path traversal", "relative_path", "os.path.join", "directory traversal", "containment"]
+    },
+    {
+      "id": "SEEDED_MISSING_REQ_AUTH",
+      "severity": "CRITICAL",
+      "category": "MISSING_REQUIREMENT",
+      "description": "Missing Authorization token header check required by R3",
+      "match_patterns": ["authorization", "token", "r3", "auth", "headers"]
+    },
+    {
+      "id": "SEEDED_BEHAVIORAL_BUG",
+      "severity": "MAJOR",
+      "category": "FUNCTIONAL_BUG",
+      "description": "KeyError in list_directory on unmapped entries",
+      "match_patterns": ["keyerror", "list_directory", "metadata", "crash"]
+    },
+    {
+      "id": "SEEDED_MISSING_TEST",
+      "severity": "MAJOR",
+      "category": "MISSING_TESTS",
+      "description": "No deterministic tests for security traversal or error paths",
+      "match_patterns": ["missing test", "test coverage", "untested", "traversal test"]
+    }
+  ]
+}
